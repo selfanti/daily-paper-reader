@@ -121,17 +121,23 @@ def first_sentence(value: str) -> str:
 
 def build_glance_fields(paper: Dict[str, Any], ranked_item: Dict[str, Any]) -> Dict[str, str]:
     title = norm_text(paper.get("title")) or "该论文"
-    abstract = norm_text(paper.get("abstract"))
     evidence = get_evidence(ranked_item)
-    tldr = get_tldr(ranked_item) or evidence or first_sentence(abstract)
+    tldr = get_tldr(ranked_item) or evidence
     query_text = norm_text(ranked_item.get("matched_query_text"))
     return {
         "tldr": ensure_sentence(tldr or f"{title} 是一篇会议检索命中的相关论文"),
-        "motivation": ensure_sentence(evidence or first_sentence(abstract) or "本文关注会议检索需求中的相关研究问题"),
-        "method": ensure_sentence(first_sentence(abstract) or "方法细节可参考摘要与 OpenReview 原文"),
-        "result": ensure_sentence(tldr or evidence or "结果与实验结论可参考摘要与原文"),
+        "motivation": ensure_sentence(
+            norm_text(ranked_item.get("motivation_cn")) or evidence or "本文关注会议检索需求中的相关研究问题"
+        ),
+        "method": ensure_sentence(
+            norm_text(ranked_item.get("method_cn")) or "方法细节请参考摘要与 OpenReview 原文"
+        ),
+        "result": ensure_sentence(
+            norm_text(ranked_item.get("result_cn")) or tldr or evidence or "结果与实验结论请参考摘要与原文"
+        ),
         "conclusion": ensure_sentence(
-            f"该论文与检索需求“{query_text}”相关" if query_text else "该论文与当前会议检索需求相关"
+            norm_text(ranked_item.get("conclusion_cn"))
+            or (f"该论文与检索需求“{query_text}”相关" if query_text else "该论文与当前会议检索需求相关")
         ),
     }
 

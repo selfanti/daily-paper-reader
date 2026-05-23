@@ -341,6 +341,10 @@ def call_filter(
                         "evidence_cn": {"type": "string"},
                         "tldr_en": {"type": "string"},
                         "tldr_cn": {"type": "string"},
+                        "motivation_cn": {"type": "string"},
+                        "method_cn": {"type": "string"},
+                        "result_cn": {"type": "string"},
+                        "conclusion_cn": {"type": "string"},
                         "score": {"type": "number"},
                     },
                     "required": [
@@ -350,6 +354,10 @@ def call_filter(
                         "evidence_cn",
                         "tldr_en",
                         "tldr_cn",
+                        "motivation_cn",
+                        "method_cn",
+                        "result_cn",
+                        "conclusion_cn",
                         "score",
                     ],
                     "additionalProperties": False,
@@ -399,7 +407,7 @@ def call_filter(
         "Papers:\n"
         f"{json.dumps(docs, ensure_ascii=False)}\n\n"
         "Output JSON format example:\n"
-        "{\"results\": [{\"id\": \"paper_id\", \"matched_requirement_index\": 1, \"evidence_en\": \"short English phrase\", \"evidence_cn\": \"简短中文短语\", \"tldr_en\": \"one-sentence TLDR\", \"tldr_cn\": \"一句话 TLDR\", \"score\": 7}]}\n\n"
+        "{\"results\": [{\"id\": \"paper_id\", \"matched_requirement_index\": 1, \"evidence_en\": \"short English phrase\", \"evidence_cn\": \"简短中文短语\", \"tldr_en\": \"one-sentence TLDR\", \"tldr_cn\": \"一句话 TLDR\", \"motivation_cn\": \"中文研究动机\", \"method_cn\": \"中文方法概括\", \"result_cn\": \"中文结果概括\", \"conclusion_cn\": \"中文结论\", \"score\": 7}]}\n\n"
         "Requirement: You MUST return exactly one result for every input paper. "
         "The results length must match the papers length, and every input id must appear once.\n\n"
         "Output must be a single-line JSON string. "
@@ -416,9 +424,14 @@ def call_filter(
         "Also generate TLDR in both languages: tldr_en and tldr_cn. "
         "TLDR should be one sentence summarizing what the paper does and why it matters. "
         "Keep TLDR concise: <= 120 characters in English and <= 60 Chinese characters. "
+        "Also generate four Chinese-only overview fields: motivation_cn, method_cn, result_cn, conclusion_cn. "
+        "Each overview field must be one concise Chinese sentence. Do not put English sentences in these Chinese fields. "
+        "method_cn should summarize the method from the title and abstract, not copy the English abstract. "
         "Then give a score (0-10). "
         "If unrelated, use evidence_en=\"not relevant\", evidence_cn=\"不相关\", "
-        "tldr_en=\"not relevant\", tldr_cn=\"不相关\", score 0, matched_requirement_index=0."
+        "tldr_en=\"not relevant\", tldr_cn=\"不相关\", "
+        "motivation_cn=\"不相关\", method_cn=\"不相关\", result_cn=\"不相关\", conclusion_cn=\"不相关\", "
+        "score 0, matched_requirement_index=0."
     )
     if retry_note:
         user_prompt += f"\n\nRetry correction note:\n{retry_note}"
@@ -496,6 +509,10 @@ def _normalize_filter_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
     score = _coerce_score(item.get("score"))
     tldr_en = _norm_text(item.get("tldr_en")) or ("not relevant" if score <= 0 else evidence_en)
     tldr_cn = _norm_text(item.get("tldr_cn")) or ("不相关" if score <= 0 else (evidence_cn or tldr_en))
+    motivation_cn = _norm_text(item.get("motivation_cn")) or ("不相关" if score <= 0 else evidence_cn)
+    method_cn = _norm_text(item.get("method_cn")) or ("不相关" if score <= 0 else "方法细节请参考摘要与原文")
+    result_cn = _norm_text(item.get("result_cn")) or ("不相关" if score <= 0 else tldr_cn)
+    conclusion_cn = _norm_text(item.get("conclusion_cn")) or ("不相关" if score <= 0 else tldr_cn)
     return {
         "id": _norm_text(item.get("id")),
         "matched_requirement_index": _coerce_int(item.get("matched_requirement_index"), 0),
@@ -503,6 +520,10 @@ def _normalize_filter_result_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_cn": evidence_cn,
         "tldr_en": tldr_en,
         "tldr_cn": tldr_cn,
+        "motivation_cn": motivation_cn,
+        "method_cn": method_cn,
+        "result_cn": result_cn,
+        "conclusion_cn": conclusion_cn,
         "score": score,
     }
 
@@ -650,6 +671,10 @@ def merge_filter_result(
     evidence_cn = _norm_text(item.get("evidence_cn"))
     tldr_en = _norm_text(item.get("tldr_en"))
     tldr_cn = _norm_text(item.get("tldr_cn"))
+    motivation_cn = _norm_text(item.get("motivation_cn"))
+    method_cn = _norm_text(item.get("method_cn"))
+    result_cn = _norm_text(item.get("result_cn"))
+    conclusion_cn = _norm_text(item.get("conclusion_cn"))
     legacy = _norm_text(item.get("evidence"))
     if not evidence_en:
         evidence_en = legacy
@@ -659,6 +684,14 @@ def merge_filter_result(
         tldr_en = "not relevant" if score <= 0 else evidence_en
     if not tldr_cn:
         tldr_cn = "不相关" if score <= 0 else (evidence_cn or tldr_en)
+    if not motivation_cn:
+        motivation_cn = "不相关" if score <= 0 else evidence_cn
+    if not method_cn:
+        method_cn = "不相关" if score <= 0 else "方法细节请参考摘要与原文"
+    if not result_cn:
+        result_cn = "不相关" if score <= 0 else tldr_cn
+    if not conclusion_cn:
+        conclusion_cn = "不相关" if score <= 0 else tldr_cn
 
     matched_idx = _coerce_int(item.get("matched_requirement_index"), 0)
     matched_req = requirement_by_index.get(matched_idx) if matched_idx > 0 else None
@@ -676,6 +709,10 @@ def merge_filter_result(
             "canonical_evidence": evidence_cn or evidence_en or legacy,
             "tldr_en": tldr_en,
             "tldr_cn": tldr_cn,
+            "motivation_cn": motivation_cn,
+            "method_cn": method_cn,
+            "result_cn": result_cn,
+            "conclusion_cn": conclusion_cn,
             "matched_requirement_id": matched_id,
             "matched_query_tag": matched_tag,
             "matched_query_text": matched_query,

@@ -29,6 +29,7 @@ class ConferenceSidebarTest(unittest.TestCase):
                     "title": title,
                     "link": "https://openreview.net/forum?id=abc123",
                     "source": "ICML-2025-Accepted",
+                    "abstract": "This paper proposes a new reinforcement learning method for symbolic discovery.",
                 }
             ],
             "queries": [],
@@ -71,6 +72,8 @@ class ConferenceSidebarTest(unittest.TestCase):
             self.assertIn("selection_source: conference_retrieval", md_text)
             self.assertIn("motivation:", md_text)
             self.assertIn("method:", md_text)
+            self.assertIn("method: 方法细节请参考摘要与 OpenReview 原文。", md_text)
+            self.assertNotIn("method: This paper proposes", md_text)
             self.assertIn("result:", md_text)
             self.assertIn("conclusion:", md_text)
             self.assertIn("## Original Abstract", md_text)
