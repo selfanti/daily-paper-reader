@@ -1,0 +1,1078 @@
+Title: Skill Reuse as Compression in Agentic RL
+
+URL Source: https://arxiv.org/pdf/2605.31509v1
+
+Published Time: Mon, 01 Jun 2026 01:31:41 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Skill Reuse as Compression in Agentic RL 
+
+Zhikun Xu 1, Yu Feng 2, Jacob Dineen 1, Taiwei Shi 3, Jieyu Zhao 3, Ben Zhou 1
+
+> 1
+
+Arizona State University, 2University of Pennsylvania, 
+
+> 3
+
+University of Southern California 
+
+zhikunxu@asu.edu 
+
+Abstract 
+
+Large language model agents trained with re-inforcement learning (RL) often learn brittle, task-specific shortcuts. We hypothesize that agents generalize better when their success-ful trajectories are structurally compressible, decomposed into a small set of reusable ab-stract patterns. To formalize this, we introduce REUSE RL, which grounds agentic RL in the Minimum Description Length (MDL) princi-ple. R EUSE RL extracts a shared skill dictio-nary from successful trajectories and augments the RL objective with a segmentation cost, ex-plicitly penalizing idiosyncratic behaviors that encode poorly. We prove a PAC-Bayes gener-alization bound for this compression penalty. Across ALFWorld, TextWorld-Cooking, and Countdown-Stepwise, R EUSE RL improves in-and out-of-distribution success over vanilla GRPO and strong round-length baselines. 1
+
+1 Introduction 
+
+Large language model (LLM) agents have demon-strated remarkable capabilities across complex in-teractive tasks, from embodied household reason-ing (Shridhar et al., 2021) and text-based games (Côté et al., 2018) to symbolic reasoning (Sto-janovski et al., 2026), by combining natural-language reasoning with environmental interaction (Yao et al., 2023; Shinn et al., 2023). Reinforce-ment learning (RL) has become a central training paradigm for these agents (Schulman et al., 2017; Shao et al., 2024), with multi-turn agentic variants of GRPO now driving much of the recent progress on long-horizon decision-making (Jin et al., 2025; Feng et al., 2025; Xia et al., 2026; Shi et al., 2026). Yet a persistent challenge is that RL training often entrenches brittle behavioral shortcuts. This failure mode, sometimes termed reasoning collapse, 
+
+> 1We will release all code and data under an open-source license upon publication.
+
+arises when prolonged optimization amplifies mem-orized action patterns at the expense of transferable reasoning (Wang et al., 2025b, 2026a,b). We do not claim this failure has a single cause; rather, we isolate one structural factor we can both formalize and act on: rewarding task success alone permits idiosyncratic, one-off solution patterns that satisfy the training tasks but transfer poorly. Crucially, compact, repeated solution patterns are desirable for generalization, so the difficulty is not that the policy forms shortcuts but that it also forms id-iosyncratic ones that complete training tasks with-out composing into reusable skills. Recent efforts combat this by augmenting RL with reusable struc-ture or experience via teacher distillation (Xia et al., 2026), reflection loops (Shi et al., 2026), or exter-nal memory (Shinn et al., 2023; Zhao et al., 2024; Wang et al., 2023a). But it remains unclear which shared structural property of the learned behavior is responsible for their gains. We argue that existing methods that improve agent RL do so because they implicitly encourage the formation of reusable structure. In both rein-forcement learning and information theory, such reusable structure is closely tied to data compres-sion and the Minimum Description Length (MDL) principle (Rissanen, 1978; Grünwald, 2007). This connection suggests a broader conjecture: success-ful, generalizable behaviors are precisely those that admit compact, reusable decompositions. We for-malize this property as the structural compressibil-ity of successful trajectories, defined as the degree to which successful behavior, represented as a se-quence of abstract skills, is built by composing a small set of reusable patterns. As illustrated in Fig. 1, an agent whose successes decompose into a compact repertoire of reusable skill compositions reasons more robustly than one that relies on id-iosyncratic, one-off sequences. This perspective naturally bridges temporal abstraction in hierar-chical RL, where options compress behavior into 1        
+
+> arXiv:2605.31509v1 [cs.LG] 29 May 2026 ALFWorld task put a clean ladle on the counter
+> trajectory result Vanilla GRPO
+> no compression brittle Round-length penalty
+> uniform compression
+> search discouraged collapses ReuseRL (ours)
+> structural compression
+> search routine clean-then-place
+> generalizes Explore Take Transport Transform Deliver
+
+Figure 1: REUSE RL distinguishes reusable compression from raw brevity. Each colored box is one ALFWorld atomic skill. Vanilla GRPO optimizes task success alone and can produce long trajectories with repeated or wasted steps. A pure round-length penalty is a degenerate singleton-only code that penalizes all steps uniformly, including the necessary search, so the agent under-explores and never reaches the target. R EUSE RL learns a multi-skill dictionary from successful trajectories and uses the segmentation cost under this dictionary as a trajectory-level penalty, keeping reusable subroutines cheap while leaving idiosyncratic waste expensive. 
+
+reusable subroutines (Sutton et al., 1999), with the MDL principle. While BPE-based action tokeniza-tion (Sennrich et al., 2016; Zheng et al., 2024) and MDL-guided skill discovery (Zhang et al., 2021; Jiang et al., 2022) have begun bridging these ideas by treating behavioral abstraction as compression, none integrate this compression directly into the RL training signal as a trajectory-level penalty for LLM agents. Consequently, the compression-generalization hypothesis remains untested in this setting. To test this hypothesis, our contributions are as follows. (1) We first formalize the hypothesis that structural compressibility is a key driver of reason-ing generalization in RL-trained LLM agents. (2) 
+
+We introduce R EUSE RL, a minimal framework that extracts a shared skill dictionary online from suc-cessful trajectories via greedy BPE-style merging and augments the per-trajectory GRPO signal with the resulting segmentation cost. (3) We ground our framework in the MDL principle via an EM-style alternating optimization, show that the pure round-length penalty is a degenerate fixed-code segmen-tation cost (Proposition 1), establish a PAC-Bayes generalization bound (Theorem 3), and provide a unifying interpretation of SkillRL and ERL as implicit, partial MDL minimizers. (4) On ALF-World (Shridhar et al., 2021), TextWorld-Cooking (Côté et al., 2018), and Countdown-Stepwise (Sto-janovski et al., 2026), R EUSE RL improves over both vanilla GRPO and the pure round-length base-line. Crucially, these results validate our central premise: successful trajectories should not merely be short; they should be compressible under a reusable skill dictionary. We isolate this effect in a self-contained RL loop, deliberately omitting experience-augmented methods like SkillRL or ERL that rely on auxiliary supervision. This allows us to rigorously validate the standalone impact of the MDL principle without confounding variables. 
+
+2 Related Work 
+
+2.1 Grammar-Based and MDL-Guided Hierarchical Abstraction 
+
+Skill discovery can be framed as sequence compres-sion, where hierarchical abstraction yields reusable subroutines. Grounded in the MDL principle (Ris-sanen, 1978; Grünwald, 2007), prior methods learn compact skill codebooks that balance dictionary size against how well the data is described (Zhang et al., 2021; Jiang et al., 2022). In RL, BPE-style merging of frequent action patterns extends this idea to temporally extended macro-actions (Kozma and Voderholzer, 2024). PRISE (Zheng et al., 2024) applies compression-based abstractions to improve sample efficiency, and SkillVLA (Zhai 2et al., 2026) leverages reusable skills for combi-natorial task diversity in embodied settings. PAC results for state abstraction (Cipollone et al., 2025) further show that compressed representations can preserve near-optimal behavior. R EUSE RL builds on this line of work but applies the MDL objective online, as a per-trajectory RL signal on success-ful behavior, instead of as an offline criterion for constructing reusable skills. 
+
+2.2 Skill Consolidation and Experience-Augmented Reasoning 
+
+LLM agents increasingly build skills through envi-ronmental interaction. During training, ERL (Shi et al., 2026) and SkillRL (Xia et al., 2026) dis-till environmental feedback into behavioral cor-rections. Similarly, systems like RAGEN (Wang et al., 2025b) and DYSTIL (Wang et al., 2025a) self-improve through dense feedback, while oth-ers rely on retrieved past experiences (Shinn et al., 2023; Zhao et al., 2024; Wang et al., 2023a). Left unchecked, however, accumulating self-generated trajectories can trigger reasoning collapse, ampli-fying memorized shortcuts at the expense of trans-ferable behavior (Wang et al., 2025b, 2026b). This motivates explicit compression of reusable behav-ioral structure as a regularizer, which is exactly what R EUSE RL adds without relying on teacher distillation, retrieval, or other auxiliary modules. 
+
+2.3 Information-Theoretic Policy Compression 
+
+Recent works apply information-theoretic objec-tives to constrain LLM reasoning traces, such as adaptively penalizing raw reasoning length (Wu et al., 2025; Yuan et al., 2026; Lin et al., 2026) or measuring token cost via surprisal under a language-model prior (Massoli et al., 2026). Cru-cially, these approaches shape reasoning at the to-ken or length level. In contrast, R EUSE RL operates at the behavioral level by compressing the struc-ture of successful skill sequences rather than their surface-level length. 
+
+3 REUSE RL: Skill Reuse as Compression RL 
+
+3.1 Problem Setup and Skill Projection 
+
+We consider a task distribution D over multi-turn reasoning tasks. For each sampled environment 
+
+d ∼ D , a language model policy πθ interacts with a partially observable environment for at most T
+
+steps, producing a trajectory τ ∼ πθ(· | d) of the form τ = ( o1, a 1, o 2, a 2, . . . , o T , a T ), where 
+
+ot is the observation and at is the action at step t.Each trajectory receives a binary terminal reward 
+
+R(τ ) ∈ { 0, 1} indicating success or failure. The standard RL objective maximizes the expected per-trajectory success rate: 
+
+max  
+
+> θ
+
+Ed∼D , τ ∼πθ (·| d)
+
+R(τ ) (1) In GRPO-style training (Shao et al., 2024), Eq. (1) is optimized through sampled batches B =
+
+{(di, τ i)}ni=1 and per-trajectory advantages com-puted inside each batch. As argued in §1, the struc-tural factor we isolate is the absence of pressure toward structurally reusable successful behavior under a success-only reward. The remainder of this section makes this notion precise: we represent behavior as a sequence of atomic skills, measure its reuse through a shared skill dictionary, and derive the per-trajectory signal that rewards compressible successful behavior. 
+
+Skill alphabet and projection. We represent be-havior at a higher level as a sequence of discrete 
+
+atomic skills , where each skill corresponds to an interpretable primitive such as E XPLORE , T AKE ,etc. Let Σ = {σ1, . . . , σ KΣ } denote a finite atomic skill alphabet , where each σi is a skill. A skill pro-jection φ maps each trajectory τ to a skill sequence 
+
+s ∈ Σ∗, abstracting away low-level action details: 
+
+φ : τ 7 → s ∈ Σ∗. KΣ := |Σ| is the size of the skill alphabet and ∗ denotes the Kleene star. In our in-stantiation, |Σ| is small and environment-specific, and φ is implemented by a rule-based mapping over the verbs of the raw actions; per-environment mapping rules are summarized in §4. 
+
+Skill dictionary. To measure structural reuse, we represent successful behavior using a skill dictio-nary C = {p1, . . . , p M }, where each entry pj ∈
+
+Σ≤L is a short skill sub-sequence of length at most 
+
+L. Each pj is therefore a reusable subsequence of atomic skills, and |pj | refers to the number of atomic skills in pj . Given the group of success-ful trajectories B+, we restrict our attention to the universe of valid dictionaries, A := {C ⊆ Σ≤L :Σ ⊆ C} , which guarantees that every dictionary contains all atomic singleton skills. This ensures that any atomic skill sequence s = φ(τ ), τ ∈ B +
+
+can always be exactly represented using phrases from C, in the worst case as a concatenation of singletons. Given s and C, let seg( s, C) denote the 3minimum number of dictionary phrases needed to cover s exactly; we compute this quantity by dy-namic programming. Smaller values of seg( s, C)
+
+indicate that s is more compressible under C. Since 
+
+B+ ⊆ C ∗ and φ assigns at most one skill label per environment step, every non-empty skill sequence satisfies: 1 ≤ seg( s, C) ≤ | s| ≤ T .
+
+3.2 Two-Part Description Length of the Successful Batch 
+
+For a sampled batch B = {(di, τ i)}ni=1 , let B+ := 
+
+{τi : R(τi) = 1 , τ i ∈ B} denote the subset of suc-cessful trajectories, and let si = φ(τi) be the skill sequence of τi ∈ B +. When B+̸ = ∅, we evalu-ate a candidate skill dictionary C using a standard two-part code following the MDL principle (Rissa-nen, 1978; Grünwald, 2007): one part encodes the shared dictionary itself, and the other encodes the successful skill sequences using phrases from that dictionary. We thus define the dictionary cost as 
+
+Lskill _dict (C) = 
+
+> M
+
+X
+
+> j=1
+
+ |pj | log 2 KΣ + log 2 L (2) which measures the cost of storing the M phrases in C: |pj | log 2 KΣ accounts for the cost of specify-ing the atomic skills in pj , and log 2 L accounts for its length. The corresponding batch-level descrip-tion length of B+ under C is 
+
+LBDL (B+, C) = Lskill _dict (C)
+
+|B +|
+
++ 1
+
+|B +|
+
+X
+
+> τi∈B +
+
+seg( φ(τi), C) log 2|C| 
+
+(3) The first term is the shared cost of the dictionary, amortized across successful trajectories. The sec-ond term is the average cost of reconstructing their skill sequences using phrases from C. From a standard coding perspective, the dynamic pro-gramming segmentation partitions a sequence into 
+
+seg( φ(τi), C) distinct phrases. Assuming a uni-form code over the dictionary entries, specifying each phrase requires log 2 |C| bits to index. There-fore, their product yields the total bits required to encode the data given the dictionary. We select the batch dictionary by minimizing this objective: 
+
+ˆC(B+) = arg min  
+
+> C∈A
+
+LBDL (B+, C) (4) Equation (3) is the objective we minimize over C
+
+to extract the shared dictionary. The next subsec-tion derives the corresponding per-trajectory signal that the policy should optimize, by examining the structure of joint MDL minimization over (C, π θ).
+
+3.3 EM-style Optimization of the MDL Objective: The segmentation cost 
+
+Jointly minimizing the description length over both the shared dictionary C and the policy πθ natu-rally yields an EM-style alternating procedure: the current policy generates a batch of successful tra-jectories B+, from which we infer a compressive dictionary C (E-step); holding this dictionary fixed, we then update πθ to favor successful trajectories that are cheaper to encode under C (M-step). 
+
+E-step (dictionary extraction). With πθ fixed, we re-estimate the shared dictionary from the cur-rent successful batch B+ by solving Eq. (4) . The dictionary-storage term Lskill _dict (C)/|B +| is con-structive here: it controls which shared structure we extract by trading dictionary size against per-trajectory segmentation cost. 
+
+M-step (policy update). With C fixed at C(B+),we move πθ toward successful trajectories whose skill sequences are cheap to encode under C. Once 
+
+C is fixed, the only part of the joint description length that varies with the individual trajectory is the conditional segmentation cost, and this is the quantity we attach to the per-trajectory RL signal. Concretely, we use the segmentation cost of a successful trajectory τi with skill sequence si =
+
+φ(τi) under dictionary C as. 
+
+SegCost( si | C ) := seg( si, C)
+
+T (5) A trajectory that decomposes into a few long reusable phrases has seg( s, C) ≪ T and a lower segmentation cost; a trajectory composed of unre-lated singleton skills has seg( s, C) = |s| ≈ T and the maximum segmentation cost of 1.The augmented trajectory-level RL objective is therefore to maximize 
+
+E 
+
+> B∼ (D,π θ)n
+
+"
+
+1
+
+n
+
+> n
+
+X
+
+> i=1
+
+
+
+R(τi)
+
+− λ · 1{R(τi) = 1 } SegCost  si | C (B+)#
+
+(6) with λ as the efficiency coefficient. The indicator restricts the penalty to successful trajectories, so the signal never discourages task completion. The full alternating procedure, i.e., E-step over C(B+),4then M-step GRPO update over πθ, iteratively re-duces the joint description length of the successful behavior the policy produces. 
+
+3.4 Pure Round Length as Fixed-Code MDL 
+
+Pure round-length penalties compress trajectories uniformly by discouraging all steps equally, regard-less of whether those steps participate in reusable behavioral structure. In our framework, this cor-responds to a degenerate fixed-code setting where the dictionary contains only singleton skills and is not allowed to merge into reusable phrases. 
+
+Proposition 1 (Pure round length is the fixed– code segmentation cost) . Let CΣ := Σ ∈ A be the singleton-only dictionary. Then for every non-empty skill sequence s,
+
+seg( s, CΣ) = |s| and SegCost( s | C Σ) = |s|
+
+T .
+
+For the singleton-only dictionary, segmentation cost is exactly pure round length. For any dic-tionary containing a useful non-singleton phrase, there exist equal-length sequences that receive dif-ferent segmentation costs. Thus, raw length cannot, in general, distinguish reusable from non-reusable structure. (Proof in §A.) 
+
+The proposition has a direct empirical conse-quence. Uniform brevity cannot distinguish se-quences with the same raw length but different segmentation costs and fail to favor reusable com-positional structure across different successful tra-jectories. 
+
+3.5 Generalization Bound on the MDL Objective 
+
+We now theoretically analyze the MDL objective utilized in the EM-style optimization of §3.3 by deriving a PAC-Bayes bound on the expected de-scription length of successful skill sequences. Im-portantly, this theorem bounds the expected de-scription length under a fixed policy distribution, rather than characterizing policy generalization af-ter iterative RL updates. The argument guarantees that if an extracted dictionary tightly compresses an observed successful batch, its expected descrip-tion length on future successful trajectories from the same distribution is formally bounded. While this does not alone prove that the per-trajectory penalty acts as a generalization-improving regular-izer, it formally justifies using the empirical MDL objective as a reliable measure for evaluating the structural reusability of successful behaviors. For a given πθ, let Q+ 
+
+> θ
+
+denote the distribution over successful skill sequences induced by d ∼ D ,
+
+τ ∼ πθ(· | d), s = φ(τ ), and R(τ ) = 1 .
+
+Assumption 2 (Compositional skill structure) . The successful skill-sequence distribution Q+ 
+
+> θ
+
+admits a shared reusable decomposition: there exists a dictionary C⋆ ∈ A such that (i) the dictionary itself has bounded complexity, Lskill _dict (C⋆) ≤ B⋆; and (ii) every successful skill sequence s in the support of Q+ 
+
+> θ
+
+can be segmented using at most K⋆ phrases from C⋆, i.e., seg( s, C⋆) ≤ K⋆. Here B⋆ and K⋆
+
+are distribution-dependent constants determined by the task family, skill alphabet, and phrase-length cap; they do not scale with the sample size. 
+
+This assumption states that successful reasoning trajectories are generated by composing a bounded number of reusable skill patterns from a shared vocabulary, a condition naturally satisfied in struc-tured environments such as ALFWorld, where di-verse household tasks decompose into common subroutines (e.g., E XPLORE → TAKE → TRANS - 
+
+> FORM
+
+→ DELIVER ). 
+
+Theorem 3 (Trajectory-level MDL generalization bound) . Let P (C) ∝ 2−Lskill _dict (C), C ∈ A , be a prior over admissible dictionaries fixed before observing any successful training sample. Draw 
+
+m ≥ 1 i.i.d. successful skill sequences Sm =(s1, . . . , s m) ∼ (Q+ 
+
+> θ
+
+)m, and let bC = bC(Sm) be any dictionary extracted from this successful sample. To normalize the per-trajectory MDL loss, define 
+
+Um(C) = Lskill _dict (C)
+
+m + T log 2 |C| ,
+
+eℓm(s, C) = Lskill _dict (C)/m + seg( s, C) log 2 |C| 
+
+Um(C)
+
+Then eℓm(s, C) ∈ [0 , 1] for every non-empty suc-cessful skill sequence s. Moreover, for any δ > 0,with probability at least 1 − δ over the draw of Sm,
+
+Es∼Q+
+
+> θ
+
+heℓm(s, bC)
+
+i
+
+≤ 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+eℓm(si, bC)+
+
+s
+
+Lskill _dict ( bC) ln 2 + ln( m/δ )2m
+
+(7) 
+
+The expected normalized MDL of the extracted dic-tionary on a fresh successful skill sequence drawn from Q+ 
+
+> θ
+
+is therefore bounded by its empirical nor-malized MDL on the observed successful sample, plus a complexity term that decreases with m and increases with the description length of bC. The 
+
+5proof, together with a corollary translating B⋆ and 
+
+K⋆ into an explicit bound on future description length under C⋆, is provided in §A. 
+
+3.6 SkillRL and ERL as Implicit MDL Minimizers 
+
+Recent skill-reuse frameworks implicitly com-press different parts of the behavioral pipeline but do not explicitly optimize the shared successful-trajectory objective in Eq. (6) . SkillRL (Xia et al., 2026) constructs a hierarchical skill library via teacher-model distillation, effectively compress-ing the dictionary term Lskill _dict but not penal-izing per-trajectory segmentation complexity dur-ing RL updates. ERL (Shi et al., 2026) embeds an experience–reflection–consolidation loop that compresses instance-level correction traces into model weights but does not enforce shared com-positional patterns across trajectories. In contrast, REUSE RL explicitly minimizes the full batch-level MDL objective by the EM process, simultaneously searching for a compact shared codebook and in-centivizing reusable skill compositions among suc-cessful trajectories. Formal objective comparisons for these two methods are provided in §B. 
+
+3.7 Algorithm and Implementation 
+
+We implement R EUSE RL as a reward-shaping mod-ule within the GRPO training loop. Algorithm 1 in the appendix summarizes the procedure. 
+
+Atomic skill extraction. Given a successful tra-jectory τ , we extract its skill sequence φ(τ ) ∈ Σ∗
+
+via a deterministic rule-based mapping over the raw action verbs. We intentionally choose a small, task-generic alphabet to capture reusable structure without collapsing into near-raw actions or losing critical behavioral distinctions. Mapping rules are summarized in §4.2. 
+
+BPE dictionary extraction with a global suc-cess buffer. We approximate the optimal dictio-nary C by a greedy Byte Pair Encoding (BPE) al-gorithm (Gage, 1994). Starting from singleton phrases (one per atomic skill in Σ), we repeat-edly propose an adjacent phrase pair (pa, p b) for merging, where candidate pairs are ranked by fre-quency in the successful cluster T , which consists of the current successful batch B+ and an optional global successful buffer G. The global buffer, col-lecting successful trajectories across batches in a FIFO structure, is to stabilize the E-step across small successful batches. A candidate merge is accepted only if adding the concatenated phrase 
+
+pa ◦ pb strictly decreases the batch objective: 
+
+∆BDL = LBDL (Tb, C ∪ { pa ◦ pb})
+
+− L BDL (Tb, C) < 0
+
+We cap phrase length at L = 4 to avoid overfit-ting to specific trajectory-level details. This greedy procedure approximates the NP-hard optimal dic-tionary search (Kozma and Voderholzer, 2024) and terminates when no merge yields a negative MDL delta, which is further validated in §6. 
+
+4 Experimental Settings 
+
+4.1 Tasks 
+
+We evaluate REUSE RL on three text-based agentic benchmarks: ALFWorld (Shridhar et al., 2021) for household interaction tasks, 
+
+TextWorld-Cooking (Côté et al., 2018) for recipe-following with irreversible processing errors, and 
+
+Countdown-Stepwise (Stojanovski et al., 2026) for arithmetic planning with rollback and reset ac-tions. More details are in §D. 
+
+4.2 Atomic Skill Extraction 
+
+Based on each task, we manually define determin-istic rule-based skill projection over raw actions. ALFWorld uses 5 navigation/manipulation skills, TextWorld-Cooking uses 10 recipe-execution skills, and Countdown-Stepwise uses 26 target-relative arithmetic skills. More details are in §E. 
+
+4.3 Training and Evaluation 
+
+All experiments are trained with GRPO for 300 steps. We use Qwen2.5-1.5B-Instruct (Qwen Team, 2024) for ALFWorld and Countdown-Stepwise, and Qwen3-1.7B (Yang et al., 2025) in non-thinking mode for TextWorld-Cooking. For ALF-World, we report SC@7 (Wang et al., 2023b): for each test scene, we sample 7 rollouts and deter-mine success by majority vote. It has two test splits: IID and OOD . For TextWorld-Cooking and Countdown-Stepwise, we report Pass@1 averaged over three independent runs, reporting the mean and standard deviation across seeds. More imple-mentation and evaluation details are in §D. 
+
+4.4 Compared Methods 
+
+We compare four configurations per environment: (1) Vanilla : the base model without any RL train-ing; (2) Vanilla GRPO : standard GRPO without any compression signal; (3) pure-round-length :6GRPO augmented with the penalty ·| s|/T on suc-cessful trajectories, which Proposition 1 shows is the fixed-code degenerate instance of R EUSE RL; (4) REUSE RL-SegCost (Ours) : GRPO aug-mented with the penalty seg (s, C)/T , where the dictionary C is extracted from the successful batch combined with the global buffer. 
+
+5 Main Results 
+
+Structural compression translates to improved reasoning generalization. Crucially, the gains in Table 1 demonstrate that R EUSE RL improves be-yond vanilla GRPO and the uniform compression. The strongest evidence is its out-of-distribution and compositional transfer: R EUSE RL achieves its largest absolute improvement on the ALFWorld OOD split and held-out data from TW-Cooking and Countdown-Stepwise. 
+
+Compression robustly beats GRPO in environ-ments dominated by step-budget exhaustion. 
+
+On ALFWorld and Countdown-Stepwise, all com-pression methods outperform vanilla GRPO by large margins ( +11 .94 / +8 .56% for pure-round-length on ALFWorld OOD / Countdown Pass@1, and another +1 .49 / +3 .35% for segmentation cost), because the intermediate states are highly reversible by actions. Invalid or suboptimal actions largely waste the step budget rather than triggering immediate fatal traps. This means any structurally consistent compression signal is informative. 
+
+Uniform length pressure backfires when re-dundant actions trigger irreversible failures. 
+
+On TextWorld-Cooking, pure-round-length drops significantly, 10 .94 points even below vanilla GRPO. After the case study, failures concentrate on 
+
+cook=False + cookbook-says-cook recipes, whose 
+
+cook gate is off because the ingredient arrives al-ready in cooked form (e.g. roasted red apple on the counter) even though the cookbook still men-tions the cooking of the ingredients, so attempting to cook the ingredient a second time burns it. More analysis about it is detailed in §7.2. 
+
+A learned multi-step dictionary recovers task-conditional structure. REUSE RL-SegCost im-proves over pure-round-length on all three benchmarks ( +0 .71 /+1 .49 % ALFWorld IID/OOD, 
+
++17 .70 % TW-Cooking, +3 .35 % Countdown). The TW-Cooking gap is largest because pure-round-length minimizes raw step count and falls into the brittle cookbook-literal shortcut, whereas the segmentation cost rewards skill subsequences that recur across successful trajectories and so favors the recipe-faithful macro that generalizes. The strict empirical ordering R EUSE RL-SegCost ≻
+
+pure-round-length ≻ Vanilla GRPO holds on ev-ery benchmark except the middle term on TW-Cooking, where pure-round-length falls below GRPO. This inversion, predicted by Proposition 1, shows that effective compression must capture structure rather than raw length. 
+
+6 Ablations 
+
+6.1 Effectiveness of Greedy BPE Dictionary Extraction 
+
+The shared dictionary objective LBDL (Eq. 3) is NP-hard to minimize exactly over the admissible class A, so the E-step in Algorithm 1 uses a greedy BPE merge schedule. On a synthetic corpus of dummy skill sequences, this schedule comes within 
+
+0.14% of the matched brute-force optimum, recov-ers 99 .02% of its non-singleton phrases, and runs 
+
+285 × and 2231 × faster than the two brute-force variants. The greedy upper bound is thus tight enough that minimizing it inline effectively reduces 
+
+LBDL over A at a cost low enough to run alongside every GRPO update. Full protocol and baselines are in §F.1. 
+
+6.2 Global Success Buffer 
+
+Table 1 reports an ablation without the global suc-cess buffer. The buffer is beneficial when suc-cessful trajectories within a single batch are too sparse or diverse for BPE to identify stable reusable phrases. Removing it lowers ALFWorld SC@7 from 97 .14 /93 .28 % to 93 .57 /89 .55 % on IID/OOD, and drops Countdown Pass@1 from 80 .37 % to 
+
+68 .94 %. However, the buffer can be harmful when dominated by easy trajectory patterns. On TextWorld-Cooking, removing the buffer raises TW-Cooking Pass@1 from 81 .73 % to 83 .50 %, en-tirely on the hard split ( 9.0% → 18 .5% solved, while simple games saturate at 99 .8% either way). A persistent buffer over-represents majority-class macros from simple games, pruning the interleaved cut-and-cook structures required for hard recipes, whereas a thinner per-batch corpus preserves this minority structure. More details are in §F.2. 
+
+7 Case Study 
+
+We now examine how environment structure shapes the behavior induced by different compression ob-7ALFWorld (SC@7) TW-Cooking Countdown-Stepwise Method IID OOD Pass@1 Pass@1 Vanilla 3.57 1.49 6.80 ± 1.14 20.57 ± 0.98 Vanilla GRPO 84.29 79.85 74.97 ± 0.76 68.46 ± 0.45 Pure Round-Length 96.43 91.79 64.03 ± 0.25 77.02 ± 0.96 REUSE RL-SegCost (no buffer) 93.57 89.55 83.50 ± 0.10 68.94 ± 0.36 REUSE RL-SegCost 97.14 93.28 81.73 ± 0.23 80.37 ± 0.33 
+
+Table 1: Main results. Bold marks the best score per column, attained by a R EUSE RL-SegCost variant on every benchmark. Both variants are contributions of this work, and the unmarked R EUSE RL-SegCost uses the global success buffer, whose role we analyze in §6. ALFWorld reports SC@7 on IID and OOD splits of 140 and 134 scenes. TW-Cooking and Countdown-Stepwise report Pass@1 over 1000 and 1024 test instances as mean ± std across three seeds.                                 
+
+> Metric GRPO Pure Len. SegCost (buf) SegCost (no-buf) ALFWorld (IID successes)
+> Success length, steps 15.3 8.7 9.3 8.4
+> Invalid, % 23.5 1.4 1.8 3.9 Repeat, % 40.4 9.4 14.4 9.9
+> TW-Cooking (all episodes)
+> Success length, steps 12.1 8.2 9.0 8.8 Burned failures, % 21.1 74.0 3.3 9.7
+> Countdown-Stepwise (all episodes)
+> 0-R ESET success, % 58.0 82.0 80.3 99.9
+> MUL /D IV OPs, % 3.1 6.8 10.9 5.5
+
+Table 2: Combined non-SR behavioral signals at training step 300. “Invalid” (ALFWorld) is the fraction of successful actions returning “Nothing happens.” “Repeat” is the fraction of repeated actions within an episode. “Burned” marks TW-Cooking failures containing “burned.” Countdown-Stepwise failures are either timeouts (30-step limit) or stuck episodes caused by invalid or unparsable actions. 
+
+jectives. Table 2 reports trajectory-level statistics at training step 300 that reveal failure modes and behavioral trade-offs beyond success rate alone. 
+
+7.1 ALFWorld: Efficiency-Driven Gains over GRPO 
+
+ALFWorld’s only failure mode is timeout, so step budget is the binding constraint; GRPO leaks it to invalid loops and action repetition, and both REUSE RL variants cut average successful-episode length from 15 .3 to ∼ 9 steps. The residual SegCost-vs-round-length gap localizes to complex multi-object tasks (§G); several high-frequency phrases recovered by R EUSE RL-segmentation cost coincide with skills distilled in SkillRL’s Skill-bank (Xia et al., 2026), with the correspondence listed in Table 11, §G. 
+
+7.2 TextWorld-Cooking: The Burned-Food Failure of Pure Round Length 
+
+Pure-round-length collapses onto the Burned fail-ure mode ( 74% of its failures vs. 21% for GRPO, Table 2) with the shortest failed trajectories of any method ( 10 .6 steps), while R EUSE RL-SegCost achieves comparable successful-episode efficiency with substantially fewer burn failures. The mechanism—cookbook-literal cook on already-cooked ingredients—is policy-side for failing to learn the skill structures over different successful trajectories and triggering the biases of emitting the cook actions. More details about the failing are in §F.2, and Table 5, §G. 
+
+7.3 Countdown-Stepwise: Solver-Template Formation and Operation Diversity 
+
+Compression accelerates straight-through (zero-RESET ) solving and uniquely expands M UL /D IV 
+
+usage under R EUSE RL-SegCost, the signature of a learned dictionary that captures multi-step solver templates (e.g., executing a large subtraction to approach the target followed immediately by a pre-cise division to clear the remainder). Per-method closing-OP counts and the full failure-mode parti-tion are in §F.2 and §G. 
+
+8 Conclusion 
+
+We presented R EUSE RL, augmenting GRPO with a segmentation cost seg (s, C)/T derived from an EM-style MDL objective. By extracting a shared dictionary of reusable skills and penalizing idiosyn-cratic, one-off action sequences, R EUSE RL reg-ularizes against reasoning collapse such as wast-ing budgets and overfitting to certain curriculum in a task. This compression forces the agent to internalize transferable logic rather than memo-rize task-specific shortcuts, directly improving rea-soning. Empirically, this generalization is evi-denced by R EUSE RL’s significant gains on the ALFWorld OOD split, its avoidance of decep-tive traps in TextWorld-Cooking, and its system-atic formation of multi-step solver templates in Countdown-Stepwise. 8Limitations 
+
+REUSE RL has four main limitations. (i) The skill projection φ is a rule-based per-environment map-ping over action verbs; transferring R EUSE RL to a new domain requires a small amount of man-ual schema design (although the mapping itself is short and easily verifiable, and we consider this trade-off favorable to relying on an external LLM parser). (ii) The greedy BPE dictionary search is an approximation to the NP-hard optimal-dictionary problem (Kozma and Voderholzer, 2024); it is suf-ficient for the alphabets considered here, but the approximation gap is expected to grow with |Σ|
+
+and may require alternative search heuristics in larger-vocabulary domains. (iii) The generalization argument relies on Assumption 2: successful trajec-tories must admit a shared reusable decomposition with bounded dictionary complexity and bounded per-trajectory segment count. The assumption is a mild structural condition for the agentic bench-marks studied here, but can fail in unstructured or purely-novel reasoning domains where success-ful trajectories share less reusable substructure, in which case the segmentation cost signal degener-ates toward the round-length penalty. (iv) Our ex-periments are restricted to text-based agentic bench-marks and 1.5–1.7B-parameter base models; ex-tending R EUSE RL to vision-language agents and to larger backbones is left to future work. 
+
+Use of LLMs 
+
+We have NOT used LLMs to originate research ideas, NOT used LLMs to write original content in the paper, NOT used LLMs to generate data or plots. 
+
+References 
+
+Roberto Cipollone, Luca Iocchi, and Matteo Leonetti. 2025. Realizable abstractions: Near-optimal hi-erarchical reinforcement learning. arXiv preprint arXiv:2512.04958 .Marc-Alexandre Côté, Akos Kádár, Xingdi Yuan, Ben Kybartas, Tavian Barnes, Emery Fine, James Moore, Matthew Hausknecht, Layla El Asri, Mahmoud Adada, and 1 others. 2018. Textworld: A learning environment for text-based games. In Workshop on Computer Games , pages 41–75. Springer. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2025. Group-in-group policy optimization for LLM agent training. In The Thirty-ninth Annual Confer-ence on Neural Information Processing Systems .Philip Gage. 1994. A new algorithm for data compres-sion. C Users J. , 12(2):23–38. Peter D. Grünwald. 2007. The Minimum Description Length Principle . MIT Press. Yiding Jiang, Evan Liu, Benjamin Eysenbach, J Zico Kolter, and Chelsea Finn. 2022. Learning options via compression. Advances in Neural Information Processing Systems , 35:21184–21199. Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan O Arik, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learn-ing. In Second Conference on Language Modeling .László Kozma and Johannes Voderholzer. 2024. Theo-retical analysis of byte-pair encoding. arXiv preprint arXiv:2411.08671 .Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th Symposium on Operating Systems Principles , SOSP ’23, page 611–626, New York, NY, USA. Association for Computing Machinery. Wenze Lin, Zhen Yang, Xitai Jiang, Xiaoteng Ma, and Gao Huang. 2026. Boosting llm reason-ing via human-inspired reward shaping. Preprint ,arXiv:2602.04265. Fabio Valerio Massoli, Andrey Kuzmin, and Arash Be-hboodi. 2026. Reasoning as compression: Unifying budget forcing via the conditional information bottle-neck. In The 1st Workshop on Scaling Post-training for LLMs .David A. McAllester. 2003. PAC-Bayesian stochastic model selection. Machine Learning , 51(1):5–21. Qwen Team. 2024. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115 .Jorma Rissanen. 1978. Modeling by shortest data de-scription. Automatica , 14(5):465–471. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Rico Sennrich, Barry Haddow, and Alexandra Birch. 2016. Neural machine translation of rare words with subword units. In Proceedings of the 54th annual meeting of the association for computational linguis-tics (volume 1: long papers) , pages 1715–1725. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, and 1 others. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .
+
+9Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2025. Hybridflow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Sys-tems , pages 1279–1297. Taiwei Shi, Sihao Chen, Bowen Jiang, Linxin Song, Longqi Yang, and Jieyu Zhao. 2026. Expe-riential reinforcement learning. arXiv preprint arXiv:2602.13949 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652. Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2021. ALFWorld: Aligning text and embodied environments for interactive learning. In 
+
+International Conference on Learning Representa-tions .Zafir Stojanovski, Oliver Stanley, Joe Sharratt, Richard Jones, Abdulhakeem Adefioye, Jean Kaddour, and Andreas Köpf. 2026. Reasoning gym: Reasoning en-vironments for reinforcement learning with verifiable rewards. Advances in Neural Information Processing Systems , 38. Richard S. Sutton, Doina Precup, and Satinder Singh. 1999. Between mdps and semi-mdps: A framework for temporal abstraction in reinforcement learning. 
+
+Artificial Intelligence , 112(1):181–211. Borui Wang, Kathleen McKeown, and Rex Ying. 2025a. Dystil: Dynamic strategy induction with large lan-guage models for reinforcement learning. arXiv preprint arXiv:2505.03209 .Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. 2023a. Voyager: An open-ended embodied agent with large language models. In Intrinsically-Motivated and Open-Ended Learning Workshop@ NeurIPS2023 .Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. 2023b. Self-consistency improves chain of thought reasoning in language models. In 
+
+The Eleventh International Conference on Learning Representations .Zehong Wang, Fang Wu, Hongru Wang, Xiangru Tang, Bolian Li, Zhenfei Yin, Yijun Ma, Yiyang Li, Weix-iang Sun, Xiusi Chen, and 1 others. 2026a. Why reasoning fails to plan: A planning-centric analysis of long-horizon decision making in llm agents. arXiv preprint arXiv:2601.22311 .Zihan Wang, Chi Gui, Xing Jin, Qineng Wang, Licheng Liu, Kangrui Wang, Shiqi Chen, Linjie Li, Zhengyuan Yang, Pingyue Zhang, and 1 others. 2026b. Ragen-2: Reasoning collapse in agentic rl. 
+
+arXiv preprint arXiv:2604.06268 .Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, and 1 others. 2025b. Ragen: Understanding self-evolution in llm agents via multi-turn reinforcement learning. arXiv preprint arXiv:2504.20073 .Xingyu Wu, Yuchen Yan, Shangke Lyu, Linjuan Wu, Yiwen Qiu, Yongliang Shen, Weiming Lu, Jian Shao, Jun Xiao, and Yueting Zhuang. 2025. Lapo: Internal-izing reasoning efficiency via length-adaptive policy optimization. arXiv preprint arXiv:2507.15758 .Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu, Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou, Xu-jiang Zhao, Haifeng Chen, and 1 others. 2026. Skillrl: Evolving agents via recursive skill-augmented re-inforcement learning. In ICLR 2026 Workshop on Memory for LLM-Based Agentic Systems .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023. React: Synergizing reasoning and acting in language models. In ICLR . OpenReview.net. Danlong Yuan, Tian Xie, Shaohan Huang, Zhuocheng Gong, Huishuai Zhang, Chong Luo, Furu Wei, and Dongyan Zhao. 2026. Shorten after you’re right: Lazy length penalties for reasoning rl. Preprint ,arXiv:2505.12284. Xuanran Zhai, Zekai Huang, Longyan Wu, Qianyou Zhao, Qiaojun Yu, Jieji Ren, Ce Hao, and Harold Soh. 2026. Skillvla: Tackling combinatorial diversity in dual-arm manipulation via skill reuse. arXiv preprint arXiv:2603.03836 .Jesse Zhang, Karl Pertsch, Jiefan Yang, and Joseph Lim. 2021. Minimum description length skills for acceler-ated reinforcement learning. In Self-Supervision for Reinforcement Learning Workshop - ICLR 2021 .Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. 2024. Expel: Llm agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 38, pages 19632–19642. Ruijie Zheng, Ching-An Cheng, Hal Daumé Iii, Furong Huang, and Andrey Kolobov. 2024. PRISE: LLM-style sequence compression for learning temporal action abstractions in control. In Proceedings of the 41st International Conference on Machine Learning ,volume 235 of Proceedings of Machine Learning Research , pages 61267–61286. PMLR. 
+
+10 A Proofs and Corollary 
+
+A.1 Proof of Proposition 1 
+
+Proof. The first claim is immediate: when CΣ = Σ 
+
+contains only singleton phrases, the unique exact segmentation of any non-empty s ∈ Σ∗ is the per-skill decomposition, so seg( s, CΣ) = |s| and 
+
+SegCost( s | C Σ) = |s|/T , which is exactly the pure round-length penalty. For the second claim, we prove it by coun-terexample. Let Σ = {σ1, σ 2, σ 3}, C =
+
+{(σ1), (σ2), (σ3), (σ1, σ 2)}, sA = (σ1, σ 2)T / 2,and sB = ( σ1, σ 3, σ 2, σ 3)T / 4 for T divisible by 
+
+4 gives seg( sA, C) = T / 2 and seg( sB , C) = T ,with the dictionary-storage term identical for both trajectories so the difference in segmentation cost comes entirely from the segmentation term. Combining the two claims, the round-length penalty |s|/T coincides with SegCost( s | C ) only when C = CΣ, and in every other admissible dic-tionary there exist trajectories with identical raw length but different segmentation costs; the round-length penalty is therefore not a consistent esti-mator of the segmentation cost under any non-degenerate dictionary. 
+
+A.2 Proof of Theorem 3 
+
+Proof. Define the prior 
+
+P (C) = 2−Lskill _dict (C)
+
+Z , Z = X
+
+> C′∈A
+
+2−Lskill _dict (C′)
+
+fixed before observing any successful training sam-ple. We first show that Z ≤ 1. From Eq. (2) ,the per-phrase code length is c(p) = |p| log 2 KΣ +log 2 L, and Lskill _dict (C) = P 
+
+> p∈C
+
+c(p), so 
+
+Z =
+
+ 1
+
+LK Σ
+
+KΣ LY
+
+> ℓ=2
+
+
+
+1 + 1
+
+LK ℓ
+
+> Σ
+
+Kℓ
+
+> Σ
+
+Using ln(1 + x) ≤ x,
+
+ln Z ≤ − KΣ ln( LK Σ) + L − 1
+
+L ≤ 0,
+
+hence Z ≤ 1.For a sample Sm = ( s1, . . . , s m) ∼ (Q+ 
+
+> θ
+
+)m and a dictionary C ∈ A , define the normalized loss 
+
+dm(C) := Lskill -dict (C)
+
+mUm(C) := dm(C) + T log 2 |C| .
+
+For s ∈ Sm, define the normalized loss 
+
+eℓm(s, C) := dm(C) + seg( s, C) log 2 |C| 
+
+Um(C) .
+
+Because every non-empty successful skill sequence satisfies 1 ≤ seg( s, C) ≤ T , we have eℓm(s, C) ∈
+
+[0 , 1] . Write 
+
+Lm(Q) := EC∼ QEs∼Q+
+
+> θ
+
+eℓm(s, C),
+
+bLm(Q; Sm) := EC∼ Q
+
+"
+
+1
+
+m
+
+> m
+
+X
+
+> i=1
+
+eℓm(si, C)
+
+#
+
+.
+
+Let Q be the posterior point mass on the extracted dictionary bC = bC(Sm). The standard PAC-Bayes bound for [0 , 1] -valued losses (McAllester, 2003) gives that, with probability at least 1 − δ over the draw of Sm,
+
+kl  bLm(Q) L(Q) ≤ KL( Q∥P ) + ln( m/δ )
+
+m ,
+
+where kl( q∥p) denotes the binary KL divergence. Since Q is a point mass on bC,
+
+KL( Q∥P ) = − ln P ( bC)= Lskill -dict ( bC) ln 2 + ln Z
+
+≤ Lskill -dict ( bC) ln 2 ,
+
+using Z ≤ 1. Substituting and applying Pinsker’s inequality |p − q| ≤ pkl( p∥q)/2 yields 
+
+L(Q) ≤ bLm(Q)+ 
+
+s
+
+Lskill _dict ( bC) ln 2 + ln( m/δ )2m .
+
+Because Q is a point mass on bC, the expectations over C ∼ Q collapse: 
+
+L(Q) = Es∼Q+
+
+> θ
+
+heℓm(s, bC)
+
+i
+
+,
+
+bLm(Q) = 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+eℓm(si, bC).
+
+which establishes Eq. (7). 
+
+A.3 Corollary on the Universal Dictionary Proposition 4 (Bound under the universal dictio-nary) . Under Assumption 2, for every s in the sup-port of Q+ 
+
+> θ
+
+, the dictionary C⋆ satisfies 
+
+Lskill -dict (C⋆)
+
+m + seg( s, C⋆) log 2 |C ⋆|≤ U ⋆m := B⋆
+
+m + K⋆ log 2 |C ⋆|.
+
+11 Applying the same PAC-Bayes argument to the nor-malized loss yields 
+
+ψ⋆m(s) := Lskill -dict (C⋆)
+
+m + seg( s, C⋆) log 2 |C ⋆|.
+
+Es∼Q+
+
+> θ
+
+ψ⋆m(s) ≤ 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+ψ⋆m(si)+ U ⋆m
+
+r B⋆ ln 2 + ln( m/δ )2m .
+
+(8) Equation (8) makes the roles of B⋆ and K⋆ ex-plicit: a smaller universal dictionary and fewer reusable segments per successful trajectory directly imply a smaller out-of-sample description length for future successful trajectories. Combined with the EM picture of Section 3.3—in which the E-step reduces LBDL in C and the M-step reduces the em-pirical segmentation cost at fixed C—this corollary is what justifies the per-trajectory penalty in Eq. (6) as a generalization-improving regularizer. 
+
+B Implicit MDL: SkillRL and ERL Objective Decompositions 
+
+SkillRL as implicit library compression. 
+
+SkillRL (Xia et al., 2026) constructs a hierarchical skill library S = Sg ∪ S k (general and task-specific skills) via teacher-model distillation. Each skill 
+
+sj ∈ S is a natural-language behavioral rule compressed from multiple trajectories by an external teacher model. This distillation can be viewed as constructing an implicit codebook Cskill 
+
+where each entry encodes a reusable behavioral subroutine, and the skill-evolution and retrieval hyperparameters effectively manage which parts of this library are exposed to the base policy. How-ever, SkillRL does not penalize the segmentation complexity of successful trajectories during RL updates: the policy may still combine retrieved skills in arbitrarily complex ways. At a high level, SkillRL optimizes 
+
+JSkillRL (θ, S) = EB
+
+"
+
+1
+
+n
+
+> n
+
+X
+
+> i=1
+
+R(τ S 
+
+> i
+
+)
+
+#
+
+,
+
+S ← Evolve (S, π θ, Dval ) .
+
+(9) where τ S 
+
+> i
+
+denotes a trajectory generated with re-trieved skills. Moreover, their evolving library S
+
+does not compresses the dictionary term Lskill _dict 
+
+since they only allow addition of skills, the objec-tive contains no explicit success-conditioned term of the form 1{R(τi) = 1 } · SegCost( ·) during policy optimization, and the top-K retrieval only controls memory exposure rather than shared seg-mentation cost across successful trajectories. 
+
+ERL as implicit instance-level internalization. 
+
+ERL (Shi et al., 2026) implements an experience– reflection–consolidation loop: for a failed or under-performed trajectory τ (1) , the policy generates a structured reflection ∆ and a corrected trajec-tory τ (2) , and an internalization loss Ldistill (θ) = 
+
+−E[1(R(τ (2) ) > 0) log πθ(τ (2) | d)] trains the base policy to reproduce successful corrections 
+
+without the reflection context. In MDL terms, ERL starts with a two-part code L(∆) + L(τ (2) | ∆) 
+
+and compresses it into a single-part code L(τ (2) )
+
+by absorbing the codebook (reflections) into model weights—a genuine form of description-length minimization, but at the instance level: each re-flection addresses a single episode rather than cap-turing structural patterns shared across trajectories. The effective ERL objective is 
+
+JERL (θ) = EB
+
+"
+
+1
+
+n
+
+> n
+
+X
+
+> i=1
+
+
+
+R(τ (1)  
+
+> i
+
+)
+
+− η 1{R(τ (1)    
+
+> i)=0 ,R (τ(2)
+> i)=1
+
+}· KL( πθ(· | di, ∆i) ∥ πθ(· | di)) 
+
+#
+
+.
+
+(10) where the indicator activates the reverse-KL term only when the first attempt fails and the reflected second attempt succeeds. ERL therefore com-presses an instance-specific two-part code into model weights but does not search for a shared structural dictionary across the successful batch. 
+
+C Algorithm 
+
+Algorithm 1 summarizes the full R EUSE RL train-ing loop. 
+
+D More Training and Evaluation Details 
+
+Task Details ALFWorld requires an agent to complete household tasks (e.g., “heat a potato and place it on the counter”) by issuing natural-language actions in a partially observable simu-lated environment; the maximum interaction hori-zon is T = 50 steps and a successful trajec-tory receives terminal reward +10 , which means 
+
+R(τ ) ∈ { 0, 10 } because following the verl-agent (Feng et al., 2025) framework we have a invalid action penalty set as 0.01 and this sometimes 12 Algorithm 1: REUSE RL: BPE Skill-Compression RL with Segmentation Cost 
+
+Input: Policy πθ; skill alphabet Σ;efficiency coefficient λ; max steps 
+
+T ; phrase cap L; global FIFO success buffer G (optional). 
+
+for each training step do 
+
+Roll out πθ on a batch of tasks to obtain trajectories {τ1, . . . , τ n}
+
+Compute task rewards R(τi) ∈ { 0, 1}B+ ← { τi : R(τi) = 1 }
+
+// successful trajectories 
+
+if B+ = ∅ then 
+
+Update πθ via GRPO with original rewards {R(τi)}
+
+continue for τi ∈ B + do 
+
+si ← φ(τi) // rule-based projection over action verbs 
+
+Append {si : τi ∈ B +} to global FIFO buffer G (optional); 
+
+C ← BPE-MDL ({si : τi ∈ B + ∪ G} ; L)
+
+// greedy dictionary minimizing 
+
+LBDL 
+
+ℓi ← seg( si, C)/T for each τi ∈ B +
+
+ri ← R(τi) − λ · 1{R(τi) = 1 } · ℓi for 
+
+τi ∈ B +
+
+ri ← R(τi) for τi /∈ B +
+
+Update πθ via GRPO with shaped rewards {ri}
+
+prevents the model from collapsing their outputs. This mechanism has applied to all environments used here. TextWorld-Cooking is the cooking game under the TextWorld framework: the agent must read the recipe, find all ingredients, pro-cess them (cut/slice/dice), cook them, prepare the meal, and eat it; ordering matters and some pro-cessing steps could directly lead to failures such as burning the food, an irreversible terminal fail-ure. The current generated training and evaluation data both follow a 4:1 simple-hard division/splits based on the rooms, ingredients, is_cook, and is_cut settings; the hard setting is room=6, in-gredients=2, is_cook=True, is_cut=True and the simple setting refers to room=1, ingredients=1, is_cook=True|False, is_cut=True|False. We use 
+
+T = 40 and terminal reward +10 on success. Countdown-Stepwise is a stepwise variant of the Countdown game from Reasoning-Gym in which each action is either a single arithmetic operation between two numbers from the current number pool (A DD , S UB , M UL , or D IV ), R OLLBACK to undo the previous operation, or R ESET to restore the initial pool. We train and evaluate on 3- to 4-number scenarios with target values in [10 , 999] ,
+
+T = 30 , and terminal reward +10 on success. All three environments verify intermediate steps so that successful trajectories are process-correct. 
+
+Training Details Training is performed on Nvidia RTX Pro 6000 96 GB GPUs with tensor parallelism, using the verl-agent framework (Feng et al., 2025) on top of verl (Sheng et al., 2025). The efficiency coefficient is λ = 10 for both penalty-based variants as mentioned previously our binary reward setting is R(τ ) ∈ { 0, 10 }, following Feng et al. (2025). The evaluation inference engine is based on vLLM (Kwon et al., 2023). The skill-projection rules and BPE search are CPU-only and run inline with the GRPO update loop; the global FIFO success buffer is sized at 256 skill sequences. 
+
+Evaluation Details The Qwen2.5-1.5B-Instruct is using temperature=0.4 for sampling while the Qwen3-1.7B is following the recommended sam-pling setting: the temperature=0.7 top_p=0.8, and top_k=20, respectively. The Alfworld’s two test splits: IID and OOD have 140 and 134 scenes, respectively. The Textworld-Cooking and Countdown-Stepwise have 1000 and 1024 gener-ated test examples. 
+
+E Atomic Skill Alphabets and Rule-Based Mappings 
+
+This appendix details the deterministic verb-matching rules that implement the skill projection 
+
+φ for each environment. Table 3 lists the action prefix patterns and their atomic-skill targets. We additionally provide one worked example per envi-ronment to illustrate how a raw trajectory becomes an atomic-skill sequence. 
+
+E.1 ALFWorld ( |Σ| = 5 )Worked example. Goal. “put a clean ladle on countertop 1” 
+
+> Trajectory.
+> go to drawer 1 open drawer 1 ;
+> take ladle 1 from drawer 1 ;
+> go to sinkbasin 1 ;
+> clean ladle 1 with sinkbasin 1 ;
+> go to countertop 1 ;
+> put ladle 1 on countertop 1 .
+
+13 Action prefix / form Atomic skill ALFWorld (|Σ| = 5 )
+
+go to * , open * (not carrying) EXPLORE 
+
+go to * , open * (carrying) TRANSPORT 
+
+look , examine * EXPLORE 
+
+take * TAKE 
+
+move * , put * DELIVER 
+
+heat * , cool * , clean * , use * , light * TRANSFORM 
+
+TextWorld-Cooking (|Σ| = 10 )
+
+examine cookbook READ _R ECIPE 
+
+look , inventory , eat * , examine * (other) INSPECT 
+
+go * EXPLORE 
+
+open * , close * OPEN 
+
+take * TAKE 
+
+drop * , put * , insert * DELIVER 
+
+chop * , slice * , dice * CUT 
+
+cook * COOK 
+
+prepare meal PREPARE _M EAL 
+
+eat meal EAT _M EAL 
+
+Countdown-Stepwise (|Σ| = 26 )
+
+op (+ , n 1, n 2) OP_A DD -⟨r1⟩-⟨r2⟩
+
+op (−, n 1, n 2) OP_S UB -⟨r1⟩-⟨r2⟩
+
+op (∗, n 1, n 2) OP_M UL -⟨r1⟩-⟨r2⟩
+
+op (/, n 1, n 2) OP_D IV -⟨r1⟩-⟨r2⟩
+
+rollback ROLLBACK 
+
+reset RESET 
+
+Table 3: Atomic-skill mappings for all three environments. In ALFWorld, the carry flag is updated when an effective 
+
+take , move , or put action changes the inventory. In TextWorld-Cooking, open and close are merged into O PEN .In Countdown-Stepwise, r1, r 2 are target-relative role tags sorted alphabetically before joining. 
+
+Projection. 
+
+φ(τ ) = ( EXPLORE , EXPLORE , TAKE ,
+
+TRANSPORT , TRANSFORM , TRANSPORT ,
+
+DELIVER ).
+
+E.2 TextWorld-Cooking ( |Σ| = 10 )Worked example. Trajectory. 
+
+examine cookbook open fridge ;
+
+take carrot from fridge dice carrot ;
+
+cook carrot with stove ;
+
+prepare meal eat meal .
+
+Projection. 
+
+φ(τ ) = ( READ _R ECIPE , OPEN , TAKE ,
+
+CUT , COOK , PREPARE _M EAL ,
+
+EAT _M EAL ).
+
+E.3 Countdown-Stepwise ( |Σ| = 26 )
+
+Each step’s action is parsed into one of three forms: 
+
+Op( ⟨op ⟩, n 1, n 2), Rollback , or Reset . For an Op 
+
+action with operands (n1, n 2) and target Ttgt , each operand is assigned a target-relative role: 
+
+role( n) = 
+
+
+
+near _target , if |n − Ttgt | ≤ 0.10 |Ttgt |,
+
+small , if n < T tgt − 0.10 |Ttgt |,
+
+large , otherwise. 
+
+The two role tags are sorted alphabetically be-fore being joined, treating the operation as un-ordered. Thus, op(+, 1, 10) and op(+, 10, 1) induce the same unordered role pair. With four operators and six unordered role pairs from 
+
+{large , near _target , small }, this yields 4×6 = 24 
+
+operation skills, plus R OLLBACK and R ESET , for a total of 26 .
+
+Worked example. Puzzle. {80 , 2, 28 , 1} with target 
+
+Ttgt = 54 . Here n > 59 .4 is large , |n − 54 | ≤ 5.4 is 
+
+near _target , and all remaining values are small .
+
+Trajectory with roles. 
+
+op(-, 80, 28) : 80 7 → large , 28 7 → small ;
+
+op(+, 52, 2) : 52 7 → near _target , 2 7 → small ;
+
+op(*, 54, 1) : 54 7 → near _target , 1 7 → small .
+
+Projection. 
+
+φ(τ ) = ( OP_S UB -LARGE -SMALL ,
+
+OP_A DD -NEAR _TARGET -SMALL ,
+
+OP_M UL -NEAR _TARGET -SMALL ).
+
+F Ablation Details 
+
+F.1 More Details about BPE Merging Setup. We quantify the approximation gap be-tween greedy BPE-merging and exhaustive brute-14 force (BF) search over all candidate dictionaries. The benchmark is a synthetic corpus of around 200 random skill sequences with dummy atomic skills (|Σ| = 5 , i.e. {A, B, C, D, E }), with sequence lengths sampled uniformly from 2 to 6 and each group consisting of 10 sequences. We compare against two admissible brute-force variants. BF-all-singletons requires every corpus singleton to be retained in the candidate dictionaries, matching BPE’s structural invariant. BF-original drops this constraint and attains the true min LBDL by prun-ing singletons whose every occurrence is covered by a longer phrase. 
+
+Approximation quality. BPE attains a mean penalty of 7.25 , within 0.14% of BF-all-singletons (7.24 ) and recovering 99 .02% of its non-singleton phrases, showing that the greedy schedule is es-sentially exact within its own search space. BF-original reaches 7.01 , a 3.3% reduction below BPE’s upper bound, but shares only 66 .34% of non-singleton phrases with BPE and requires ex-haustive search. 
+
+Runtime. BPE takes 0.053 ms per group (10 .9 ms total), versus 11 .86 ms ( 2430 .6 ms total) for BF-all-singletons and 118 .58 ms ( 24308 .5 ms total) for BF-original, giving 285 × and 2231 ×
+
+speedups respectively. The combination of a tight approximation gap and negligible runtime is what makes inline E-step dictionary extraction practical within the GRPO loop. 
+
+F.2 More Details about the Global Success Buffer Ablation Countdown-Stepwise closing operations (Ta-ble 4). Countdown-Stepwise has exactly two terminal-loss conditions: Timeout (the 30 -step budget is exhausted) and Stuck (the model is-sues O P or an unparsable action while the work-ing pool has fewer than two numbers, which the env treats as unrecoverable). Within-episode R E-
+
+> SET
+
+/R OLLBACK counts and invalid-action counts are descriptors of rollout noise but not termination criteria. Table 4 reports the raw count of closing 
+
+operations per method—the operation that puts the pool at [ target ]—broken down by operator. Only the buffered segmentation cost lifts the rare ∗ and 
+
+/ closures (e.g. OP( ∗, 1, T ) to absorb a leftover 1); removing the buffer collapses the M UL count from 
+
+36 to 18 , essentially matching GRPO ( 20 ).                       
+
+> Closing OP GRPO Pure Length SegCost (buf) SegCost (no buf)
+> +(A DD )359 393 392 354
+> −(S UB )319 368 392 335
+> ∗(M UL )20 39 36 18
+> /(D IV )2010
+
+Table 4: Closing-operation counts on successful Countdown-Stepwise trajectories. The buffered seg-mentation cost variant retains the multiplicative-closure motifs that the no-buffer variant prunes.                  
+
+> Method Thought mentions
+> cook
+> Action
+> cook
+> |thought Cookbook says cook Cookbook silent
+> GRPO 24 812 16 Pure-Length 42 73 94 0SegCost (buf) 34 0.3 10SegCost (no buf) 61 0.3 10
+
+Table 5: Per-method thought-vs-action breakdown on 
+
+cook=False + cookbook-says-cook TW-Cooking games. The first two columns report step-level rates: how often thoughts mention cook , and how often the resulting action is cook conditional on such a mention. The last two columns report game-level cook-action emission rates by cookbook content. 
+
+TextWorld-Cooking mechanism (Table 5). We call a TW-Cooking recipe cook=False +cookbook-says-cook when its cook gate is off— the ingredient arrives in the observation already in cooked form, e.g. roasted red apple on the counter—but the cookbook page still mentions the cooking of the ingredients; attempting to cook the ingredient a second time burns it. There are 260 
+
+such games in the 1000 -game validation split. Ta-ble 5 reports, per method, (1) the share of decision steps whose chain-of-thought references a cook-ing verb ( cook|roast|fry|grill|stove|oven ), (2) the conditional rate at which such steps emit a cook action, and (3) the per-game emission rate of cook actions split by cookbook content. The four policies think about cooking at comparable rates (24–61%); only the cookbook-literal fixed-code policy commits to a cook action conditional on that thought ( 73% ), while both segmentation cost variants suppress the action to 0.3% .
+
+G Extended Case-Study Material and Learned-Dictionary Examples 
+
+This appendix collects the per-method trajectory analyses supporting Section 7, together with rep-resentative high-frequency non-singleton phrases from the learned dictionary bC and their correspon-15 ALFWorld IID (successes) GRPO Pure Length SegCost (buf) SegCost (no buf)                   
+
+> Avg succ.-episode length (steps) 15.3 8.7 9.3 8.4 “Nothing-happens” rate (%) 23.5 1.4 1.8 3.9 Action-repetition rate (%) 40.4 9.4 14.4 9.9 Redundant go to revisits 3.4 1.4 1.9 0.85
+
+Table 6: ALFWorld per-method behavioral quality on successful IID episodes. “Nothing happens.” is the env response when an action is not admissible from the current state. 
+
+dence to skills distilled by SkillRL (Xia et al., 2026). All trajectory-level numbers below are com-puted on the same single seed’s step-300 eval JSON per method. 
+
+ALFWorld (Table 6). Failed ALFWorld episodes all hit the 50 -step cap; behavioral signal therefore lives in the action-quality metrics on 
+
+successful episodes. Vanilla GRPO leaks roughly one-quarter of its slots to “Nothing happens.” returns and repeats earlier actions on 40% of slots; both R EUSE RL variants and pure-round-length reduce these pathologies to single digits. 
+
+ALFWorld failure modes on the OOD split (Table 7). Every failed ALFWorld episode hits the 50 -step cap; we label timeouts by what was still missing. never_picked_target 
+
+means no effective take of the goal object; 
+
+two_partial_deliver means only one of two in-stances was placed on pick_two_obj_and_place ;
+
+picked_no_transform means the agent took the goal object but never executed an effec-tive clean /heat /cool (checked only after a suc-cessful take). On the OOD split ( 134 logical games, 938 episodes), R EUSE RL-SegCost im-proves SC@7 by 1.49 pp over pure-round-length (93 .28 vs. 91 .79 ) with 21 fewer failed rollouts (50 vs. 71 ). The gap is driven almost entirely by 
+
+never_picked_target on held-out multi-phase 
+
+tasks—especially pick_clean_then_place_in_recep 
+
+(n=217 ), where Pure-Length accumulates 19 
+
+search failures vs. 6 for segmentation cost—not by two_partial_deliver (three failures each on Two-Obj) or lamp-ordering errors (both meth-ods reach 100% on Look+Light). Overall OOD 
+
+never_picked_target falls from 64 to 44 , match-ing the analysis that uniform step counting over-penalizes exploratory prefixes that the BPE dictio-nary treats as reusable structure. 
+
+TextWorld-Cooking (Table 8). Failed TW-Cooking episodes fall into three terminal condi-                                  
+
+> Failed OOD episodes (raw counts) GRPO Pure Length SegCost (buf) SegCost (no buf)
+> Clean+Place ( n=217 )
+> total fails 45 19 612
+> never_picked_target 42 19 612
+> picked_no_transform 3000
+> Two-Obj+Place ( n=119 )
+> total fails 61 9510
+> never_picked_target 39 515
+> two_partial_deliver 20 335
+> All OOD tasks
+> total fails 231 71 50 88
+> never_picked_target 181 64 44 67
+
+Table 7: ALFWorld failure-mode counts on the OOD split. Different error cases are shown with the subtasks.                       
+
+> TW-Cooking GRPO Pure Length SegCost (buf) SegCost (no buf)
+> Succ.-episode length (steps, mean) 12.06 8.23 9.00 8.83 Failed-episode length (steps, mean) 30.5 10.6 29.3 29.4
+> Failure-mode breakdown (% of failures)
+> Burned 21.1 74.0 3.3 9.7
+> Wrong processing/order 27.1 12.0 44.0 37.6
+> Timeout 51.8 14.0 52.7 52.7
+
+Table 8: TextWorld-Cooking per-method trajectory and failure-mode breakdown. 
+
+tions: Burned (the terminal observation contains 
+
+burned ), Wrong processing/order (a non-burn rule violation such as trying to slice an ingredi-ent that should be chopped), and Timeout (the 
+
+40 -step budget is exhausted without either lost marker). Pure-Length fails fast —mean failed-episode length 10 .6 steps—and almost always by burning; both segmentation cost variants fail near the step ceiling like GRPO. 
+
+Countdown-Stepwise (Table 9). An episode in Countdown-Stepwise terminates under exactly two negative conditions: (i) Timeout , where the agent exhausts the maximum allocation of 30 steps with-out reaching the target value, and (ii) Stuck , a pre-mature failure where the agent attempts to execute an arithmetic operation or emits an unparsable com-mand when fewer than two numbers remain avail-able in the working pool, rendering further evalu-ation mathematically impossible. Both compres-sion methods, pure-round-length and R EUSE RL-SegCost drive the failures toward Timeout (it has stopped getting stuck), while the no-buffer variant exhibits the opposite shift—a side-effect of having deleted R ESET from its repertoire (zero RESETs in 
+
+99 .9% of successes), leaving it unable to recover from early suboptimal operations once the numbers are collapsed. 16 Countdown-Stepwise GRPO Pure Length SegCost (buf) SegCost (no buf) 
+
+Succ.-episode length (steps, mean) 6.70 4.30 4.51 3.98 
+
+Avg R ESET s per success 1.07 0.52 0.58 0.00 
+
+Zero-R ESET successes (%) 58.0 82.0 80.3 99.9 
+
+Invalid-action rate, success (%) 5.0 0.3 0.5 1.0 Action-repetition rate, success (%) 10.7 5.5 4.4 5.9 
+
+Operation diversity in successful episodes 
+
+MUL /D IV share of OPs (%) 3.1 6.8 10.9 5.5 Avg unique op types per success 1.70 1.82 1.85 1.75 
+
+Env-level failure-mode partition (% of failures) 
+
+Timeout (len=30 ) 68.5 82.6 87.2 56.8 
+
+Stuck (len <30 , O P/INVALID_PARSE ) 31.5 17.4 12.8 43.2 
+
+Table 9: Countdown-Stepwise per-method trajectory analysis. The only env-level failure modes are Timeout 
+
+and Stuck .
+
+Learned dictionary phrases (Table 10) and SkillRL correspondence (Table 11). The phrases recovered by REUSE RL-SegCost re-flect environment-specific reusable structure: navigation-and-place skeletons in ALFWorld, recipe-faithful processing chains in TextWorld-Cooking, and multi-step solver templates in Countdown-Stepwise. On ALFWorld the learned non-singleton phrases align closely with skills distilled in SkillRL’s Skillbank (Xia et al., 2026). 17 Environment Representative top non-singleton phrases ALFWorld EXPLORE → TAKE 
+
+TAKE → TRANSPORT → DELIVER 
+
+EXPLORE → TAKE → TRANSPORT → DELIVER 
+
+TAKE → TRANSPORT → TRANSFORM → DELIVER 
+
+TextWorld-Cooking READ _R ECIPE → TAKE 
+
+TAKE → CUT 
+
+CUT → COOK 
+
+COOK → PREPARE _M EAL → EAT _M EAL 
+
+Countdown-Stepwise OP_S UB -LARGE -NEAR _TARGET → OP_D IV -NEAR _TARGET -SMALL 
+
+OP_A DD -SMALL -SMALL → OP_S UB -LARGE -NEAR _TARGET 
+
+OP_S UB -LARGE -LARGE → OP_A DD -NEAR _TARGET -SMALL 
+
+Table 10: Representative high-frequency non-singleton phrases of the extracted dictionary bC on each environment. 
+
+Extracted phrase (ALFWorld) Closest SkillRL Skillbank skill 
+
+TRANSPORT → TRANSFORM Approach a tool/appliance with the carried item and apply it (e.g. clean, heat, cool) EXPLORE → EXPLORE → EXPLORE → EXPLORE Systematic-search routine over candidate receptacles when the target location is unknown TRANSPORT → DELIVER Carry-and-place: move to the destination receptacle and place the held object EXPLORE → TAKE → TRANSPORT → DELIVER Canonical pick-and-place skeleton for simple Place tasks TAKE → TRANSPORT → TRANSFORM → DELIVER Clean/heat/cool-then-place: process the object at the appliance before delivery 
+
+Table 11: Mapping between high-frequency non-singleton phrases recovered by R EUSE RL-SegCost on ALFWorld and the closest skill description in SkillRL’s Skillbank (Xia et al., 2026). The correspondence is qualitative; the rule-based projection only carries verb-class membership, so a single learned phrase may match more than one Skillbank skill. 
+
+18
