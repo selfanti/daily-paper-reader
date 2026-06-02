@@ -1,0 +1,1370 @@
+Title: COMAP: Co-Evolving World Models and Agent Policies for LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.02372v1
+
+Published Time: Tue, 02 Jun 2026 03:12:58 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+## COMAP : Co-Evolving World Models and Agent Policies for LLM Agents 
+
+Youwei Liu 1, Jian Wang 2†, Hanlin Wang 3, Wenjie Li 31 Central South University 2 College of Computer Science, Sichuan University  
+
+> 3
+
+Department of Computing, The Hong Kong Polytechnic University 
+
+loyiv5477@gmail.com wangjian51@scu.edu.cn hanlin-henry.wang@connect.polyu.hk cswjli@comp.polyu.edu.hk 
+
+Abstract 
+
+Equipping language agents with world mod-els enables them to anticipate environment dy-namics and evaluate candidate actions before execution. However, existing textual world models are typically fixed after training, pre-venting them from adapting to the on-policy state-action distributions induced by an evolv-ing agent. Meanwhile, agent-improvement methods often rely on external rewards or ver-ifiers, limiting their applicability in realistic interactive environments. In this paper, we propose C OMAP , a novel framework that co-evolves textual world models and agent poli-cies through closed-loop interaction. At each decision step, the world model predicts future state feedback for candidate actions, and the agent performs future-aware reflection by es-timating the reliability of this feedback and refining its action accordingly. The resulting on-policy trajectories are then used to update the world model via self-distillation, allow-ing it to explore the agent’s evolving interac-tion distribution. Across embodied task plan-ning, web navigation, and tool-use benchmarks, COMAP consistently outperforms competitive baselines (e.g., +16.75% relative improvement with Qwen3-4B). Further analyses show that the co-evolutionary loop improves the world model’s prediction accuracy over time and leads to more effective long-horizon decision-making. Our code and data are available at: §
+
+https://github.com/loyiv/CoMAP .
+
+1 Introduction 
+
+The emergence of large language models (LLMs) has enabled intelligent agents to reason, plan, and interact across a wide range of digital and phys-ical environments (Yao et al., 2023; Wang et al., 2024b; Li et al., 2024). Recent studies suggest that equipping LLM-based agents with world-modeling capabilities, namely the ability to anticipate envi-ronment state dynamics with respect to candidate  
+
+> †
+
+Corresponding author. ¼1 ¼2 ¼i ¼¤  
+
+> W2W1W¤
+> Lookahead State
+> Base World Model Base Agent Policy Optimal Agent Policy Optimal World Model
+
+... ... ... ...   
+
+> update evolving evolving evolving
+> Wi
+> update update update evolving evolving evolving
+> Lookahead State Lookahead State Action Action Action
+
+Figure 1: Conceptual illustration of the co-evolution of world models and agent policies for LLM Agents. 
+
+actions, can substantially improve decision-making by enabling agents to evaluate future outcomes before execution (Hafner et al., 2023; Sun et al., 2024; Chae et al., 2025; Liu et al., 2026). How-ever, existing textual world models are typically fixed after training or construction (Zhang et al., 2025; Li et al., 2025). As a result, they struggle to adapt to the on-policy state-action distributions induced by the agent’s own evolving behavior, espe-cially in long-horizon interactive tasks. In parallel, agent-evolving methods improve policies through continual optimization, but often rely on external rewards, human-written rubrics, or task-specific verifiers (Sheng et al., 2026). This motivates a cen-tral question: Can the internal future predictions of a world model serve as a self-improving signal that simultaneously refines the agent policy and adapts the world model itself, without requiring external annotations? 
+
+We argue that world modeling and policy learn-ing should be treated as a coupled co-evolutionary process. The key challenge is that the two com-ponents interact under a non-stationary distribu-tion. A fixed world model may provide inaccurate 1
+
+> arXiv:2606.02372v1 [cs.AI] 1 Jun 2026
+
+or poorly calibrated predictions when the agent reaches states that differ from those observed dur-ing training. Conversely, a weak policy may gen-erate uninformative trajectories, limiting the world model’s exposure to diverse and task-critical tran-sitions. Improving either component in isolation can therefore create a bottleneck: unreliable future predictions constrain policy improvement, while suboptimal policies restrict the data available for world-model adaptation. As illustrated in Figure 1, an effective agent should instead form a closed loop in which the world model provides forward-looking guidance for action decision-making, and the agent’s on-policy interactions provide fresh evi-dence for updating the world model. With this in mind, we propose Co -evolving world Models and Agent Policies ( COMAP ), a closed-loop framework that enables the world model and the agent policy to improve each other through interaction. C OMAP consists of two mu-tually reinforcing loops. In the decision loop, the agent first drafts a candidate action from the cur-rent state, and the world model yields textual future feedback, such as the task-relevant consequences of that action or the next possible observation. The agent then estimates the reliability of this predic-tion and performs future-aware reflection to refine its action. Similarly, the resulting on-policy tra-jectories are used to construct self-distillation tar-gets for the world model, aligning its predictions with the dynamic state-action distribution induced by the current policy. As the policy improves, it reaches more complex and informative states; as the world model adapts, it provides more faithful fu-ture predictions, thereby further guiding the agent’s long-horizon decisions. We evaluate C OMAP across widely used bench-marks (Yao et al., 2022; Wang et al., 2022; Shrid-har et al., 2021; Guo et al., 2024). Extensive ex-periments demonstrate that C OMAP achieves sig-nificantly higher task success rates over competi-tive baselines. Further analyses demonstrate that the co-evolutionary process improves the world model’s ability to predict environment state dynam-ics, which in turn provides more reliable foresight for action decision-making. In summary, our contributions are as follows: • We identify a key limitation of existing world-model-based language agents: textual world mod-els are often static and therefore fail to adapt to the on-policy interaction distributions produced by evolving agent policies. • We propose C OMAP , a closed-loop framework that co-evolves the world model and the agent policy by leveraging future-aware reflection to refine decisions, with on-policy self-distillation to improve the world model. • Extensive experiments on embodied task plan-ning, web navigation, and tool-use benchmarks show that C OMAP consistently outperforms com-petitive baselines, providing insightful evidence that our co-evolution enhances world modeling and yields effective policies for complex tasks. 
+
+2 Preliminaries 
+
+Problem Formulation. The decision-making process of an LLM agent can be formulated as a partially observable Markov decision process (POMDP), denoted by M = (S, A, O, T , R).Here, S is the environment state space, A is the action space, and O is the observation space. T
+
+represents the state transition function, and R de-notes the reward function that measures task per-formance. At each time step t, the environment has an underlying state st ∈ S , while the agent receives a partial observation ot ∈ O. Since the true state is not directly accessible, the agent conditions its decision on the interaction history 
+
+ht = ( o1, a 1, . . . , a t−1, o t), then the agent policy 
+
+πθ generates an action at ∼ πθ(· | ht). After exe-cuting at, the environment transits to the next state according to st+1 ∼ T (· | st, a t).
+
+Textual World Models. We introduce textual world models to provide the agent with additional in-context information in the form of predicted fu-ture states (Zhang et al., 2025; Li et al., 2025). In text-based environments, the agent interacts through natural-language observations, and the available observation history can be viewed as a tex-tual state representation. For simplicity, we denote this textual state as st. Given st and a candidate action at, an autoregressive LLM can serve as a textual world model Wϕ by modeling the transition distribution pϕ(st+1 | st, a t).With a world model, we follow Liu et al. (2026) to reformulate the agent’s POMDP decision pro-cess. The agent policy first generates a draft action 
+
+adraft  
+
+> t
+
+∼ πθ(· | ht), then the world model imagines its one-step consequence: ˆst+1 = Wϕ(st, a draft  
+
+> t
+
+).In this way, the predicted future state is then fed 2Co -Evolving 𝑎 ! 
+
+> "#$%&
+> World Model 𝓦 𝝓
+
+ℒ!"  
+
+> 𝑠 !'(
+> )*+
+> 𝑠 ̃!'(
+> ,
+> 𝑠 ̃!'(
+> -
+> Environment
+> Agent Policy 𝝅 𝜽
+> Action Head
+> Refinement Head
+> Student Mode
+> Teacher Mode
+> On -policy
+> Self -Distillation
+> World
+> State
+> Gate
+> 𝑠 !'(
+> 𝑎 !
+> ref
+> 𝑝 !
+
+ℒ#$%&'(      
+
+> 𝑠 ̃!'(
+> /0
+> 𝑠 !'(
+> )*+ State from Environment
+> State from World Model
+> Agent Policy Evolving
+> World Model Evolving
+> Prompt Future
+> State
+> Action
+> 𝑠
+> 𝑎
+> World model
+> Agent policy
+> State
+> Action
+> Gate
+> Trainable
+> Training
+> Data
+> Future World State
+> Frozen
+> Future -aware
+> Reflection
+> Refinement Prob.
+> p
+> Probability
+
+Figure 2: Overview of the proposed C OMAP framework. The textual world model and the agent policy co-evolve through three key mechanisms: on-policy self-distillation of the world model, future-aware policy reflection, and dynamic interaction between the model and the policy. 
+
+back to the agent policy, yielding a foresight-augmented trajectory h+ 
+
+> t
+
+= ( ht, a draft  
+
+> t
+
+, ˆst+1 ) for the final policy decision. 
+
+3 Method 
+
+We propose Co -evolving world Models and Agent 
+
+Policies ( COMAP ), a novel framework in which an agent policy and a world model improve each other over time. Figure 2 shows the overview of our C OMAP framework. 
+
+3.1 World Model-guided Decision-Making Future State Imagination. Let πθ denote the agent policy and Wϕ denote the world model. At time step t, given the current state st, the agent policy first proposes a draft action: 
+
+adraft  
+
+> t
+
+∼ πθ(· | st). (1) The world model then performs a lookahead imagi-nation and predicts the next state as: 
+
+ˆst+1 = Wϕ(st, a draft  
+
+> t
+
+). (2) This predicted state serves as textual future feed-back that describes the likely consequence of the draft action. This imagined feedback is then incor-porated into the agent policy to refine its decision-making when necessary. 
+
+Future-aware Reflection. We use the future state to construct self-refinement signals for policy. Given the future state ˆst+1 , the policy then con-ditions on (st, a draft  
+
+> t
+
+, ˆst+1 ) to generate a reflected action aref  
+
+> t
+
+and a refinement probability pt. The resulting data Dref = {(st, a draft  
+
+> t
+
+, ˆst+1 , a ref  
+
+> t
+
+, p t)}
+
+is used for agent policy-side evolving. The policy reasons over the current state, the draft action, and the imagined state to produce the next action: 
+
+at ∼ πθ(· | st, a draft  
+
+> t
+
+, ˆst+1 ). (3) 
+
+3.2 Initialized Training 
+
+Before co-evolving, we initialize the agent policy and the world model with lightweight supervision. This provides a usable starting point while leaving the main improvement to on-policy co-evolution. 
+
+Agent Policy and World Model Warm-up. 
+
+Given expert demonstrations Dexp = {(st, a exp  
+
+> t
+
+)}
+
+and real on-policy transitions from rolling out in the environment Droll = {(st, a t, s env 
+
+> t+1
+
+)}, we warm up both the agent policy and the textual world model with supervised fine-tuning as follows: 
+
+Lexp policy = − X log pθ(aexp  
+
+> t
+
+| st), (4) 
+
+LWM = − X log pϕ(senv  
+
+> t+1
+
+| st, a t). (5) 
+
+Reflection-mode Initialization. To initialize the reflection mode, we construct training signals based on the outcomes of future rollouts from ex-pert demonstrations. For each state st, the policy first proposes a draft action adraft  
+
+> t
+
+, which is eval-uated alongside the corresponding expert action. 3We restore the environment to st and roll out two parallel trajectory branches, one initiated by the draft action and the other by the expert action, both under the same continuation policy. If the expert branch achieves a higher success rate or a larger cumulative future return, we assign a positive re-finement label yref  
+
+> t
+
+= 1 and designate the expert action as the target. Otherwise, we set yref  
+
+> t
+
+= 0 
+
+and retain the draft action. Note that draft actions equivalent to the expert action after canonicaliza-tion are inherently treated as non-refinement cases. Finally, taking the future-conditioned observation 
+
+xref  
+
+> t
+
+= [ st; adraft  
+
+> t
+
+; ˆ st+1 ] as input, we train an action head and a refinement head (see Figure 2) to jointly predict the refined action aref  
+
+> t
+
+and its refinement probability pt.
+
+3.3 Co-Evolving 
+
+Co-evolving aims to jointly improve the agent pol-icy and the textual world model through two cou-pled learning loops. We propose on-policy self-distillation for the world model , where a “student” world model is trained on real executed transitions and regularized by a “teacher” model. On the agent policy side, we leverage future-aware reflection to refine its draft action based on a gated future-state signal. These two loops reinforce each other: the evolving policy expands the on-policy transition distribution for world-model learning, while the evolving world model supplies increasingly reli-able lookahead states for policy refinement. 
+
+Evolving World Models via On-policy Self-distillation. After the initial warm-up, the world model is instantiated with a student mode WSϕ and a teacher mode WT 
+
+> ¯ϕ
+
+. For each on-policy transi-tion (st, a t, s env 
+
+> t+1
+
+), the realistic next state senv  
+
+> t+1
+
+is used as privileged information for the teacher mode. The student first generates an on-policy next-state rollout ˆsSt+1 ∼ pSϕ (· | st, a t), while the teacher observes the same input together with senv  
+
+> t+1
+
+and provides a soft target for this student rollout. This privileged teacher mode is used during training to provide transition-level supervision and reliability estimation. Let Lt = |ˆsSt+1 | be the length of the student-generated next-state sequence. At token posi-tion j, the student distribution is qSt,j = pSϕ (· | 
+
+st, a t, ˆsSt+1 ,<j ), while the teacher distribution is 
+
+qTt,j = pT 
+
+> ¯ϕ
+
+(· | st, a t, s env 
+
+> t+1
+
+, ˆsSt+1 ,<j ). Here, both distributions are evaluated on the same student-generated prefix ˆsSt+1 ,<j , but the teacher addition-ally observes the privileged state senv 
+
+> t+1
+
+. The world-model self-distillation loss is defined as: 
+
+LWMSD = 1
+
+LtLtX
+
+> j=1
+
+D sg( qTt,j )∥qSt,j 
+
+ , (6) which averages the token-level divergence between the teacher and student distributions along the student-generated rollout. Here, D(·∥· ) denotes a distribution divergence such as the KL divergence, and sg( ·) stops gradients through the teacher. The world model is finally trained as follows: 
+
+LWM = Eτt∼D roll 
+
+h
+
+− log pSϕ (senv  
+
+> t+1
+
+| st, a t)+ ηLWMSD 
+
+i
+
+.
+
+(7) After each student update, the teacher is updated by an exponential moving average, i.e., ¯ϕ ← μ ¯ϕ +(1 − μ)ϕ.
+
+Evolving Agent Policies via Future-aware Reflec-tion. For agent-policy evolving, the student world model first provides a lookahead future signal for the draft action: ˆsSt+1 = WSϕ (st, a draft  
+
+> t
+
+). The pol-icy then conditions on xref  
+
+> t
+
+= [ st; adraft  
+
+> t
+
+; ˆ st+1 ] to generate a reflected action aref  
+
+> t
+
+and a refinement probability pt. Given the gated online reflection data Dref , we set atgt  
+
+> t
+
+= aref  
+
+> t
+
+when the refinement is accepted, and otherwise keep atgt  
+
+> t
+
+= adraft  
+
+> t
+
+. The policy objective is: 
+
+Lpolicy =Lexp policy + Lref policy 
+
++ α EDref 
+
+h
+
+− log pθ(atgt  
+
+> t
+
+| xref  
+
+> t
+
+)
+
+i
+
++ β EDref 
+
+h
+
+BCE( pt, y ref  
+
+> t
+
+)
+
+i
+
+.
+
+(8) Here, Lexp policy anchors the draft mode with expert imitation, while Lref policy denotes the reflection mode with trajectory rollouts. BCE is short for the binary cross-entropy. 
+
+Co-Evolving Training. The two learning loops are coupled through online interaction: the policy drafts an action, the world model predicts its future state, the policy reflects and executes an action, and the resulting transition is used to update the world model. This closed loop can introduce two kinds of noise: inaccurate early future states may mis-lead reflection, and unnecessary refinements may harm already good draft actions. We therefore use a world-state gate to decide whether ˆst+1 comes from the student prediction ˆsSt+1 or the real next 4state senv  
+
+> t+1
+
+during training, and an action gate to de-cide whether the reflected action is adopted or the draft action is kept. The accepted and rejected cases form Dref with labels yref  
+
+> t
+
+. With the co-evolving training, the agent policy learns from gated future-aware reflection, while the world model learns from the induced on-policy transitions. 
+
+Inference. At inference time, the next environ-ment state and the privileged teacher are unavail-able before action execution. Therefore, the agent uses the student world model to imagine the future state, and produces (rt, a ref  
+
+> t
+
+, p t) through future-aware reflection. The ultimate action is yielded by the action gate: the agent executes aref  
+
+> t
+
+only when the action gate chooses the reflected action; otherwise, it falls back to the draft action adraft  
+
+> t
+
+.Details of implementation and mechanism clarifi-cation are provided in Appendix C.2. 
+
+4 Experiments 
+
+4.1 Experimental Settings Benchmarks. We employ the following widely used benchmarks for evaluation: ALFWorld (AW) (Shridhar et al., 2021) instantiates language-conditioned household planning tasks in embodied environments. ScienceWorld (SW) (Wang et al., 2022) evaluates multi-step scientific reasoning and experimentation in a textual simulator. WebShop (WS) (Yao et al., 2022) measures how an agent navigates a user in an e-commerce website and assists in purchasing products. StableToolBench (STB) (Guo et al., 2024) evaluates tool-use abilities with a stable virtual API-calling server. Detailed descriptions of these benchmarks are provided in Appendix A. 
+
+Backbone Models. We adopt both prompting-only API models and trainable open-source back-bones. For API-callled models, we evaluate GPT-5.4 (OpenAI, 2026), DeepSeek-V4-Flash, and DeepSeek-V4-Pro (DeepSeek-AI, 2026), with the same prompting protocol. For training-based meth-ods, including our co-evolving framework and all trainable baselines, we use Qwen3-4B and Qwen3-8B (Yang et al., 2025) as the policy backbones. The agent policy and world model employ the same backbone and the same tokenizer template, while all methods within a backbone group share the same data budget, rollout budget, and evaluation environment. 
+
+Baseline Methods. We compare C OMAP against the following baselines. For API-called models, we evaluate GPT-5.4, DeepSeek-V4-Flash, and DeepSeek-V4-Pro under ReAct (Yao et al., 2023) prompting. We further introduce Imagine-and-Act , a prompting-only lookahead baseline that first asks the same model to imagine the one-step con-sequence of a candidate action and then selects the final action conditioned on the imagined state, without parameter updates or a separately trained world model (Hao et al., 2023; Liu et al., 2026). For trainable open-source backbones, we use Re-Act and Imagine-and-Act, each with and without supervised fine-tuning (SFT). We then compare with test-time evolving methods, including Reflex-ion (Shinn et al., 2023), RAP (Hao et al., 2023), and ITP I (Liu et al., 2026). We also compare with world-modeling baselines, including WKM (Qiao et al., 2024), IWM (Li et al., 2025), and ITP R (Liu et al., 2026). 
+
+Evaluation Metrics. To evaluate agent policies, we adopt success rate (SR) as the evaluation met-ric, defined as the percentage of episodes that suc-cessfully complete the given task (Shridhar et al., 2021; Wang et al., 2025a). For ALFWorld and ScienceWorld, we report SR on both the seen and unseen test splits. Following Guo et al. (2024), we report solvable pass rate (SoPR) on the Stable-ToolBench. To evaluate the performance of world models, we adopt Delta-F1 to measure whether the world model predicts the actual state change caused by the executed action. For each action-state transi-tion, we canonicalize states into task-relevant facts and compare only the facts changed by the action, given by:  
+
+> Delta-F1
+
+= F1  Φ(ˆ swm 
+
+> t+1
+
+) − Φ( st), Φ( senv 
+
+> t+1
+
+) − Φ( st),
+
+where Φ denotes the canonicalization operation. If the predicted state ˆswm  
+
+> t+1
+
+cannot be parsed into the canonical schema, its Delta-F1 is set to 0.
+
+4.2 Main Results Performances of Agent Policies. Table 1 shows that C OMAP consistently outperforms prior train-able baselines across embodied task planning, web navigation, and tool-use tasks. On Qwen3-8B, COMAP improves the average score over ITP R
+
+from 69.53% to 72.11%; on Qwen3-4B, the gain is significantly larger, from 51.52% to 60.15%. This suggests that co-evolving is especially helpful for 5Type Method ALFWorld (AW) ScienceWorld (SW) WebShop (WS) StableToolBench (STB) Avg. 
+
+Seen Unseen Seen Unseen 
+
+API-Called Models 
+
+GPT-5.4 ReAct 83.20 80.60 58.10 53.40 64.90 66.80 67.83 
+
+Imagine-and-Act 86.90 84.70 60.70 55.80 67.40 69.20 70.78 
+
+DeepSeek-V4-Flash ReAct 67.80 64.50 49.60 45.30 55.10 54.80 56.18 
+
+Imagine-and-Act 71.20 68.30 52.70 48.60 58.40 58.30 59.58 
+
+DeepSeek-V4-Pro ReAct 82.40 80.20 66.50 62.80 70.20 62.50 70.77 
+
+Imagine-and-Act 86.10 83.90 69.80 66.30 73.50 65.20 74.13 
+
+Backbone Model: Qwen3-4B 
+
+Base Agent Planning 
+
+ReAct 14.29 12.50 6.32 5.44 13.85 21.50 12.32 
+
+,→ w/ SFT 62.86 45.80 39.50 34.20 36.80 35.50 42.44 
+
+Imagine-and-Act 20.00 18.20 8.60 7.90 16.40 24.00 15.85 
+
+,→ w/ SFT 65.71 48.40 42.30 36.70 40.10 39.00 45.37 Test-time Evolving 
+
+Reflexion 21.43 19.20 8.90 8.40 17.80 23.50 16.54 
+
+RAP 24.29 22.10 10.80 12.50 14.90 25.00 18.27 
+
+ITP I 31.43 28.70 13.60 14.20 19.80 30.00 22.95 World Modeling 
+
+WKM 62.14 44.90 43.70 37.50 45.80 35.00 44.84 
+
+IWM 64.29 47.20 45.20 40.60 44.70 37.50 46.58 
+
+ITP R 67.15 48.54 49.85 43.20 52.35 48.00 51.52 Co-evolving COMAP (Ours) 71.53 70.68 53.90 49.20 59.60 56.00 60.15 
+
+Backbone Model: Qwen3-8B 
+
+Base Agent Planning 
+
+ReAct 19.29 17.85 9.79 8.61 18.62 26.00 16.69 
+
+,→ w/ SFT 67.86 57.62 57.21 50.33 56.25 42.00 55.21 
+
+Imagine-and-Act 32.86 30.55 16.80 15.60 22.70 31.50 25.00 
+
+,→ w/ SFT 68.14 72.34 58.62 42.14 46.15 46.50 55.65 Test-time Evolving 
+
+Reflexion 24.29 22.40 12.50 12.10 20.80 27.50 19.93 
+
+RAP 28.57 26.80 15.46 27.14 12.40 28.00 23.06 
+
+ITP I 41.43 39.20 19.58 19.20 24.30 35.00 29.79 World Modeling 
+
+WKM 79.29 76.87 60.31 47.68 61.15 40.50 60.97 
+
+IWM 82.14 79.50 59.27 54.30 57.30 44.00 62.75 
+
+ITP R 85.71 83.20 60.20 55.30 64.75 68.00 69.53 Co-evolving COMAP (Ours) 88.57 86.68 61.85 56.95 68.10 70.50 72.11 
+
+Table 1: Performance comparison across representative benchmarks, where results on AW, SW, and WS represent task success rate (%), while results on STB represent solvable pass rate (%). Training-free methods are marked with 
+
+, while training-based methods are marked with . The best result per backbone model is highlighted in bold .50          
+
+> 75
+> 100
+> success rate (%)
+> Qwen3-4B
+> 71.1 64.2 62.6 61.3 64.8 63.0
+> Qwen3-8B
+> 87.6
+> 66.8 74.9 63.5 67.1 75.7
+> Full
+> w/o Expert SFT
+> w/o Suffix Init.
+> w/o Future state
+> w/o Action Gate
+> w/o Online Reflect
+
+(a) Policy-side ablations. 50          
+
+> 75
+> 100
+> Delta-F1 (%)
+> Qwen3-4B
+> 89.2
+> 63.1 71.7 75.0 74.0 62.3
+> Qwen3-8B
+> 93.7
+> 68.4 73.8 82.0 76.2 64.6
+> Full
+> w/o WM Warm-up
+> w/o Real CE
+> w/o WMSD
+> w/o WS Gate
+> Frozen WM
+
+(b) World-model and coupling ablations. 
+
+Figure 3: Component ablations of C OMAP on ALFWorld. We report leave-one-component-out results on Qwen3-4B and Qwen3-8B. Policy-side results represent success rates, while world-model-side results represent Delta-F1 scores. 
+
+smaller backbones, where future-conditioned re-flection can compensate for weaker planning ability. Compared with prompting-only, test-time evolv-ing, and fixed world-modeling methods, C OMAP 
+
+further benefits from continuously updating both the policy and the world model. Notably, Qwen3-8B with C OMAP surpasses GPT-5.4 with ReAct and DeepSeek-V4-Pro with ReAct, and approaches DeepSeek-V4-Pro with Imagine-and-Act. 
+
+Performances of World Models. Table 2 shows that C OMAP also improves world-model predic-tion quality, achieving 85.40% and 90.29% aver-age Delta-F1 on Qwen3-4B and Qwen3-8B, re-spectively. Notably, Qwen3-8B with C OMAP 
+
+even slightly surpasses GPT-5.4 in Delta-F1, while Qwen3-4B approaches DeepSeek-V4-Pro and clearly outperforms DeepSeek-V4-Flash. Com-pared with vanilla prompting, SFT, and on-policy training baselines, the consistent gains achieved 6Method AW SW WS STB Avg.                                                          
+
+> API-Called Models
+> DeepSeek-V4-Flash 80.20 77.40 75.60 61.30 73.63
+> DeepSeek-V4-Pro 83.35 86.80 83.10 89.80 85.76
+> GPT-5.4 91.80 92.70 84.10 87.60 89.05
+> Backbone Model: Qwen3-4B
+> Vanilla 31.25 25.00 27.60 22.90 26.69 SFT 52.30 44.45 44.20 38.70 44.91 On-policy Training 78.50 81.00 70.60 73.90 76.00
+> COMAP (Ours) 89.20 86.20 86.40 79.80 85.40
+> Backbone Model: Qwen3-8B
+> Vanilla 38.40 30.60 33.50 28.20 32.68 SFT 60.05 51.90 51.70 65.40 57.26 On-policy Training 87.05 88.45 78.50 81.90 83.98
+> COMAP (Ours) 93.70 94.15 84.70 88.60 90.29
+
+Table 2: Performance comparison across different tex-tual world models. We report Delta-F1 (%) to measure whether the next predicted world-state captures action-induced state changes after canonicalization. 
+
+by C OMAP indicate that real-transition supervi-sion alone is insufficient, and that self-distilled on-policy adaptation is crucial for modeling policy-induced state changes. These results show that co-evolving improves both task execution and action-induced state-change prediction. 
+
+4.3 Ablation Study 
+
+To evaluate the contribution of individual compo-nents within C OMAP , we conduct comprehensive ablations on the ALFWorld benchmark using both Qwen3-4B and Qwen3-8B as backbone models. 
+
+Policy-Side Ablations. As shown in Figure 3(a), the full C OMAP framework achieves the highest task success rate across both model scales. Remov-ing any module leads to a substantial performance decline. Notably, omitting the future-state input (w/o Future State ) causes the most severe drop, reducing the success rate by 9.8% and 24.1% on the 4B and 8B models, respectively. Furthermore, removing the initial expert supervised fine-tuning (w/o Expert SFT ) or the reflection-mode initial-ization also heavily impairs performance, confirm-ing the necessity of high-quality trajectory priors and robust action-refinement training. The absence of the action gate and online reflection similarly degrades the success rate, proving that adaptive reliance on world models and continuous policy refinement are indispensable. 
+
+World-model and Coupling Ablations. To as-sess the world model’s state-tracking fidelity, we report the Delta-F1 score in Figure 3(b). The full             
+
+> Benchmark URR ( ↓)HRR ( ↓)BRP ( ↑)
+> ALFWorld 0.16 0.08 0.92 WebShop 0.07 0.09 0.87 ScienceWorld 0.12 0.11 0.93
+
+Table 3: Effect of the future-aware reflection stage. 
+
+framework significantly outperforms all variants. Most importantly, freezing the world model after initial training ( Frozen WM ) results in the most drastic deterioration in Delta-F1, dropping by a massive 26.9% and 29.1% on the 4B and 8B mod-els. This strongly validates our core hypothesis: static world models quickly become misaligned during long-horizon tasks, and continuous, dy-namic co-evolution is essential for maintaining ac-curate environment modeling. Additionally, elimi-nating the world model warm-up phase ( w/o WM Warm-up ) severely hinders the model’s baseline predictive ability. Other coupling mechanisms, including real-state supervision ( w/o Real CE ), world-model self-distillation ( w/o WMSD ), and the world-state gate ( w/o WS Gate ), all contribute posi-tively to the final prediction accuracy, ensuring the world model remains robust and closely aligned with the real environment dynamics. 
+
+4.4 In-depth Analyses and Discussions Learning Dynamics of Co-Evolving. We ana-lyze the training dynamics during the co-evolving process. As shown in Figure 4a, both the world model and the agent policy improve consistently from the base model to warm-up and co-evolving stages, indicating that supervised warm-up pro-vides a useful initialization and online co-evolving further strengthens both components. Figure 4b shows that the world model reaches a relatively sta-ble prediction accuracy after early training, while the agent policy continues to improve with small fluctuations. This trend suggests that a stabilized world model can provide increasingly useful future-state signals for policy reflection, and the policy can further benefit from high-quality online refine-ment during co-evolving training. 
+
+Effect of Reflection. We evaluate the future-aware reflection stage using three diagnostic met-rics: Unnecessary Revision Rate (URR) , Harm-ful Revision Rate (HRR) , and Beneficial Revision Precision (BRP) . URR measures over-intervention on already successful draft actions, while HRR measures destructive revisions that turn successful drafts into failed reflected actions. BRP measures 7Base Warm-up Co-evolving       
+
+> 20
+> 40
+> 60
+> 80
+> 100
+> Performance (%)
+> ALFWorld
+> 38.40
+> 60.05
+> 93.70
+> 18.57
+> 62.74
+> 87.63
+> World Model
+> Agent Policy
+> Base Warm-up Co-evolving
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100 ScienceWorld
+> 30.60
+> 51.90
+> 94.15
+> 9.20
+> 53.77
+> 59.40
+> World Model
+> Agent Policy
+> Base Warm-up Co-evolving
+> 20
+> 40
+> 60
+> 80
+> WebShop
+> 33.50 51.70
+> 84.70
+> 18.62
+> 56.25
+> 68.10
+> World Model
+> Agent Policy
+
+(a) Stage-wise performance comparison. 0 8 16 24 32 40 48             
+
+> Training Time
+> 20
+> 40
+> 60
+> 80
+> 100
+> Performance (%)
+> ALFWorld
+> Agent Policy Success Rate
+> World Model Prediction
+> 0816 24 32 40 48
+> Training Time
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> ScienceWorld
+> Agent Policy Success Rate
+> World Model Prediction
+> 0816 24 32 40 48
+> Training Time
+> 10
+> 30
+> 50
+> 70
+> 90
+> WebShop
+> Agent Policy Success Rate
+> World Model Prediction
+
+(b) Learning dynamics during co-evolving training. 
+
+Figure 4: Learning dynamics of co-evolving. The upper panel compares the world model and agent policy across base, warm-up, and co-evolving stages. The lower panel shows that both the world model and agent policy stably improve during co-evolving training. 1 25 50 75 100  
+
+> 0
+> 25
+> 50
+> 75
+> 100
+> Adoption ratio (%)
+> wm
+
+= 0.3     
+
+> 125 50 75 100
+> wm
+
+= 0.6     
+
+> 125 50 75 100
+> wm
+
+= 0.9
+
+> Training step
+
+Adopted WM state Adopted Env state 
+
+Figure 5: Adoption ratio of the world state gate (Qwen3-8B as the backbone model on ALFWorld). 
+
+the precision of useful revisions. All metrics lie in 
+
+[0 , 1] range. As reported in Table 3, the consistently low URR/HRR and high BRP indicate that reflec-tion contributes critical refinement while avoiding unnecessary or harmful revisions. More details are provided in Appendix C.2. 
+
+Effect of World State Gate. We examine whether the world-state gate could adaptively select predicted world-model states during co-evolving training. As shown in Figure 5, the world model state adoption ratio consistently increases along training under different thresholds, suggesting that the world model produces increasingly reliable future-state predictions. A lower threshold τwm =0.3 enables earlier and more frequent adoption, whereas a higher threshold τwm = 0 .9 keeps the gate conservative. The middle setting τwm = 0 .6
+
+provides a balanced curriculum, suppressing noisy early predictions while gradually exposing the pol-icy to useful world model-guided states. We there-fore use τwm = 0 .6 in the main experiments. off-policy SFT WMSD  
+
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Change-token NLL
+> Qwen3-4B
+> 2.02
+> 1.45
+> off-policy SFT WMSD
+> Qwen3-8B
+> 1.80
+> 1.38
+
+Figure 6: Change-token NLL under off-policy SFT and WMSD (Qwen3-4B and Qwen3-8B on ALFWorld). 
+
+Analysis of On-Policy Self-Distillation for World Models. To investigate how on-policy self-distillation facilitates world-model evolution, we contrast it with standard off-policy SFT. While off-policy SFT relies on a single hard next-state target, world-model self-distillation (WMSD) couples the real-state anchor with token-level soft guidance from the teacher model. This mechanism provides denser, more informative supervision over plausi-ble transition tokens. We isolate and evaluate this effect by measuring the prediction loss on action-induced change tokens . As illustrated in Figure 6, WMSD consistently yields a lower negative log-likelihood (NLL). Specifically, WMSD reduces the mean change-token NLL from 2.02 to 1.45 and from 1.80 to 1.38, respectively. These results demonstrate that rather than merely memorizing static background text, WMSD effectively trains the world model to capture transition-critical state changes with greater accuracy and consistency. 
+
+5 Related Work 
+
+World Models for Planning. World models have long been viewed as a key mechanism for au-tonomous intelligence and model-based reinforce-ment learning, enabling agents to predict future states and evaluate action consequences before exe-cution (LeCun, 2022; Hafner et al., 2023). With the rise of LLM agents, this idea has been extended to 
+
+textual world models , where language models pre-dict environment feedback, state transitions, and action outcomes for task planning (Guan et al., 2023; Hao et al., 2023). These models provide an explicit foresight perspective, allowing the agent policy to obtain additional future-state information and thus improve reasoning and planning beyond the current observation alone (Xiang et al., 2024; Sun et al., 2024; Wang et al., 2025c; Liu et al., 2026). Recent work further explores world models for agent improvement, such as WebEvolver, which leverages a co-evolving world model for web-agent 8self-improvement (Fang et al., 2025). In contrast to prior methods that mainly use world models as planning components, our work studies a closed-loop formulation where the textual world model and the agent policy are jointly optimized and mu-tually reinforced through interaction. 
+
+LLM Agent Evolving. Initial efforts in agent evolution focused on self-reflection (Shinn et al., 2023) or retrieving past experiences (Majumder et al., 2023; Qian et al., 2024). Moving be-yond prompting, parametric methods optimize policies by fine-tuning on expert trajectories, cor-recting execution errors, and calibrating behav-iors (Chen et al., 2023; Song et al., 2024; Wang et al., 2024a, 2025a). To achieve more autonomous self-improvement (Song and Zheng, 2026), recent paradigms emphasize continuous learning mecha-nisms. Rather than static training, these methods enable agents to dynamically refine policies via en-vironmental feedback (Xi et al., 2024; Sheng et al., 2026), abstract historical experiences into symbolic rules (Zhou et al., 2024; Lu et al., 2023), or acquire new capabilities through open-ended skill-bank cu-ration (Xu et al., 2026; Wu et al., 2026). While some advanced frameworks incorporate world mod-els to facilitate adaptive lookahead planning (Wang et al., 2025b; Liu et al., 2026), they typically treat the simulator as an isolated, auxiliary tool. In con-trast, C OMAP uniquely co-evolves both the world model and the agent policy through continuous closed-loop interaction. 
+
+6 Conclusion 
+
+In this paper, we propose C OMAP , a closed-loop framework for co-evolving textual world models and agent policies. COMAP updates the world model through on-policy self-distillation and im-proves the agent policy via future-aware reflection. Extensive experiments on embodied task planning, web navigation, and tool-use benchmarks show that COMAP consistently improves both task success and world-model prediction quality. These results provide valuable insights that world modeling can serve as not only a static planning signal but also as an evolving source of future-aware supervision for LLM agents. 
+
+Limitations 
+
+While C OMAP shows consistent gains across mul-tiple agent benchmarks, two limitations remain. First, C OMAP assumes that environment states and action outcomes can be represented as text. This fits web navigation, tool-use tasks, and text-based environments, but may not fully cover mul-timodal settings with visual, spatial, and audi-tory signals. Second, C OMAP requires an addi-tional world-model call at inference time before future-aware reflection. While this cost is moder-ate due to one-step imagination rather than multi-branch search or long-horizon rollouts, it may af-fect latency-sensitive applications. Future work can reduce this overhead through selective imagination, lightweight world model caching, or asynchronous prediction. 
+
+Ethics Statement 
+
+We follow the ethical guidelines for the academic use of LLMs. Our experiments are conducted on simulated agent benchmarks and do not involve hu-man subjects or personally identifiable information. We cite and comply with the licenses of the mod-els, datasets, and software used in this work. We acknowledge that world-model-based lookahead may introduce risks if deployed beyond controlled environments, since inaccurate future-state predic-tions could lead to unreliable actions in open-world tool-use or robotic systems. Therefore, C OMAP 
+
+should be used with appropriate safety checks in real-world or high-stakes scenarios. AI assistants were partially used for coding and language polish-ing, while all core ideas, experiments, and findings are the original work of the authors. 
+
+References           
+
+> Hyungjoo Chae, Namyoung Kim, Kai Ong, Minju Gwak, Gwanwoo Song, Jihoon Kim, Sunghwan Kim, Dongha Lee, and Jinyoung Yeo. 2025. Web agents with world models: Learning and leveraging environ-ment dynamics in web navigation. In International Conference on Learning Representations , volume 2025, pages 63707–63738. Baian Chen, Chang Shu, Ehsan Shareghi, Nigel Collier, Karthik Narasimhan, and Shunyu Yao. 2023. Fireact: Toward language agent fine-tuning. arXiv preprint arXiv:2310.05915 .DeepSeek-AI. 2026. Deepseek-v4 preview re-lease. https://api-docs.deepseek.com/news/ news260424 . Accessed: 2026-05-25. Tianqing Fang, Hongming Zhang, Zhisong Zhang, Kaixin Ma, Wenhao Yu, Haitao Mi, and Dong Yu. 2025. WebEvolver: Enhancing web agent self-improvement with co-evolving world model. In Pro-ceedings of the 2025 Conference on Empirical Meth-
+
+9ods in Natural Language Processing , pages 8959– 8975, Suzhou, China. Association for Computational Linguistics. Lin Guan, Karthik Valmeekam, Sarath Sreedharan, and Subbarao Kambhampati. 2023. Leveraging pre-trained large language models to construct and utilize world models for model-based task planning. In Ad-vances in Neural Information Processing Systems ,volume 36, pages 79081–79094. Zhicheng Guo, Sijie Cheng, Hao Wang, Shihao Liang, Yujia Qin, Peng Li, Zhiyuan Liu, Maosong Sun, and Yang Liu. 2024. StableToolBench: Towards stable large-scale benchmarking on tool learning of large language models. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 11143–11156, Bangkok, Thailand. Association for Computational Linguistics. Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy Lillicrap. 2023. Mastering diverse do-mains through world models. arXiv preprint arXiv:2301.04104 .Shibo Hao, Yi Gu, Haodi Ma, Joshua Hong, Zhen Wang, Daisy Wang, and Zhiting Hu. 2023. Rea-soning with language model is planning with world model. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,pages 8154–8173, Singapore. Association for Com-putational Linguistics. Yann LeCun. 2022. A path towards autonomous ma-chine intelligence version 0.9. 2, 2022-06-27. Open Review , 62(1):1–62. Manling Li, Shiyu Zhao, Qineng Wang, Kangrui Wang, Yu Zhou, Sanjana Srivastava, Cem Gokmen, Tony Lee, Li E Li, Ruohan Zhang, and 1 others. 2024. Embodied agent interface: Benchmarking llms for embodied decision making. Advances in Neural In-formation Processing Systems , 37:100428–100534. Yixia Li, Hongru Wang, Jiahao Qiu, Zhenfei Yin, Dong-dong Zhang, Cheng Qian, Zeping Li, Pony Ma, Guanhua Chen, Heng Ji, and 1 others. 2025. From word to world: Can large language models be im-plicit text-based world models? arXiv preprint arXiv:2512.18832 .Youwei Liu, Jian Wang, Hanlin Wang, Beichen Guo, and Wenjie Li. 2026. Imagine-then-plan: Agent learning from adaptive lookahead with world models. 
+
+arXiv preprint arXiv:2601.08955 .Jianqiao Lu, Wanjun Zhong, Wenyong Huang, Yufei Wang, Qi Zhu, Fei Mi, Baojun Wang, Weichao Wang, Xingshan Zeng, Lifeng Shang, Xin Jiang, and Qun Liu. 2023. SELF: Self-evolution with language feed-back. Preprint , arXiv:2310.00533. Bodhisattwa Prasad Majumder, Bhavana Dalvi Mishra, Peter Jansen, Oyvind Tafjord, Niket Tandon, Li Zhang, Chris Callison-Burch, and Peter Clark. 2023. CLIN: A continually learning language agent for rapid task adaptation and generalization. Preprint ,arXiv:2310.10134. OpenAI. 2026. Introducing gpt-5.4. https://openai. com/index/introducing-gpt-5-4/ . Accessed: 2026-05-24. Cheng Qian, Shihao Liang, Yujia Qin, Yining Ye, Xin Cong, Yankai Lin, Yesai Wu, Zhiyuan Liu, and Maosong Sun. 2024. Investigate-consolidate-exploit: A general strategy for inter-task agent self-evolution. 
+
+Preprint , arXiv:2401.13996. Shuofei Qiao, Runnan Fang, Ningyu Zhang, Yuqi Zhu, Xiang Chen, Shumin Deng, Yong Jiang, Pengjun Xie, Fei Huang, and Huajun Chen. 2024. Agent planning with world knowledge model. In Advances in Neural Information Processing Systems , volume 37, pages 114843–114871. Leheng Sheng, Wenchang Ma, Ruixin Hong, Xi-ang Wang, An Zhang, and Tat-Seng Chua. 2026. Reinforcing chain-of-thought reasoning with self-evolving rubrics. arXiv preprint arXiv:2602.10885 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. In Advances in Neural Information Pro-cessing Systems , volume 36, pages 8634–8652. Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2021. ALFWorld: Aligning Text and Embodied Environments for Interactive Learning. In Proceedings of the International Conference on Learning Representations (ICLR) .Mingyang Song and Mao Zheng. 2026. A survey of on-policy distillation for large language models. arXiv preprint arXiv:2604.00626 .Yifan Song, Da Yin, Xiang Yue, Jie Huang, Sujian Li, and Bill Yuchen Lin. 2024. Trial and error: Exploration-based trajectory optimization of LLM agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 7584–7600, Bangkok, Thailand. Association for Computational Linguistics. Zhiyuan Sun, Haochen Shi, Marc-Alexandre Côté, Glen Berseth, Xingdi Yuan, and Bang Liu. 2024. Enhanc-ing agent learning through world dynamics modeling. In Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 3534–3568. Hanlin Wang, Chak Tou Leong, Jian Wang, and Wenjie Li. 2024a. E 2CL: Exploration-based error correction learning for embodied agents. In Findings of the Association for Computational Linguistics: EMNLP 2024 , pages 7626–7639, Miami, Florida, USA. Asso-ciation for Computational Linguistics. Hanlin Wang, Jian Wang, Chak Tou Leong, and Wenjie Li. 2025a. STeCa: Step-level trajectory calibration 
+
+10 for LLM agent learning. In Findings of the Asso-ciation for Computational Linguistics: ACL 2025 ,pages 11597–11614, Vienna, Austria. Association for Computational Linguistics. Kangrui Wang, Pingyue Zhang, Zihan Wang, Yaning Gao, Linjie Li, Qineng Wang, Hanyang Chen, Yip-ing Lu, Zhengyuan Yang, Lijuan Wang, and 1 others. 2025b. Vagen: Reinforcing world model reasoning for multi-turn vlm agents. In The Thirty-ninth An-nual Conference on Neural Information Processing Systems .Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, and 1 others. 2024b. A survey on large language model based autonomous agents. 
+
+Frontiers of Computer Science , 18(6):186345. Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and Prithviraj Ammanabrolu. 2022. ScienceWorld: Is your agent smarter than a 5th grader? In EMNLP .Siyin Wang, Zhaoye Fei, Qinyuan Cheng, Shiduo Zhang, Panpan Cai, Jinlan Fu, and Xipeng Qiu. 2025c. World modeling makes a better planner: Dual preference optimization for embodied task planning. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 21518–21537, Vienna, Austria. Association for Computational Linguistics. Xiyang Wu, Zongxia Li, Guangyao Shi, Alexander Duffy, Tyler Marques, Matthew Lyle Olson, Tianyi Zhou, and Dinesh Manocha. 2026. Co-evolving LLM decision and skill bank agents for long-horizon tasks. Preprint , arXiv:2604.20987. Zhiheng Xi, Yiwen Ding, Wenxiang Chen, Boyang Hong, Honglin Guo, Junzhe Wang, Dingwen Yang, Chenyang Liao, Xin Guo, Wei He, Songyang Gao, Lu Chen, Rui Zheng, Yicheng Zou, Tao Gui, Qi Zhang, Xipeng Qiu, Xuanjing Huang, Zuxuan Wu, and Yu-Gang Jiang. 2024. AgentGym: Evolv-ing large language model-based agents across diverse environments. Preprint , arXiv:2406.04151. Jiannan Xiang, Tianhua Tao, Yi Gu, Tianmin Shu, Zirui Wang, Zichao Yang, and Zhiting Hu. 2024. Language models meet world models: Embodied experiences enhance language models. Advances in neural infor-mation processing systems , 36. Wujiang Xu, Jiaojiao Han, Minghao Guo, Kai Mei, Xi Zhu, Han Zhang, and Dimitris N. Metaxas. 2026. AEL: Agent evolving learning for open-ended envi-ronments. Preprint , arXiv:2604.21725. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayi-heng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, and 41 oth-ers. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. Webshop: Towards scalable real-world web interaction with grounded language agents. In Advances in Neural Information Processing Sys-tems , volume 35, pages 20744–20757. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing reasoning and acting in language models. In International Conference on Learning Representations (ICLR) .Kai Zhang, Xiangchao Chen, Bo Liu, Tianci Xue, Zeyi Liao, Zhihan Liu, Xiyao Wang, Yuting Ning, Zhaorun Chen, Xiaohan Fu, and 1 others. 2025. Agent learning via early experience. arXiv preprint arXiv:2510.08558 .Wangchunshu Zhou, Yixin Ou, Shengwei Ding, Long Li, Jialong Wu, Tiannan Wang, Jiamin Chen, Shuai Wang, Xiaohua Xu, Ningyu Zhang, Hua-jun Chen, and Yuchen Eleanor Jiang. 2024. Sym-bolic learning enables self-evolving agents. Preprint ,arXiv:2406.18532. 
+
+11 A Datasets and Preprocessing 
+
+We evaluate our method on four representa-tive agent benchmarks: ALFWorld 1 (Shridhar et al., 2021), ScienceWorld 2 (Wang et al., 2022), WebShop 3 (Yao et al., 2022), and StableTool-Bench 4 (Guo et al., 2024). Table 4 presents task descriptions and data statistics. 
+
+A.1 Datasets ALFWorld. ALFWorld is a text-based embod-ied household benchmark in which an agent inter-acts with a simulated environment through natural-language observations and admissible text actions. Each episode provides a goal instruction instanti-ated from compositional task templates, and suc-cess requires the agent to perform multi-step plan-ning under partial observability. 
+
+ScienceWorld. ScienceWorld is a text-based in-teractive science environment designed to evaluate an agent’s ability to solve procedural and reasoning-intensive tasks grounded in everyday scientific phe-nomena. Compared with household tasks, Science-World typically involves longer horizons and re-quires the agent to integrate information gathering, tool use, and multi-step experimentation. 
+
+WebShop. WebShop is a text-based web shop-ping benchmark where an agent interacts with sim-ulated e-commerce webpages to find products sat-isfying a user instruction. Unlike embodied naviga-tion environments, WebShop exposes the agent to longer and noisier textual observations, including search results, product titles, attributes, and descrip-tions. Solving a task requires multi-step browsing, comparison, and selection before making the final purchase decision. 
+
+StableToolBench. StableToolBench is a multi-turn tool-use benchmark that evaluates an agent’s ability to solve tasks by invoking executable tools under realistic interaction constraints. In contrast to text-navigation environments, StableToolBench emphasizes correct tool selection, robust handling of intermediate execution feedback, and solvability-aware evaluation. Although its episodes are typi-cally shorter, each decision is more sensitive, since an incorrect tool invocation can immediately derail subsequent progress. Following existing studies,   
+
+> 1https://github.com/alfworld/alfworld
+> 2https://github.com/allenai/ScienceWorld
+> 3https://github.com/princeton-nlp/WebShop
+> 4https://github.com/THUDM/StableToolBench
+> Domain Task Description Dataset Statistics ALFWorld
+> Household, text-based embodied tasks Six compositional task families: P ICK ,CLEAN , H EAT ,COOL , L OOK ,PICK 2. Training: 3,119 Test-Seen: 140 Test-Unseen: 171
+> ScienceWorld
+> Elementary science curriculum in an interactive text environment 30 subtasks with many variations (entities, initial conditions, distractors, room layouts), partitioned following the benchmark protocol. Training: 1,483 Test-Seen: 194 Test-Unseen: 151
+> WebShop
+> Goal-driven web shopping in a text-based browsing environment Product search, browsing, attribute comparison, and final item selection based on user instructions over noisy webpage observations. Training: 1,824 Test: 210
+> StableToolBench
+> Multi-turn tool-use tasks with executable tool interactions Tool invocation, intermediate execution feedback handling, and solvability-aware evaluation under realistic function-calling constraints. Training: 1,972 Test: 169
+
+Table 4: Dataset statistics. We report dataset splits following the standard benchmark protocol. 
+
+we report the solvable pass rate (SoPR), which mea-sures average task success on the solvable subset. Each instance is judged as solved, unsolved, or un-certain, and is mapped to 1, 0, or 0.5, respectively. 
+
+A.2 Training data 
+
+Fig. 7 summarizes the benchmark-specific training data used by C OMAP . For the agent policy, the data consists of warm-up demonstrations, expert-draft supervision, revise-positive samples, keep-draft samples, and high-quality reflection samples. The last three categories are collected from the co-evolving process and provide direct supervision for future-conditioned reflection, i.e., when the pol-icy should revise a draft action and when it should keep the original decision. For the world model, the data is divided into warm-up transition data and 12 Agent 
+
+> Policy
+> Total N=18,012
+
+(a) Agent-policy training data 
+
+> Warm-up
+> n=3,119 (17.3%)
+> Expert Draft
+> n=3,334 (18.5%)
+> Revise-Positive
+> n=2,432 (13.5%)
+> Keep-Draft
+> n=5,812 (32.3%)
+> HQ Reflect
+> n=3,315 (18.4%)
+> World
+> Model
+> Total N=25,282
+
+(b) World-model training data 
+
+> Warm-up
+> n=11,984 (47.4%)
+> Env State Data
+> for Self-Distill
+> n=13,298 (52.6%)
+
+(a) ALFWorld Agent 
+
+> Policy
+> Total N=28,884
+
+(a) Agent-policy training data 
+
+> Warm-up
+> n=1,483 (5.1%)
+> Expert Draft
+> n=5,061 (17.5%)
+> Revise-Positive
+> n=5,447 (18.9%)
+> Keep-Draft
+> n=10,601 (36.7%)
+> HQ Reflect
+> n=6,292 (21.8%)
+> World
+> Model
+> Total N=50,533
+
+(b) World-model training data  
+
+> Warm-up
+> n=18,397 (36.4%)
+> Env State Data
+> for Self-Distill
+> n=32,136 (63.6%)
+
+(b) ScienceWorld Agent 
+
+> Policy
+> Total N=17,194
+
+(a) Agent-policy training data 
+
+> Warm-up
+> n=1,824 (10.6%)
+> Expert Draft
+> n=3,219 (18.7%)
+> Revise-Positive
+> n=2,070 (12.0%)
+> Keep-Draft
+> n=6,600 (38.4%)
+> HQ Reflect
+> n=3,481 (20.2%)
+> World
+> Model
+> Total N=24,969
+
+(b) World-model training data 
+
+> Warm-up
+> n=10,865 (43.5%)
+> Env State Data
+> for Self-Distill
+> n=14,104 (56.5%)
+
+(c) WebShop Agent 
+
+> Policy
+> Total N=9,761
+
+(a) Agent-policy training data 
+
+> Warm-up
+> n=1,972 (20.2%)
+> Expert Draft
+> n=1,882 (19.3%)
+> Revise-Positive
+> n=1,194 (12.2%)
+> Keep-Draft
+> n=3,140 (32.2%)
+> HQ Reflect
+> n=1,573 (16.1%)
+> World
+> Model
+> Total N=12,818
+
+(b) World-model training data  
+
+> Warm-up
+> n=6,902 (53.8%)
+> Env State Data
+> for Self-Distill
+> n=5,916 (46.2%)
+
+(d) StableToolBench 
+
+Figure 7: Benchmark-specific rollout training-data distributions. Each panel reports the composition of agent-policy and world-model training data with counts and normalized percentages. 
+
+environment-state data for self-distillation. The warm-up data initializes one-step textual transition modeling, while the self-distillation data comes from on-policy interaction states induced by the evolving agent. Across benchmarks, a substantial portion of both policy-side and world-model-side data is generated after initialization, showing that COMAP does not rely only on static offline super-vision. Instead, the policy and world model are continuously refined with interaction-derived sig-nals, which support the closed-loop co-evolving design. 
+
+B Model Size Scaling 
+
+We further study how C OMAP scales with back-bone size by comparing Qwen3-4B (Yang et al., 2025) 5, Qwen3-8B (Yang et al., 2025) 6, and Qwen3-30B-A3B (Yang et al., 2025) 7. As shown in Figure 8a, the average agent-policy performance improves from 71 .10 to 87 .62 and 90 .12 as the 
+
+> 5
+
+https://huggingface.co/Qwen/Qwen3-4B/blob/ main/LICENSE 
+
+> 6
+
+https://huggingface.co/Qwen/Qwen3-8B/blob/ main/LICENSE 
+
+> 7
+
+https://huggingface.co/Qwen/Qwen3-30B-A3B/ blob/main/LICENSE 
+
+backbone scales up, indicating that larger poli-cies can better exploit future-conditioned reflection. Meanwhile, Figure 8b shows that world-model pre-diction quality also increases monotonically, with average Delta-F1 improving from 89.20 to 93.70 and 96.20. The gains are most pronounced from 4B to 8B, while the improvement from 8B to 30B-A3B becomes smaller, suggesting that C OMAP benefits from increased model capacity but already achieves strong co-evolving performance with a mid-sized backbone. 
+
+C Implementation Details 
+
+All experiments were conducted on a computa-tional cluster equipped with 4 × NVIDIA A100 80GB GPUs. We report additional implementation details for training cost, parameter settings, and prompting template. 
+
+C.1 Parameter Settings 
+
+Table 5 reports detailed parameter settings of our proposed C OMAP .13 4B 8B 30B-A3B    
+
+> Backbone Model Size
+> 70
+> 75
+> 80
+> 85
+> 90
+> Average Performance (%)
+> Agent Policy
+> 71.10
+> 87.62
+> 90.12
+> Model size
+> 4B
+> 8B
+> 30B-A3B (a) Agent-policy performance scaling. 4B 8B 30B-A3B
+> Backbone Model Size
+> 88
+> 90
+> 92
+> 94
+> 96
+> 98
+> Average Delta-F1 (%)
+> World Model
+> 89.20
+> 93.70
+> 96.20
+> Model size
+> 4B
+> 8B
+> 30B-A3B (b) World-model prediction scaling.
+
+Figure 8: Model size scaling of C OMAP . We evaluate C OMAP with Qwen3-4B, Qwen3-8B, and Qwen3-30B-A3B backbones on ALFWorld. The left panel reports the average agent-policy performance, while the right panel reports the average world-model Delta-F1. The marker size indicates the relative backbone scale. 
+
+C.2 Additional Clarification of C OMAP 
+
+Mechanisms 
+
+This section provides additional details on the deci-sion flow, Future-aware Reflection, world-state gat-ing, teacher-mode supervision, world-model self-distillation, and action gating used in C OMAP .
+
+Draft, refinement, and execution. COMAP sep-arates action generation into three stages: draft generation, future-aware refinement, and final ex-ecution. At step t, the action head first proposes a draft action adraft  
+
+> t
+
+from the current state st. The student world model then predicts an imagined fu-ture state ˆsSt+1 = WSϕ (st, a draft  
+
+> t
+
+). Given the gated future context ¯st+1 , the Future-aware Reflection module produces a refined action aref  
+
+> t
+
+and a refine-ment probability pt. The final executed action is determined by the action gate: 
+
+aexec  
+
+> t
+
+=
+
+(
+
+aref  
+
+> t
+
+, gact  
+
+> t
+
+= 1 ,adraft  
+
+> t
+
+, gact  
+
+> t
+
+= 0 .
+
+Therefore, the environment transition used for subsequent world-model learning is written as 
+
+(st, a exec  
+
+> t
+
+, s env 
+
+> t+1
+
+). For notational simplicity, the main text may use at when the executed action is unam-biguous. 
+
+Role of textual reflection. The Future-aware Re-flection module may generate a textual reflection rt
+
+as an intermediate rationale for action refinement. This rationale helps the policy interpret whether the predicted future state indicates progress, fail-ure, redundancy, or invalidity. However, rt is not treated as an independent optimization target. The supervised outputs of the refinement module are the refined action aref  
+
+> t
+
+and the refinement probability pt.Thus, the reflection text serves as an auxiliary rea-soning trace, while the training objective focuses on action-level refinement. 
+
+Suffix-based refinement initialization. Before online co-evolving, we initialize the Future-aware Reflection module with suffix-based supervision. The goal is to teach the policy when refinement is necessary, rather than forcing every draft action to be changed. For each state st, we compare two suffix branches under the same continuation policy: one branch starts from the draft action adraft  
+
+> t
+
+, and the other starts from the corrected expert action 
+
+acorr  
+
+> t
+
+. If the corrected branch achieves a better task outcome or a sufficiently larger suffix return, we set the refinement label yref  
+
+> t
+
+= 1 and use acorr 
+
+> t
+
+as the target action. Otherwise, we set yref  
+
+> t
+
+= 0 
+
+and keep the draft action as the target. Equivalent actions after canonicalization are treated as keep-draft cases. This design prevents the refinement module from over-correcting already useful draft actions. 
+
+World-state gate as future-context curriculum. 
+
+The world-state gate controls whether the policy is trained with an imagined world-model state or the real environment state as its future context. Specifi-cally, the student world model predicts ˆsSt+1 , while the EMA teacher predicts ˆsTt+1 . We compute the reliability score ρwm  
+
+> t
+
+by comparing their action-induced fact changes after canonicalization. If the 14 Parameter Value Shared Settings                                            
+
+> Maximum sequence length 2048 Optimizer AdamW Learning-rate scheduler Cosine decay Warm-up ratio 0.03 LoRA rank r8LoRA scaling αLoRA 16 LoRA dropout 0.05
+> World Model Training
+> Training epochs 3Learning rate 2×10 −5
+> Per-device batch size 1Gradient accumulation steps 16 Co-evolving rounds 3WMSD weight η0.5 EMA momentum μ0.99 World-state threshold τwm 0.6 World-model maximum new tokens 192
+> Agent Policy Training
+> Training epochs 3Learning rate 2×10 −5
+> Per-device batch size 1Gradient accumulation steps 16 Co-evolving rounds 3Online reflection weight α1.0 BCE weight β0.01 Revise-probability threshold τp0.5 Reflection-confidence threshold τq0.6 Draft-action maximum new tokens 64 Reflection maximum new tokens 128 Final-action maximum new tokens 16 Temperature 0.7 Top-p0.9
+
+Table 5: Parameter settings of C OMAP . We report the default hyperparameters used for the shared backbone, world-model training, agent-policy co-training, and in-ference decoding. Here, η denotes the WMSD weight in Eq. (7), while α and β denote the weights of online reflection learning and revise-probability learning in Eq. (8), respectively. 
+
+student and teacher predictions are consistent, the gate selects the student-predicted state: 
+
+¯st+1 = ˆ sSt+1 if gwm  
+
+> t
+
+= 1 .
+
+Otherwise, the gate falls back to the real environ-ment state: 
+
+¯st+1 = senv  
+
+> t+1
+
+if gwm  
+
+> t
+
+= 0 .
+
+This mechanism forms a curriculum over future contexts. At early stages, when the world model is less reliable, the policy receives cleaner environ-ment states. As the world model improves, the pol-icy is gradually exposed to imagined future states, which better matches the inference-time setting. 
+
+Teacher mode and privileged information. The teacher mode uses the real next environment state 
+
+senv  
+
+> t+1
+
+only as privileged training-time information for improving the world model. It is important to distinguish this from inference-time planning. The privileged state is never provided to the student world model at inference time, nor is it directly exposed to the deployed agent policy. Instead, the EMA teacher acts as a training-time regularizer that provides soft token-level targets for the student world model. Therefore, the teacher mode should be understood as a transition-modeling mechanism, not as an oracle planner. 
+
+Why world-model self-distillation is used. 
+
+Real-state cross-entropy trains the world model with a single observed next-state sequence. Al-though this anchors the model to the actual transi-tion, it provides only one hard target at each decod-ing position. World-model self-distillation further transfers the EMA teacher’s token-level distribu-tion to the student. The resulting loss combines real-state anchoring and soft distributional guid-ance: 
+
+LWM = EDroll 
+
+h
+
+− log P Sϕ
+
+ senv  
+
+> t+1
+
+| st, a exec 
+
+> t
+
+
+
++ ηDWMSD 
+
+i
+
+.
+
+This provides denser supervision over plausible transition descriptions, especially for tokens that correspond to action-induced state changes. As a result, the student world model can better adapt to the evolving on-policy state-action distribution. 
+
+Action gate and refinement confidence. The ac-tion gate decides whether the refined action should replace the draft action. It uses three complemen-tary conditions: 
+
+gact  
+
+> t
+
+= 1[pt > τ p] 1[qref  
+
+> t
+
+> τ q]
+
+· 1
+
+h
+
+Canon( aref  
+
+> t
+
+)̸ = Canon( adraft  
+
+> t
+
+)
+
+i
+
+.
+
+Here, pt estimates whether refinement is neces-sary, while qref  
+
+> t
+
+measures whether the generated refined action is reliable. The canonicalization con-straint avoids adopting superficial changes that are semantically equivalent to the draft action. To-gether, these conditions reduce unnecessary or low-confidence refinements and make the final execu-tion more conservative. 15 Reflection Diagnostic Metrics. For each state 
+
+st, let adraft  
+
+> t
+
+and aref  
+
+> t
+
+denote the draft and re-flected actions, and let zdraft  
+
+> t
+
+, z ref  
+
+> t
+
+∈ {0, 1} be their binary suffix outcomes. We define mt =
+
+1[Canon( aref  
+
+> t
+
+)̸ = Canon( adraft  
+
+> t
+
+)] . The metrics are: 
+
+URR = 
+
+P 
+
+> t
+
+mt1[zdraft  
+
+> t
+
+= 1] 
+
+P 
+
+> t
+
+1[zdraft  
+
+> t
+
+= 1] + ϵ ,
+
+HRR = 
+
+P 
+
+> t
+
+mt1[zdraft  
+
+> t
+
+= 1 , z ref  
+
+> t
+
+= 0] 
+
+P 
+
+> t
+
+1[zdraft  
+
+> t
+
+= 1] + ϵ ,
+
+BRP = 
+
+P 
+
+> t
+
+mt1[zdraft  
+
+> t
+
+= 0 , z ref  
+
+> t
+
+= 1] 
+
+P 
+
+> t
+
+mt + ϵ .
+
+URR measures unnecessary revisions, HRR mea-sures harmful revisions, and BRP measures beneficial-revision precision. 
+
+C.3 Training-stage Computational Cost 
+
+We report the training-stage computational cost of COMAP to improve reproducibility. Following the main experimental setting, we profile the repre-sentative Qwen3-8B configuration on 4 × NVIDIA A100 80GB GPUs. The training pipeline consists of two phases: warm-up and co-evolving. The warm-up phase initializes the textual world model with real transition supervision and initializes the agent policy with draft-action imitation and reflect-mode supervision. The co-evolving phase further updates the world model with real-state supervi-sion and WMSD, while evolving the agent policy through future-conditioned reflection. GPU-hours are computed as wall-clock time multiplied by the number of GPUs. In the initialization phase, the world model and the agent policy are trained with lightweight su-pervised objectives. The world model learns the one-step textual transition distribution from real en-vironment transitions, while the draft mode of the policy is anchored by expert action imitation. We also initialize the reflection mode with trajectory-suffix supervision so that the policy can learn when a draft action should be revised and what corrected action should be produced. In the co-evolving phase, the additional cost comes from the closed-loop optimization of the two modules. On the world-model side, C OMAP 
+
+performs on-policy self-distillation, where the stu-dent world model is trained with real next-state supervision and token-level soft guidance from an EMA teacher. On the policy side, C OMAP collects future-conditioned reflection samples and updates only high-quality online corrections selected by the world-state gate and the action gate. Although this phase introduces extra computation compared with ordinary supervised fine-tuning, the overall cost remains moderate because C OMAP uses one-step imagination rather than multi-branch tree search or long-horizon rollout expansion. At inference time, C OMAP removes the EMA teacher and uses only the student world model to-gether with the agent policy. Therefore, the self-distillation teacher introduces training-time over-head but does not increase the number of deployed models at test time. 
+
+C.4 API Model Evaluation Details 
+
+For reproducibility, GPT-5.4 is evaluated with the official API model identifier gpt-5.4 (Ope-nAI, 2026), and the DeepSeek baselines are evaluated with deepseek-v4-pro and 
+
+deepseek-v4-flash (DeepSeek-AI, 2026). All API models use the same ReAct prompt, decoding configuration, and text-only bench-mark interface, without browser, computer-use, file-search, retrieval, or external tool access beyond the benchmark-provided actions. We use OpenAI GPT-5.4 with the documented API alias gpt-5.4 8. F or DeepSeek baselines, we use 
+
+deepseek-v4-pro and deepseek-v4-flash 9.
+
+C.5 Prompting Template 
+
+We provide three prompt templates for C OMAP 
+
+in Figure 9, Figure 10, and Figure 11. The agent policy uses two prompts: one for generating a draft action and one for reflecting on the draft action with a future-state signal. The world model uses a separate prompt to predict the next state after a given action. This design separates policy decision-making from one-step transition prediction. 
+
+> 8https://platform.openai.com/docs/models/ gpt-5.4
+> 9https://api-docs.deepseek.com/api/ list-models
+
+16 Phase Module Main Operation Wall-clock GPU-hours 
+
+Warm-up World Model Real-transition SFT 2.11 h 8.42 Agent Policy Draft SFT and reflect-mode initialization 2.84 h 11.36 
+
+Subtotal 4.95 h 19.78 
+
+Co-evolving World Model Real-state supervision and world-model self-distillation 2.43 h 9.72 Agent Policy Future-conditioned reflection evolving 2.05 h 8.18 
+
+Subtotal 4.48 h 17.90 
+
+Total – 9.42 h 37.68 
+
+Table 6: Training-stage computational cost of C OMAP on ALFWorld. We report wall-clock time and GPU-hours using Qwen3-8B as the backbone model. The training pipeline is organized into two phases: warm-up and co-evolving. Each phase is further decomposed into the world-model side and the agent-policy side. 
+
+Prompt Template for Draft Action Generation 
+
+You are an intelligent agent interacting with a text-based environment. Your goal is to complete the task by taking valid and useful actions. At the current step, you will be given the task goal, the current observation, the previous action, and the latest environment feedback. You should understand the current situation and propose one candidate action for the next step. 
+
+Instructions: 
+
+1. Briefly summarize the current state and the latest feedback. 2. Identify what has already been achieved and what remains to be done. 3. Choose the next action that is most likely to make progress toward the task goal. 4. Output exactly one candidate action. 
+
+Response format: 
+
+Reason: briefly describe the current situation and relevant feedback Thought: briefly explain the next-step plan Draft Action: output exactly one executable action 
+
+Inputs: 
+
+Task goal: {task_goal} Current observation: {current_observation} Previous action: {previous_action} Latest environment feedback: {latest_feedback} Interaction history: {history} 
+
+Rules: 
+
+• The action must be valid in the current environment. • Do not invent unavailable objects, locations, webpages, tools, or arguments. • If the latest feedback indicates that the previous action failed, avoid repeating the same failed action. • Do not output multiple candidate actions. 
+
+Figure 9: Prompt template for draft action generation in the agent policy. The policy proposes a candidate action from the current task context before querying the world model. 
+
+17 Prompt Template for Reflection with Future State 
+
+You are an intelligent agent revising a candidate action using a future-state signal. The future-state signal describes the possible consequence of executing the draft action. Your goal is to decide whether the draft action should be kept or revised. Revise the draft action only when the future-state signal shows that the draft action is invalid, unhelpful, harmful, redundant, or clearly worse than another available action. If the draft action already makes useful progress, keep it unchanged. 
+
+Instructions: 
+
+1. Read the task goal, current observation, draft action, and future-state signal. 2. Judge whether the future-state signal indicates progress, failure, no change, or a harmful consequence. 3. Decide whether to keep or revise the draft action. 4. Output exactly one final action for execution. 5. Output a revise probability to indicate how strongly the draft action should be revised. 
+
+Response format: 
+
+Reflection: analyze whether the draft action leads to useful progress Decision: KEEP or REVISE Final Action: output exactly one executable action Revise Probability: output a number from zero to one 
+
+Inputs: 
+
+Task goal: {task_goal} Current observation: {current_observation} Draft action: {draft_action} Future-state signal: {future_state} Interaction history: {history} 
+
+Rules: 
+
+• If the draft action should be kept, repeat it as the final action. • If the draft action should be revised, output only the revised action as the final action. • Do not revise merely for stylistic reasons. • Do not invent new objects, locations, webpages, tools, or arguments. • The final action must be directly executable in the environment. 
+
+Figure 10: Prompt template for reflection with future state in the agent policy. The policy uses the future-state signal to decide whether to keep or revise the draft action. 
+
+Prompt Template for Textual World Model 
+
+You are a textual world model for an interactive agent environment. Given the current textual state and an action, predict the next textual state after executing the action. 
+
+Input: 
+
+Current state: {state} Action: {action} 
+
+Instruction: Predict only the one-step next state caused by the given action. Preserve unchanged facts and update only the parts directly affected by the action. Do not generate a new action, plan, explanation, or multi-step rollout. 
+
+Output format: 
+
+Predicted next state: {next_state} 
+
+Figure 11: Prompt template for the one-step textual world model. Given the current textual state and an action, the world model predicts the resulting next state. 
+
+18
