@@ -6,98 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-04
-- 运行时间：2026-06-04 21:53:42 UTC
+- 最新运行日期：2026-06-05
+- 运行时间：2026-06-05 21:32:55 UTC
 - 运行状态：成功
-- 本次总论文数：26
-- 精读区：15
+- 本次总论文数：17
+- 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日推荐26篇论文，精读15篇，最高分（9.0）聚焦自适应智能体探索与联合策略进化。核心方向：认知感知的自我改进Web智能体、联合策略进化框架。建议优先精读这两篇高分论文，并关注速读中面向知识库问答的金标策略蒸馏方法。
-- 详情：[/202606/04/README](/202606/04/README)
+今日17篇论文聚焦联邦学习与智能体强化学习，精读推荐两项9分研究。
+最值得关注的方向是“联邦技能进化”与“智能体强化学习导航”，两者均为满分。
+建议普通读者优先精读《FederatedSkill》和《AgenticRL》，再速读多智能体协调相关论文。
+- 详情：[/202606/05/README](/202606/05/README)
 
 ### 精读区论文标签
-1. [Learning to Adapt: Self-Improving Web Agent via Cognitive-Aware Exploration](/202606/04/2605.31365v1-learning-to-adapt-self-improving-web-agent-via-cognitive-aware-exploration)  
+1. [FederatedSkill: Federated Learning for Agentic Skill Evolution](/202606/05/2606.03143v1-federatedskill-federated-learning-for-agentic-skill-evolution)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过认知感知探索实现网络智能体自我改进
-2. [HarnessForge: Joint Harness and Policy Evolution for Adaptive Agent Systems](/202606/04/2606.01779v1-harnessforge-joint-harness-and-policy-evolution-for-adaptive-agent-systems)  
+   evidence：用于协作智能体技能进化的联邦学习
+2. [AgenticRL: Self-Refining Agentic Reinforcement Learning for Vision-Conditioned UAV Navigation](/202606/05/2606.03963v2-agenticrl-self-refining-agentic-reinforcement-learning-for-vision-conditioned-uav-navigation)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体系统的联合外部框架与策略进化
-3. [Network Distributed Multi-Agent Reinforcement Learning for Consensus Control of Quadcopters](/202606/04/2606.02107v1-network-distributed-multi-agent-reinforcement-learning-for-consensus-control-of-quadcopters)  
+   evidence：使用GPT智能体实现自精炼的强化学习框架
+3. [VASO: Formally Verifiable Self-Evolving Skills for Physical AI Agents](/202606/05/2606.05395v1-vaso-formally-verifiable-self-evolving-skills-for-physical-ai-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：网络分布式多智能体强化学习实现一致性控制
-4. [Learning When Not to Act: Mitigating Tool Abuse in Agentic Reinforcement Learning](/202606/04/2606.02132v1-learning-when-not-to-act-mitigating-tool-abuse-in-agentic-reinforcement-learning)  
+   evidence：面向物理AI智能体的可验证自我进化技能
+4. [Merging model-based control with multi-agent reinforcement learning for multi-agent cooperative teaming strategies](/202606/05/2606.06011v1-merging-model-based-control-with-multi-agent-reinforcement-learning-for-multi-agent-cooperative-teaming-strategies)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体强化学习策略优化
-5. [Learning When Not to Act: Mitigating Tool Abuse in Agentic Reinforcement Learning](/202606/04/2606.02132v2-learning-when-not-to-act-mitigating-tool-abuse-in-agentic-reinforcement-learning)  
+   evidence：结合模型预测控制与多智能体强化学习实现合作编队
+5. [SkillComposer: Learning to Evolve Agent Skills for Specification and Generalization](/202606/05/2606.06079v1-skillcomposer-learning-to-evolve-agent-skills-for-specification-and-generalization)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体强化学习框架学习选择性工具使用
-6. [Unified Context Evolution for LLM Agents](/202606/04/2606.02304v1-unified-context-evolution-for-llm-agents)  
+   evidence：通过创建、改进、合并操作学习进化代理技能
+6. [Agent Memory: Characterization and System Implications of Stateful Long-Horizon Workloads](/202606/05/2606.06448v1-agent-memory-characterization-and-system-implications-of-stateful-long-horizon-workloads)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：统一上下文演化框架，通过类型化可演化上下文单元管理智能体记忆
-7. [EvoTrainer: Co-Evolving LLM Policies and Training Harnesses for Autonomous Agentic Reinforcement Learning](/202606/04/2606.03108v1-evotrainer-co-evolving-llm-policies-and-training-harnesses-for-autonomous-agentic-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：自主智能体强化学习中的策略与训练框架共进化
-8. [Exploring Cross-Scenario Generality of Agentic Memory Systems: Diagnostics and a Strong Baseline](/202606/04/2606.04315v1-exploring-cross-scenario-generality-of-agentic-memory-systems-diagnostics-and-a-strong-baseline)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体记忆系统的跨场景评估与强基线
-9. [Learning to cooperate with emergent reputation via multi-agent reinforcement learning](/202606/04/2606.04359v1-learning-to-cooperate-with-emergent-reputation-via-multi-agent-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：通过多智能体强化学习学习与涌现声誉合作
-10. [AgentJet: A Flexible Swarm Training Framework for Agentic Reinforcement Learning](/202606/04/2606.04484v1-agentjet-a-flexible-swarm-training-framework-for-agentic-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：分布式群训练框架支持异构多智能体团队进行LLM代理强化学习
-11. [Episodic Memory Temporal Consistency for Cooperative Multi-Agent Reinforcement Learning](/202606/04/2606.04492v1-episodic-memory-temporal-consistency-for-cooperative-multi-agent-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体记忆架构
-12. [Scaling Self-Evolving Agents via Parametric Memory](/202606/04/2606.04536v1-scaling-self-evolving-agents-via-parametric-memory)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：通过在线LoRA更新的参数化记忆实现自我进化智能体
-13. [Learning While Acting: A Skill-Enhanced Test-Time Co-Evolution Framework for Online Lifelong Learning Agents](/202606/04/2606.04815v1-learning-while-acting-a-skill-enhanced-test-time-co-evolution-framework-for-online-lifelong-learning-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向在线终身学习智能体的技能增强测试时共进化
-14. [GARL: Game-Theoretic Reinforcement Learning for Multi-Agent Strategic Prioritisation](/202606/04/2606.05002v1-garl-game-theoretic-reinforcement-learning-for-multi-agent-strategic-prioritisation)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：博弈论多智能体强化学习用于战略优先级
-15. [Enhancing the MADDPG Algorithm for Multi-Agent Learning via Action Inference and Importance Sampling](/202606/04/2606.05021v1-enhancing-the-maddpg-algorithm-for-multi-agent-learning-via-action-inference-and-importance-sampling)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：通过动作推断和重要性采样增强MADDPG算法
+   evidence：对智能体记忆架构的系统级特征化分析
 
 ### 速读区论文标签
-1. [GAPD: Gold-Action Policy Distillation for Agentic Reinforcement Learning in Knowledge Base Question Answering](/202606/04/2605.29584v2-gapd-gold-action-policy-distillation-for-agentic-reinforcement-learning-in-knowledge-base-question-answering)  
+1. [Bridging Requirements and Architecture: Multi-Agent Orchestration with External Knowledge and Hierarchical Memory](/202606/05/2606.01385v1-bridging-requirements-and-architecture-multi-agent-orchestration-with-external-knowledge-and-hierarchical-memory)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：在知识库问答智能体RL中应用黄金动作策略蒸馏
-2. [Unifying Temporal and Structural Credit Assignment in LLM-Based Multi-Agent Prompt Optimization](/202606/04/2605.30227v1-unifying-temporal-and-structural-credit-assignment-in-llm-based-multi-agent-prompt-optimization)  
+   evidence：多智能体编排与分层记忆用于架构设计
+2. [Policy and World Modeling Co-Training for Language Agents](/202606/05/2606.02388v1-policy-and-world-modeling-co-training-for-language-agents)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：针对基于LLM的多智能体系统的信用分配优化
-3. [Decoupled Behavioral Cloning for Scalable Inductive Generalization in RL from Specifications](/202606/04/2606.00838v1-decoupled-behavioral-cloning-for-scalable-inductive-generalization-in-rl-from-specifications)  
+   evidence：语言智能体的策略与世界模型联合训练
+3. [Multi$^2$: Hierarchical Multi-Agent Decision-Making with LLM-Based Agents in Interactive Environments](/202606/05/2606.03698v1-multi2-hierarchical-multi-agent-decision-making-with-llm-based-agents-in-interactive-environments)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：解耦行为克隆学习策略进化函数实现归纳泛化
-4. [CAPF: Guiding Search-Agent Rollouts with Credit-Attenuated Privileged Feedback](/202606/04/2606.01830v1-capf-guiding-search-agent-rollouts-with-credit-attenuated-privileged-feedback)  
+   evidence：分层多智能体决策框架，结合SFT和离线到在线RL实现LLM智能体协作
+4. [SMAC-Talk: A Natural Language Extension of the StarCraft Multi-Agent Challenge for Large Language Models](/202606/05/2606.04202v1-smac-talk-a-natural-language-extension-of-the-starcraft-multi-agent-challenge-for-large-language-models)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：自主智能体强化学习
-5. [On Effectiveness and Efficiency of Agentic Tool-calling and RL Training](/202606/04/2606.00135v1-on-effectiveness-and-efficiency-of-agentic-tool-calling-and-rl-training)  
+   evidence：面向LLM智能体的自然语言多智能体强化学习基准
+5. [What Should Agents Say? Action-state Communication for Efficient Multi-Agent Systems](/202606/05/2606.05304v1-what-should-agents-say-action-state-communication-for-efficient-multi-agent-systems)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：智能体工具调用与强化学习训练有效性
-6. [Behavior-Invariant Task Representation Learning with Transformer-based World Models for Offline Meta-Reinforcement Learning](/202606/04/2606.00780v1-behavior-invariant-task-representation-learning-with-transformer-based-world-models-for-offline-meta-reinforcement-learning)  
+   evidence：动作-状态通信协议用于多智能体协调
+6. [CLaaS: Continual learning as a service for sample efficient online learning](/202606/05/2606.05559v1-claas-continual-learning-as-a-service-for-sample-efficient-online-learning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：离线元强化学习结合任务表示和世界模型实现泛化
-7. [Momento: Evaluating Persistent Memory and Reasoning with Multi-Session Agentic Conversations](/202606/04/2606.00832v1-momento-evaluating-persistent-memory-and-reasoning-with-multi-session-agentic-conversations)  
+   evidence：持续学习支持代理适应，经验回放缓冲作为记忆
+7. [SubtleMemory: A Benchmark for Fine-Grained Relational Memory Discrimination in Long-Horizon AI Agents](/202606/05/2606.05761v1-subtlememory-a-benchmark-for-fine-grained-relational-memory-discrimination-in-long-horizon-ai-agents)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：智能体记忆架构
-8. [Recognize Your Orchestrator: An Entropy Dynamics Perspective for LLM Multi-Agent Systems](/202606/04/2606.01351v1-recognize-your-orchestrator-an-entropy-dynamics-perspective-for-llm-multi-agent-systems)  
+   evidence：AI智能体关系记忆基准测试
+8. [Beyond Similarity: Trustworthy Memory Search for Personal AI Agents](/202606/05/2606.06054v1-beyond-similarity-trustworthy-memory-search-for-personal-ai-agents)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：基于均场熵动力学的LLM多智能体编排分析
-9. [Learning to Choose: An Empowerment-Guided Multi-Agent System with semantic communication for Adaptive Method Selection](/202606/04/2605.30042v1-learning-to-choose-an-empowerment-guided-multi-agent-system-with-semantic-communication-for-adaptive-method-selection)  
+   evidence：面向个人AI智能体的可信记忆搜索
+9. [Dynamic Coordination Strategy Selection for Enterprise Multi-Agent Systems](/202606/05/2606.00804v1-dynamic-coordination-strategy-selection-for-enterprise-multi-agent-systems)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：通过语义通信的多智能体系统实现自主决策
-10. [Answer-Set-Programming-based Abstractions for Reinforcement Learning](/202606/04/2605.31444v1-answer-set-programming-based-abstractions-for-reinforcement-learning)  
+   evidence：多智能体系统动态协调策略选择
+10. [AgentCL: Toward Rigorous Evaluation of Continual Learning in Language Agents](/202606/05/2606.02461v2-agentcl-toward-rigorous-evaluation-of-continual-learning-in-language-agents)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：基于回答集编程的抽象方法增强自主智能体强化学习
-11. [The Cartan-Topos Protocol: A Unified Geometric and Categorical Framework for Resilient Multi-Agent Coordination](/202606/04/2606.00714v1-the-cartan-topos-protocol-a-unified-geometric-and-categorical-framework-for-resilient-multi-agent-coordination)  
+   evidence：评估跨任务可重用经验的持续学习机制
+11. [Post-Hoc Robustness for Model-Based Reinforcement Learning](/202606/05/2606.03521v1-post-hoc-robustness-for-model-based-reinforcement-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：多智能体协调的几何与范畴论框架
+   evidence：推理时对深度强化学习智能体进行后验鲁棒化
 
 
 <div class="dpr-home-promo-card">
