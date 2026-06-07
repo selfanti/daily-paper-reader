@@ -6,75 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-06
-- 运行时间：2026-06-06 21:08:14 UTC
+- 最新运行日期：2026-06-07
+- 运行时间：2026-06-07 20:57:57 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日精选17篇，6篇精读，重点聚焦连续时间鲁棒MDP策略梯度与语言智能体测试时自适应记忆。
-
-最值得精读《Policy Gradient for Continuous-Time Robust MDP》（9.0）与《AdaMEM: Test-Time Adaptive Memory for Language Agents》（9.0），前者革新强化学习鲁棒性基础，后者突破大模型智能体长时记忆瓶颈。
-
-建议优先入手这两篇精读，把握理论前沿；速读可关注《Retrospective Harness Optimization》以了解LLM智能体轨迹优化新思路。
-- 详情：[/202606/06/README](/202606/06/README)
+今日精读17篇论文，重点聚焦两篇9.0分研究：智能体从环境指南蒸馏自我进化技能，以及对话AI的确定性记忆框架。最值得关注的方向是智能体自主技能学习与记忆增强机制。建议读者优先深挖这两篇论文，并关注速读中强化学习搜索智能体与成本优化相关研究。
+- 详情：[/202606/07/README](/202606/07/README)
 
 ### 精读区论文标签
-1. [Policy Gradient for Continuous-Time Robust Markov Decision Processes](/202606/06/2606.04335v1-policy-gradient-for-continuous-time-robust-markov-decision-processes)  
+1. [MMG2Skill: Can Agents Distill In-the-Wild Guides into Self-Evolving Skills?](/202606/07/2606.01993v1-mmg2skill-can-agents-distill-in-the-wild-guides-into-self-evolving-skills)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向连续时间鲁棒MDP的策略梯度算法
-2. [AdaMEM: Test-Time Adaptive Memory for Language Agents](/202606/06/2606.05684v1-adamem-test-time-adaptive-memory-for-language-agents)  
+   evidence：将人机指南提炼为自我进化的技能
+2. [DMF: A Deterministic Memory Framework for Conversational AI Agents](/202606/07/2606.03463v1-dmf-a-deterministic-memory-framework-for-conversational-ai-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：提出混合记忆架构，结合长期轨迹记忆和动态短期策略记忆以实现测试时自适应
-3. [Beyond Semantic Organization: Memory as Execution State Management for Long-Horizon Agents](/202606/06/2606.06090v1-beyond-semantic-organization-memory-as-execution-state-management-for-long-horizon-agents)  
+   evidence：对话AI智能体的确定性记忆框架
+3. [Policy Gradient for Continuous-Time Robust Markov Decision Processes](/202606/07/2606.04335v2-policy-gradient-for-continuous-time-robust-markov-decision-processes)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：将记忆作为执行状态管理，采用层次化状态树
-4. [Towards Healthy Evolution: Exploring the Role and Mechanisms of Human-Agent Interaction in Self-Evolving Systems](/202606/06/2606.06114v1-towards-healthy-evolution-exploring-the-role-and-mechanisms-of-human-agent-interaction-in-self-evolving-systems)  
+   evidence：面向鲁棒RL智能体的策略梯度方法
+4. [Memory is Reconstructed, Not Retrieved: Graph Memory for LLM Agents](/202606/07/2606.06036v1-memory-is-reconstructed-not-retrieved-graph-memory-for-llm-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：自进化系统中的人机交互机制
-5. [Survival Reinforcement Learning: Toward Scalable Self-Supervised RL](/202606/06/2605.31273v1-survival-reinforcement-learning-toward-scalable-self-supervised-rl)  
+   evidence：面向LLM智能体的图记忆与主动重建
+5. [Reinforcement Learning with Pairwise Preferences in Long-Term Decision Problems](/202606/07/2606.00367v1-reinforcement-learning-with-pairwise-preferences-in-long-term-decision-problems)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：生存强化学习用于自监督自主智能体学习
-6. [Exploring the Topology and Memory of Consensus: How LLM Agents Agree, Fragment, or Settle When Forming Conventions](/202606/06/2606.04197v1-exploring-the-topology-and-memory-of-consensus-how-llm-agents-agree-fragment-or-settle-when-forming-conventions)  
+   evidence：基于成对偏好的强化学习用于长期决策问题
+6. [ANDES: Agent Native Data Evolving Synthesis Tool for Autonomous Instruction Alignment](/202606/07/2606.01279v1-andes-agent-native-data-evolving-synthesis-tool-for-autonomous-instruction-alignment)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：研究记忆深度对不同拓扑多智能体共识的影响
+   evidence：通过智能体自主进化数据合成实现指令对齐
 
 ### 速读区论文标签
-1. [Retrospective Harness Optimization: Improving LLM Agents via Self-Preference over Trajectory Rollouts](/202606/06/2606.05922v1-retrospective-harness-optimization-improving-llm-agents-via-self-preference-over-trajectory-rollouts)  
+1. [Harness-1: Reinforcement Learning for Search Agents with State-Externalizing Harnesses](/202606/07/2606.02373v1-harness-1-reinforcement-learning-for-search-agents-with-state-externalizing-harnesses)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：自监督智能体工具集优化用于LLM agent适应
-2. [Dynamic Coordination Strategy Selection for Enterprise Multi-Agent Systems](/202606/06/2606.00804v2-dynamic-coordination-strategy-selection-for-enterprise-multi-agent-systems)  
+   evidence：为搜索智能体提供状态外部化框架和环境侧工作记忆
+2. [Cost-Aware Optimization for Agentic Query Execution](/202606/07/2606.03152v1-cost-aware-optimization-for-agentic-query-execution)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：使用枚举和群体相对策略优化的智能体查询执行自我改进优化器
+3. [Agentic Monte Carlo: Simulating Reinforcement Learning for Black-Box Agents](/202606/07/2606.05296v1-agentic-monte-carlo-simulating-reinforcement-learning-for-black-box-agents)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：通过蒙特卡洛采样黑盒智能体的最优策略
+4. [ExpWeaver: LLM Agents Learn from Experience via Latent RAG](/202606/07/2606.01041v1-expweaver-llm-agents-learn-from-experience-via-latent-rag)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：企业多智能体系统的动态协调策略选择
-3. [Task diversity produces systematic transfer but inhibits continual reinforcement learning](/202606/06/2606.00880v1-task-diversity-produces-systematic-transfer-but-inhibits-continual-reinforcement-learning)  
+   evidence：用于智能体经验记忆的潜空间检索增强生成
+5. [ConTraIRL: Factorized Contrastive Abstractions for Transferable IRL](/202606/07/2606.03017v1-contrairl-factorized-contrastive-abstractions-for-transferable-irl)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：持续强化学习中任务多样性的影响分析
-4. [A Sheaf Framework for Strategic Multi-Agent Systems: From Consensus to Nash Equilibria](/202606/06/2606.01663v1-a-sheaf-framework-for-strategic-multi-agent-systems-from-consensus-to-nash-equilibria)  
+   evidence：可迁移逆强化学习用于智能体奖励学习
+6. [Libra: Efficient Resource Management for Agentic RL Post-Training](/202606/07/2606.03077v1-libra-efficient-resource-management-for-agentic-rl-post-training)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：用于战略多智能体系统的层丛框架
-5. [RUBAS: Rubric-Based Reinforcement Learning for Agent Safety](/202606/06/2606.04051v1-rubas-rubric-based-reinforcement-learning-for-agent-safety)  
+   evidence：智能体强化学习后训练的资源管理
+7. [Position: Deployed Reinforcement Learning should be Continual](/202606/07/2606.04029v1-position-deployed-reinforcement-learning-should-be-continual)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：基于规则的强化学习用于智能体安全
-6. [The Meta-Agent Challenge: Are Current Agents Capable of Autonomous Agent Development?](/202606/06/2606.04455v1-the-meta-agent-challenge-are-current-agents-capable-of-autonomous-agent-development)  
+   evidence：主张部署的强化学习智能体应持续学习
+8. [MIRAGE: Mobile Agents with Implicit Reasoning and Generative World Models](/202606/07/2606.04627v1-mirage-mobile-agents-with-implicit-reasoning-and-generative-world-models)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：评估智能体自主开发能力
-7. [Fog of Love: Engineering Virtuous Agent Behavior with Affinity-based Reinforcement Learning in a Game Environment](/202606/06/2606.04750v1-fog-of-love-engineering-virtuous-agent-behavior-with-affinity-based-reinforcement-learning-in-a-game-environment)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：在多智能体游戏环境中使用基于亲和力的强化学习和策略正则化
-8. [Learning of Robot Safety Policies via Adversarial Synthetic Scenarios](/202606/06/2606.05952v1-learning-of-robot-safety-policies-via-adversarial-synthetic-scenarios)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：双智能体对抗博弈学习机器人安全策略
-9. [S$^3$LDBO: A Snapshot Single-Loop Algorithm for Decentralized Bilevel Optimization](/202606/06/2605.31311v1-s3ldbo-a-snapshot-single-loop-algorithm-for-decentralized-bilevel-optimization)  
+   evidence：移动智能体的隐式推理与生成世界模型
+9. [Distributed GNEP Algorithms without Multiplier Sharing and Applications to Multi-Robot Coordination and Contextual Bandit-Based Active Learning](/202606/07/2606.00759v1-distributed-gnep-algorithms-without-multiplier-sharing-and-applications-to-multi-robot-coordination-and-contextual-bandit-based-active-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：为网络化多智能体系统提供去中心化双层优化，允许代理跳过昂贵导数计算
-10. [When Parallelism Pays Off: Cohesion-Aware Task Partitioning for Multi-Agent Coding](/202606/06/2606.00953v1-when-parallelism-pays-off-cohesion-aware-task-partitioning-for-multi-agent-coding)  
+   evidence：多机器人协调的分布式广义纳什均衡算法
+10. [AGENTCL: Toward Rigorous Evaluation of Continual Learning in Language Agents](/202606/07/2606.02461v1-agentcl-toward-rigorous-evaluation-of-continual-learning-in-language-agents)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：将多智能体编排形式化为图划分问题，以平衡编码任务中的通信与计算
-11. [Adaptive Latent Agentic Reasoning](/202606/06/2606.02871v1-adaptive-latent-agentic-reasoning)  
+   evidence：评估语言智能体持续学习的基准，支持衡量经验重用
+11. [From Ticks to Flows: Dynamics of Neural Reinforcement Learning in Continuous Environments](/202606/07/2606.04275v1-from-ticks-to-flows-dynamics-of-neural-reinforcement-learning-in-continuous-environments)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：自适应潜在推理提高智能体决策效率
+   evidence：连续环境中神经强化学习的理论框架
 
 
 <div class="dpr-home-promo-card">
