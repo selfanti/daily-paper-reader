@@ -6,71 +6,67 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-07
-- 运行时间：2026-06-07 20:57:57 UTC
+- 最新运行日期：2026-06-08
+- 运行时间：2026-06-08 22:06:46 UTC
 - 运行状态：成功
-- 本次总论文数：17
+- 本次总论文数：15
 - 精读区：6
-- 速读区：11
+- 速读区：9
 
 ### 今日简报（AI）
-今日精读17篇论文，重点聚焦两篇9.0分研究：智能体从环境指南蒸馏自我进化技能，以及对话AI的确定性记忆框架。最值得关注的方向是智能体自主技能学习与记忆增强机制。建议读者优先深挖这两篇论文，并关注速读中强化学习搜索智能体与成本优化相关研究。
-- 详情：[/202606/07/README](/202606/07/README)
+今日聚焦LLM智能体自演化与多智能体通信协议，精选两篇满分精读论文深入解析开放世界自进化与分布内优化机制。  
+最值得关注的方向：LLM Agent的自演化能力（《OpenSkill》与《Self-evolving》均获9分）以及基于不确定性校准的智能体工具调用决策（8分）。  
+建议优先精读这两篇自演化论文，同步探索多智能体通信协议中的信息熵效率提升方法，以夯实智能体长期自主进化基础。
+- 详情：[/202606/08/README](/202606/08/README)
 
 ### 精读区论文标签
-1. [MMG2Skill: Can Agents Distill In-the-Wild Guides into Self-Evolving Skills?](/202606/07/2606.01993v1-mmg2skill-can-agents-distill-in-the-wild-guides-into-self-evolving-skills)  
+1. [OpenSkill: Open-World Self-Evolution for LLM Agents](/202606/08/2606.06741v1-openskill-open-world-self-evolution-for-llm-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：将人机指南提炼为自我进化的技能
-2. [DMF: A Deterministic Memory Framework for Conversational AI Agents](/202606/07/2606.03463v1-dmf-a-deterministic-memory-framework-for-conversational-ai-agents)  
+   evidence：开放世界自演化，无需预设数据
+2. [Self-evolving LLM agents with in-distribution Optimization](/202606/08/2606.07367v1-self-evolving-llm-agents-with-in-distribution-optimization)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：对话AI智能体的确定性记忆框架
-3. [Policy Gradient for Continuous-Time Robust Markov Decision Processes](/202606/07/2606.04335v2-policy-gradient-for-continuous-time-robust-markov-decision-processes)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向鲁棒RL智能体的策略梯度方法
-4. [Memory is Reconstructed, Not Retrieved: Graph Memory for LLM Agents](/202606/07/2606.06036v1-memory-is-reconstructed-not-retrieved-graph-memory-for-llm-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向LLM智能体的图记忆与主动重建
-5. [Reinforcement Learning with Pairwise Preferences in Long-Term Decision Problems](/202606/07/2606.00367v1-reinforcement-learning-with-pairwise-preferences-in-long-term-decision-problems)  
+   evidence：自进化LLM智能体结合分布内优化与强化学习
+3. [Reinforcement Learning from Rich Feedback with Distributional DAgger](/202606/08/2606.05152v1-reinforcement-learning-from-rich-feedback-with-distributional-dagger)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：基于成对偏好的强化学习用于长期决策问题
-6. [ANDES: Agent Native Data Evolving Synthesis Tool for Autonomous Instruction Alignment](/202606/07/2606.01279v1-andes-agent-native-data-evolving-synthesis-tool-for-autonomous-instruction-alignment)  
+   evidence：利用丰富反馈的强化学习，采用分布DAgger方法
+4. [Online KL-Regularized Reinforcement Learning with Function Approximation under Misspecification](/202606/08/2606.06053v1-online-kl-regularized-reinforcement-learning-with-function-approximation-under-misspecification)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：通过智能体自主进化数据合成实现指令对齐
+   evidence：带有KL正则化和函数近似的理论强化学习
+5. [AdMem: Advanced Memory for Task-solving Agents](/202606/08/2606.06787v1-admem-advanced-memory-for-task-solving-agents)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：统一记忆框架，整合语义、情景和程序记忆
+6. [Tree-of-Experience: A Structured Experience-Management Solution for Self-Evolving Agents under Low-Repetition and Implicit-Reward Environments](/202606/08/2606.06960v1-tree-of-experience-a-structured-experience-management-solution-for-self-evolving-agents-under-low-repetition-and-implicit-reward-environments)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：低重复隐式奖励环境下的代理自我进化
 
 ### 速读区论文标签
-1. [Harness-1: Reinforcement Learning for Search Agents with State-Externalizing Harnesses](/202606/07/2606.02373v1-harness-1-reinforcement-learning-for-search-agents-with-state-externalizing-harnesses)  
+1. [Exploring Agentic Tool-Calling Decisions via Uncertainty-Aligned Reinforcement Learning](/202606/08/2606.06976v1-exploring-agentic-tool-calling-decisions-via-uncertainty-aligned-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：为搜索智能体提供状态外部化框架和环境侧工作记忆
-2. [Cost-Aware Optimization for Agentic Query Execution](/202606/07/2606.03152v1-cost-aware-optimization-for-agentic-query-execution)  
+   evidence：基于强化学习的代理工具调用决策优化，引入不确定性对齐
+2. [Learning Multi-Agent Communication Protocol: Study on Information Entropy Efficiency in MARL](/202606/08/2606.07200v1-learning-multi-agent-communication-protocol-study-on-information-entropy-efficiency-in-marl)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：使用枚举和群体相对策略优化的智能体查询执行自我改进优化器
-3. [Agentic Monte Carlo: Simulating Reinforcement Learning for Black-Box Agents](/202606/07/2606.05296v1-agentic-monte-carlo-simulating-reinforcement-learning-for-black-box-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：通过蒙特卡洛采样黑盒智能体的最优策略
-4. [ExpWeaver: LLM Agents Learn from Experience via Latent RAG](/202606/07/2606.01041v1-expweaver-llm-agents-learn-from-experience-via-latent-rag)  
+   evidence：基于信息熵效率的多代理强化学习通信协议
+3. [SubtleMemory: A Benchmark for Fine-Grained Relational Memory Discrimination in Long-Horizon AI Agents](/202606/08/2606.05761v2-subtlememory-a-benchmark-for-fine-grained-relational-memory-discrimination-in-long-horizon-ai-agents)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：用于智能体经验记忆的潜空间检索增强生成
-5. [ConTraIRL: Factorized Contrastive Abstractions for Transferable IRL](/202606/07/2606.03017v1-contrairl-factorized-contrastive-abstractions-for-transferable-irl)  
+   evidence：用于 AI 智能体细粒度关系记忆辨别的基准
+4. [Learn to Match: Two-Sided Matching with Temporally Extended Feedback](/202606/08/2606.06744v1-learn-to-match-two-sided-matching-with-temporally-extended-feedback)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：可迁移逆强化学习用于智能体奖励学习
-6. [Libra: Efficient Resource Management for Agentic RL Post-Training](/202606/07/2606.03077v1-libra-efficient-resource-management-for-agentic-rl-post-training)  
+   evidence：动态匹配市场的多智能体强化学习基准
+5. [SlimSearcher: Training Efficiency-Aware Web Agents via Adaptive Reward Gating](/202606/08/2606.07074v1-slimsearcher-training-efficiency-aware-web-agents-via-adaptive-reward-gating)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：智能体强化学习后训练的资源管理
-7. [Position: Deployed Reinforcement Learning should be Continual](/202606/07/2606.04029v1-position-deployed-reinforcement-learning-should-be-continual)  
+   evidence：使用自适应奖励门控强化学习训练高效Web智能体
+6. [Modelling Opinion Dynamics at Scale with Deep MARL](/202606/08/2606.07487v1-modelling-opinion-dynamics-at-scale-with-deep-marl)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：主张部署的强化学习智能体应持续学习
-8. [MIRAGE: Mobile Agents with Implicit Reasoning and Generative World Models](/202606/07/2606.04627v1-mirage-mobile-agents-with-implicit-reasoning-and-generative-world-models)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：移动智能体的隐式推理与生成世界模型
-9. [Distributed GNEP Algorithms without Multiplier Sharing and Applications to Multi-Robot Coordination and Contextual Bandit-Based Active Learning](/202606/07/2606.00759v1-distributed-gnep-algorithms-without-multiplier-sharing-and-applications-to-multi-robot-coordination-and-contextual-bandit-based-active-learning)  
+   evidence：深度多智能体强化学习用于意见动态建模
+7. [Consensus is Strategically Insufficient: Reasoning-Trace Disagreement as a Knowledge-Representation Signal](/202606/08/2606.04223v1-consensus-is-strategically-insufficient-reasoning-trace-disagreement-as-a-knowledge-representation-signal)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：多机器人协调的分布式广义纳什均衡算法
-10. [AGENTCL: Toward Rigorous Evaluation of Continual Learning in Language Agents](/202606/07/2606.02461v1-agentcl-toward-rigorous-evaluation-of-continual-learning-in-language-agents)  
+   evidence：多智能体系统与推理轨迹分歧作为信号
+8. [Ahoy: LLMs Enacting Multiagent Interaction Protocols](/202606/08/2606.05390v1-ahoy-llms-enacting-multiagent-interaction-protocols)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：评估语言智能体持续学习的基准，支持衡量经验重用
-11. [From Ticks to Flows: Dynamics of Neural Reinforcement Learning in Continuous Environments](/202606/07/2606.04275v1-from-ticks-to-flows-dynamics-of-neural-reinforcement-learning-in-continuous-environments)  
+   evidence：LLM执行多智能体交互协议以实现协调
+9. [Uncertainty-Aware LLM-Guided Policy Shaping for Sparse-Reward Reinforcement Learning](/202606/08/2606.06673v1-uncertainty-aware-llm-guided-policy-shaping-for-sparse-reward-reinforcement-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：连续环境中神经强化学习的理论框架
+   evidence：大语言模型引导的策略塑造用于稀疏奖励强化学习
 
 
 <div class="dpr-home-promo-card">
