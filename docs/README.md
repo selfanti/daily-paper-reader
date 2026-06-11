@@ -6,71 +6,70 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-10
-- 运行时间：2026-06-10 22:50:57 UTC
+- 最新运行日期：2026-06-11
+- 运行时间：2026-06-11 22:07:52 UTC
 - 运行状态：成功
-- 本次总论文数：17
-- 精读区：6
-- 速读区：11
+- 本次总论文数：16
+- 精读区：7
+- 速读区：9
 
 ### 今日简报（AI）
-今日推荐17篇论文，精读6篇，速读11篇，重点关注自进化LLM智能体与人机协作推理策略树两大方向。最值得看：《Memory Beyond Recall》提出双过程认知记忆系统（10分），《Distilling LLM Reasoning》将推理蒸馏为可解释策略树（9分）。建议优先精读这两篇，速读中《Voting Protocols》多智能体协调、《MuJoCo-Drones-Gym》无人机仿真和《HARBOR》机器人强化学习框架也值得关注。
-- 详情：[/202606/10/README](/202606/10/README)
+今日精选16篇论文，精读聚焦智能体自我偏好优化与记忆增强工具使用。  
+最值得关注智能体无监督自我偏好优化（Evolving Agents in the Dark）和基于环境反馈的记忆驱动工具智能体（MemToolAgent）。  
+建议普通读者重点关注智能体如何利用记忆与用户反馈提升工具使用效率，同时可留意安全探索策略（SHAPO）的实践价值。
+- 详情：[/202606/11/README](/202606/11/README)
 
 ### 精读区论文标签
-1. [Memory Beyond Recall: A Dual-Process Cognitive Memory System for Self-Evolving LLM Agents](/202606/10/2606.09483v1-memory-beyond-recall-a-dual-process-cognitive-memory-system-for-self-evolving-llm-agents)  
-   标签：评分：10.0/10、query:agentic-rl
-   evidence：面向自我进化LLM智能体的双过程认知记忆系统
-2. [Distilling LLM Reasoning into an Interpretable Policy Tree for Human-AI Collaboration](/202606/10/2606.08596v1-distilling-llm-reasoning-into-an-interpretable-policy-tree-for-human-ai-collaboration)  
+1. [Evolving Agents in the Dark: Retrospective Harness Optimization via Self-Preference](/202606/11/2606.05922v2-evolving-agents-in-the-dark-retrospective-harness-optimization-via-self-preference)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过从LLM蒸馏的可解释策略树实现多智能体RL合作
-3. [3SPO: State-Score-Supervised Policy Optimization for LLM Agents](/202606/10/2606.09961v1-3spo-state-score-supervised-policy-optimization-for-llm-agents)  
+   evidence：基于回溯优化的智能体自我进化
+2. [MemToolAgent: Leveraging Memory for Tool Using Agents Based on Environment and User Feedback](/202606/11/2606.07909v2-memtoolagent-leveraging-memory-for-tool-using-agents-based-on-environment-and-user-feedback)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向LLM智能体的状态分数监督策略优化新算法
-4. [Role-Agent: Bootstrapping LLM Agents via Dual-Role Evolution](/202606/10/2606.10917v1-role-agent-bootstrapping-llm-agents-via-dual-role-evolution)  
+   evidence：面向工具使用智能体的记忆架构
+3. [Effective Reinforcement Learning for Agentic Search by Recycling Zero-Variance Queries During Training](/202606/11/2606.10709v1-effective-reinforcement-learning-for-agentic-search-by-recycling-zero-variance-queries-during-training)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过双角色共同进化自举LLM智能体
-5. [AllDayNav: Lifelong Navigation via Real-World Reinforcement Learning](/202606/10/2606.10927v1-alldaynav-lifelong-navigation-via-real-world-reinforcement-learning)  
+   evidence：通过GRPO查询回收的智能体搜索强化学习
+4. [Phi-Actor-Critic: Steering General-Sum Games to Pareto-Efficient Correlated Equilibria](/202606/11/2606.11284v1-phi-actor-critic-steering-general-sum-games-to-pareto-efficient-correlated-equilibria)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过强化学习实现终身导航中的自进化多模态记忆，支持自适应
-6. [AgenticRL: Self-Refining Agentic Reinforcement Learning for Vision-Conditioned UAV Navigation](/202606/10/2606.03963v3-agenticrl-self-refining-agentic-reinforcement-learning-for-vision-conditioned-uav-navigation)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：面向自主无人机导航的自精炼智能体强化学习
+   evidence：面向一般和博弈中帕累托高效均衡的多智能体Actor-Critic
+5. [HERO: Hindsight-Enhanced Reflection from Environment Observations for Agentic Self-Distillation](/202606/11/2606.11559v1-hero-hindsight-enhanced-reflection-from-environment-observations-for-agentic-self-distillation)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：后见增强的自蒸馏方法提升智能体多轮自我进化能力
+6. [Organize then Retrieve: Hierarchical Memory Navigation for Efficient Agents](/202606/11/2606.11680v1-organize-then-retrieve-hierarchical-memory-navigation-for-efficient-agents)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：提出适用于LLM智能体的层次记忆架构
+7. [APPO: Agentic Procedural Policy Optimization](/202606/11/2606.12384v1-appo-agentic-procedural-policy-optimization)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：智能体策略梯度优化
 
 ### 速读区论文标签
-1. [Voting Protocols as Coordination Mechanisms for Role-Constrained Multi-Agent Tutoring Systems](/202606/10/2606.08030v1-voting-protocols-as-coordination-mechanisms-for-role-constrained-multi-agent-tutoring-systems)  
+1. [Visual Para-Thinker++: A Single-Policy Multi-Agent Framework for Visual Reasoning](/202606/11/2606.09290v1-visual-para-thinker-a-single-policy-multi-agent-framework-for-visual-reasoning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：使用投票协议的多智能体协调机制
-2. [MuJoCo-Drones-Gym: A GPU-Accelerated Multi-Drone Simulator for Control and Reinforcement Learning](/202606/10/2606.08039v1-mujoco-drones-gym-a-gpu-accelerated-multi-drone-simulator-for-control-and-reinforcement-learning)  
+   evidence：提出单策略多智能体框架，通过角色特定奖励实现视觉推理中的协调
+2. [SHAPO: Sharpness-Aware Policy Optimization for Safe Exploration](/202606/11/2606.10228v1-shapo-sharpness-aware-policy-optimization-for-safe-exploration)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：用于强化学习的多无人机仿真器
-3. [HARBOR: A Harness Framework for Agentic Robot Reinforcement Learning](/202606/10/2606.08610v1-harbor-a-harness-framework-for-agentic-robot-reinforcement-learning)  
+   evidence：提出锐度感知策略优化，一种用于安全强化学习的策略梯度方法
+3. [Decentralized Multi-Agent Systems with Shared Context](/202606/11/2606.10662v1-decentralized-multi-agent-systems-with-shared-context)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：自主智能体强化学习
-4. [Structure-Conditioned Actor-Critic Branches for Quality-Diversity Reinforcement Learning](/202606/10/2606.08735v1-structure-conditioned-actor-critic-branches-for-quality-diversity-reinforcement-learning)  
+   evidence：提出基于共享上下文的去中心化多智能体系统用于协调
+4. [TRACE: A Unified Rollout Budget Allocation Framework for Efficient Agentic Reinforcement Learning](/202606/11/2606.11119v1-trace-a-unified-rollout-budget-allocation-framework-for-efficient-agentic-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：强化学习中用于策略多样性的演员-评论家分支
-5. [Reinforcement Learning from Rich Feedback with Distributional DAgger](/202606/10/2606.05152v2-reinforcement-learning-from-rich-feedback-with-distributional-dagger)  
+   evidence：面向智能体强化学习的高效展开预算分配
+5. [Agent Skill Evaluation and Evolution: Frameworks and Benchmarks](/202606/11/2606.11435v1-agent-skill-evaluation-and-evolution-frameworks-and-benchmarks)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：智能体技能进化的综述，包含强化学习范式
+6. [IAPO: Input Attribution-Aware Policy Optimization for Tool Use in Small Multimodal Agents](/202606/11/2606.11652v1-iapo-input-attribution-aware-policy-optimization-for-tool-use-in-small-multimodal-agents)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：面向多模态小语言模型智能体工具使用的策略优化
+7. [Learning Explicit Behavioral Models with Adaptive Questions and World-Model Probes](/202606/11/2606.07127v1-learning-explicit-behavioral-models-with-adaptive-questions-and-world-model-probes)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：利用丰富反馈的强化学习与分布DAgger方法
-6. [Claw-R1: A Step-Level Data Middleware System for Agentic Reinforcement Learning](/202606/10/2606.09138v1-claw-r1-a-step-level-data-middleware-system-for-agentic-reinforcement-learning)  
+   evidence：用于自适应决策与学习的显式行为模型
+8. [Reasoning or Memorization? Direction-Aware Diversity Exploration in LLM Reinforcement Learning](/202606/11/2606.10346v1-reasoning-or-memorization-direction-aware-diversity-exploration-in-llm-reinforcement-learning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：面向智能体强化学习的数据中间件系统
-7. [TabClaw: An Interactive and Self-Evolving Agent for Spreadsheet Manipulation and Table Reasoning](/202606/10/2606.10316v1-tabclaw-an-interactive-and-self-evolving-agent-for-spreadsheet-manipulation-and-table-reasoning)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：用于电子表格操作的自我进化智能体
-8. [HIPIF: Hierarchical Planning and Information Folding for Long-Horizon LLM Agent Learning](/202606/10/2606.10507v1-hipif-hierarchical-planning-and-information-folding-for-long-horizon-llm-agent-learning)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：分层规划与信息折叠用于长程LLM智能体学习
-9. [Tree-Based Formalization of Multi-Agent Complementarity in Human-AI Interactions](/202606/10/2606.04779v1-tree-based-formalization-of-multi-agent-complementarity-in-human-ai-interactions)  
+   evidence：方向感知探索策略梯度
+9. [Bittensor Agent Arenas as a Trajectory Primitive: Distilling a Shopping Agent from ShoppingBench Subnet Traces](/202606/11/2606.10064v1-bittensor-agent-arenas-as-a-trajectory-primitive-distilling-a-shopping-agent-from-shoppingbench-subnet-traces)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：基于树的多智能体互补性形式化
-10. [Toward Human-Centered Multi-Agent Systems: Integrating Cognition, Culture, Values, and Cooperation in AI Agents](/202606/10/2606.08274v1-toward-human-centered-multi-agent-systems-integrating-cognition-culture-values-and-cooperation-in-ai-agents)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：多智能体强化学习合作
-11. [Quantitative Promise Theory: Intentionality and Inference in Autonomous Agents](/202606/10/2606.08552v1-quantitative-promise-theory-intentionality-and-inference-in-autonomous-agents)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：自主智能体的定量承诺理论，融合贝叶斯和主动推理
+   evidence：利用代理竞技场生成轨迹支持强化学习后训练
 
 
 <div class="dpr-home-promo-card">
