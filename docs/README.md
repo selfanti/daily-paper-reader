@@ -6,70 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-11
-- 运行时间：2026-06-11 22:07:52 UTC
+- 最新运行日期：2026-06-12
+- 运行时间：2026-06-12 22:05:52 UTC
 - 运行状态：成功
-- 本次总论文数：16
-- 精读区：7
-- 速读区：9
+- 本次总论文数：17
+- 精读区：6
+- 速读区：11
 
 ### 今日简报（AI）
-今日精选16篇论文，精读聚焦智能体自我偏好优化与记忆增强工具使用。  
-最值得关注智能体无监督自我偏好优化（Evolving Agents in the Dark）和基于环境反馈的记忆驱动工具智能体（MemToolAgent）。  
-建议普通读者重点关注智能体如何利用记忆与用户反馈提升工具使用效率，同时可留意安全探索策略（SHAPO）的实践价值。
-- 详情：[/202606/11/README](/202606/11/README)
+1) 今日共收录17篇论文，精读聚焦四足机器人连续协调与基于共识的通信知识共享，两篇均获9.0高分。  
+2) 最值得关注的方向：语义技能发现实现四足机器人持续协调，以及共识机制驱动的多智能体知识共享，两者均展现出高效协同潜力。  
+3) 下一步可重点关注多智能体系统的角色分解训练与偏好学习优势加权方法，这些8.0分工作提供了实用改进思路。
+- 详情：[/202606/12/README](/202606/12/README)
 
 ### 精读区论文标签
-1. [Evolving Agents in the Dark: Retrospective Harness Optimization via Self-Preference](/202606/11/2606.05922v2-evolving-agents-in-the-dark-retrospective-harness-optimization-via-self-preference)  
+1. [Continual Quadruped Robots Coordination via Semantic Skill Discovery](/202606/12/2606.08102v2-continual-quadruped-robots-coordination-via-semantic-skill-discovery)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：基于回溯优化的智能体自我进化
-2. [MemToolAgent: Leveraging Memory for Tool Using Agents Based on Environment and User Feedback](/202606/11/2606.07909v2-memtoolagent-leveraging-memory-for-tool-using-agents-based-on-environment-and-user-feedback)  
+   evidence：基于多智能体强化学习的四足机器人持续协调
+2. [CCKS: Consensus-based Communication and Knowledge Sharing](/202606/12/2606.12281v1-ccks-consensus-based-communication-and-knowledge-sharing)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向工具使用智能体的记忆架构
-3. [Effective Reinforcement Learning for Agentic Search by Recycling Zero-Variance Queries During Training](/202606/11/2606.10709v1-effective-reinforcement-learning-for-agentic-search-by-recycling-zero-variance-queries-during-training)  
+   evidence：基于共识的通信与知识共享合作多智能体强化学习
+3. [UniIntervene: Agentic Intervention for Efficient Real-World Reinforcement Learning](/202606/12/2606.12372v1-uniintervene-agentic-intervention-for-efficient-real-world-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过GRPO查询回收的智能体搜索强化学习
-4. [Phi-Actor-Critic: Steering General-Sum Games to Pareto-Efficient Correlated Equilibria](/202606/11/2606.11284v1-phi-actor-critic-steering-general-sum-games-to-pareto-efficient-correlated-equilibria)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向一般和博弈中帕累托高效均衡的多智能体Actor-Critic
-5. [HERO: Hindsight-Enhanced Reflection from Environment Observations for Agentic Self-Distillation](/202606/11/2606.11559v1-hero-hindsight-enhanced-reflection-from-environment-observations-for-agentic-self-distillation)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：后见增强的自蒸馏方法提升智能体多轮自我进化能力
-6. [Organize then Retrieve: Hierarchical Memory Navigation for Efficient Agents](/202606/11/2606.11680v1-organize-then-retrieve-hierarchical-memory-navigation-for-efficient-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：提出适用于LLM智能体的层次记忆架构
-7. [APPO: Agentic Procedural Policy Optimization](/202606/11/2606.12384v1-appo-agentic-procedural-policy-optimization)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体策略梯度优化
+   evidence：面向真实世界强化学习的智能体干预
+4. [Continual Quadruped Robots Coordination via Semantic Skill Discovery](/202606/12/2606.08102v1-continual-quadruped-robots-coordination-via-semantic-skill-discovery)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：基于语义技能发现和多智能体强化学习的四足机器人持续协调
+5. [Bayesian-Agent: Posterior-Guided Skill Evolution for LLM Agent Harnesses](/202606/12/2606.08348v1-bayesian-agent-posterior-guided-skill-evolution-for-llm-agent-harnesses)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：基于贝叶斯后验的LLM智能体技能进化方法
+6. [An Agency-Transferring Model-Free Policy Enhancement Technique](/202606/12/2606.09825v1-an-agency-transferring-model-free-policy-enhancement-technique)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：模型无关的策略增强技术，从基线策略转移控制权
 
 ### 速读区论文标签
-1. [Visual Para-Thinker++: A Single-Policy Multi-Agent Framework for Visual Reasoning](/202606/11/2606.09290v1-visual-para-thinker-a-single-policy-multi-agent-framework-for-visual-reasoning)  
+1. [Game-Theoretic Area Coverage Control with Cooperative-Adversarial Multi-Agent Systems](/202606/12/2606.10201v1-game-theoretic-area-coverage-control-with-cooperative-adversarial-multi-agent-systems)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：提出单策略多智能体框架，通过角色特定奖励实现视觉推理中的协调
-2. [SHAPO: Sharpness-Aware Policy Optimization for Safe Exploration](/202606/11/2606.10228v1-shapo-sharpness-aware-policy-optimization-for-safe-exploration)  
+   evidence：多智能体合作-对抗区域覆盖控制与博弈论
+2. [Divide and Cooperate: Role-Decomposed Multi-Agent LLM Training with Cross-Agent Learning Signals](/202606/12/2606.10684v1-divide-and-cooperate-role-decomposed-multi-agent-llm-training-with-cross-agent-learning-signals)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：提出锐度感知策略优化，一种用于安全强化学习的策略梯度方法
-3. [Decentralized Multi-Agent Systems with Shared Context](/202606/11/2606.10662v1-decentralized-multi-agent-systems-with-shared-context)  
+   evidence：角色分解的多智能体训练，利用跨智能体学习信号实现合作
+3. [PAWS: Preference Learning with Advantage-Weighted Segments](/202606/12/2606.11982v1-paws-preference-learning-with-advantage-weighted-segments)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：提出基于共享上下文的去中心化多智能体系统用于协调
-4. [TRACE: A Unified Rollout Budget Allocation Framework for Efficient Agentic Reinforcement Learning](/202606/11/2606.11119v1-trace-a-unified-rollout-budget-allocation-framework-for-efficient-agentic-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：面向智能体强化学习的高效展开预算分配
-5. [Agent Skill Evaluation and Evolution: Frameworks and Benchmarks](/202606/11/2606.11435v1-agent-skill-evaluation-and-evolution-frameworks-and-benchmarks)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：智能体技能进化的综述，包含强化学习范式
-6. [IAPO: Input Attribution-Aware Policy Optimization for Tool Use in Small Multimodal Agents](/202606/11/2606.11652v1-iapo-input-attribution-aware-policy-optimization-for-tool-use-in-small-multimodal-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：面向多模态小语言模型智能体工具使用的策略优化
-7. [Learning Explicit Behavioral Models with Adaptive Questions and World-Model Probes](/202606/11/2606.07127v1-learning-explicit-behavioral-models-with-adaptive-questions-and-world-model-probes)  
+   evidence：基于偏好的强化学习用于自主智能体
+4. [MARDoc: A Memory-Aware Refinement Agent Framework for Multimodal Long Document QA](/202606/12/2606.05749v1-mardoc-a-memory-aware-refinement-agent-framework-for-multimodal-long-document-qa)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：用于自适应决策与学习的显式行为模型
-8. [Reasoning or Memorization? Direction-Aware Diversity Exploration in LLM Reinforcement Learning](/202606/11/2606.10346v1-reasoning-or-memorization-direction-aware-diversity-exploration-in-llm-reinforcement-learning)  
+   evidence：面向长文档问答的记忆感知精炼智能体框架
+5. [Exploring cooperation mechanisms via reinforcement learning in network common-pool resource games](/202606/12/2606.05867v1-exploring-cooperation-mechanisms-via-reinforcement-learning-in-network-common-pool-resource-games)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：方向感知探索策略梯度
-9. [Bittensor Agent Arenas as a Trajectory Primitive: Distilling a Shopping Agent from ShoppingBench Subnet Traces](/202606/11/2606.10064v1-bittensor-agent-arenas-as-a-trajectory-primitive-distilling-a-shopping-agent-from-shoppingbench-subnet-traces)  
+   evidence：使用强化学习探索网络公共池资源博弈中的合作机制
+6. [CollabSim: A CSCW-Grounded Methodology for Investigating Collaborative Competence of LLM Agents through Controlled Multi-Agent Experiments](/202606/12/2606.06399v1-collabsim-a-cscw-grounded-methodology-for-investigating-collaborative-competence-of-llm-agents-through-controlled-multi-agent-experiments)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：研究多智能体LLM系统的协作能力
+7. [Bridging the Agent-World Gap: Text World Models for LLM-based Agents](/202606/12/2606.09032v1-bridging-the-agent-world-gap-text-world-models-for-llm-based-agents)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：为LLM智能体提供文本世界模型以支持规划和决策
+8. [Game-Theoretic Multi-Agent Control for Robust Contextual Reasoning in LLMs](/202606/12/2606.10322v1-game-theoretic-multi-agent-control-for-robust-contextual-reasoning-in-llms)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：基于博弈论的多智能体控制增强LLM上下文推理鲁棒性
+9. [Entropy-Based Evaluation of AI Agents: A Lightweight Framework for Measuring Behavioral Patterns](/202606/12/2606.05872v1-entropy-based-evaluation-of-ai-agents-a-lightweight-framework-for-measuring-behavioral-patterns)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：利用代理竞技场生成轨迹支持强化学习后训练
+   evidence：基于熵的智能体行为模式评估框架
+10. [CollabSim: A CSCW-Grounded Methodology for Investigating Collaborative Competence of LLM Agents through Controlled Multi-Agent Experiments](/202606/12/2606.06399v2-collabsim-a-cscw-grounded-methodology-for-investigating-collaborative-competence-of-llm-agents-through-controlled-multi-agent-experiments)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：基于CSCW的多智能体LLM系统协作能力研究方法
+11. [Flow-based Policy Adaptation without Policy Updates](/202606/12/2606.06461v1-flow-based-policy-adaptation-without-policy-updates)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：基于流的策略校正非专家动作
 
 
 <div class="dpr-home-promo-card">
