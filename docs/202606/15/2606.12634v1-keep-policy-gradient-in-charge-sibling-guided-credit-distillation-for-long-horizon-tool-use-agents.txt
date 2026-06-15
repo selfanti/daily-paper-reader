@@ -1,0 +1,571 @@
+Title: Keep Policy Gradient in Charge: Sibling-Guided Credit Distillation for Long-Horizon Tool-Use Agents
+
+URL Source: https://arxiv.org/pdf/2606.12634v1
+
+Published Time: Fri, 12 Jun 2026 00:11:05 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# Keep Policy Gradient in Charge: Sibling-Guided Credit Distillation for Long-Horizon Tool-Use Agents *
+
+Tianyu Ding 
+
+Amazon Web Services 
+
+tianyd@amazon.com 
+
+Jianhong Xin 
+
+Amazon Web Services 
+
+xijianho@amazon.com 
+
+Juan Pablo De la Cruz Weinstein 
+
+Amazon Web Services 
+
+jcruam@amazon.com 
+
+Abstract 
+
+Long-horizon tool-use reinforcement learning can learn from outcome verification, but its trajectory-level advantage is broadcast across many reasoning, API, and answer tokens. Self-distillation promises a denser signal by reusing a policy’s own rollouts or a privileged teacher. We show, however, that direct token-level self-distillation can silently destroy tool use: it rehearses teacher behavior without knowing which actions the verifier rewards, so use-ful skills and harmful shortcuts are ampli-fied together. We introduce Sibling-Guided Credit Distillation (SGCD) , which uses dis-tillation for credit assignment rather than as a competing actor loss. Dynamic sampling produces mixed successful and failed sibling rollouts; an external LLM summarizes their contrast into a training-only stepwise credit reference; dense teacher/student divergence drives credit reassignment; and bounded de-tached credit weights reshape GRPO token advantages. The deployed student sees no external LLM, sibling evidence, or oracle. Across AppWorld and τ 3-airline, SGCD im-proves over matched GRPO comparators: Ap-pWorld TGC 42 .9 → 45 .6 on test_normal 
+
+and 24 .7 → 27 .0 on test_challenge , and τ 3-airline pass@1 0.583 → 0.602 .
+
+1 Introduction 
+
+Reinforcement learning for multi-turn, tool-using agents increasingly relies on group-relative policy-gradient (PG) methods such as GRPO (Shao et al., 2024). These methods can learn from outcome verification alone, but their token-level credit as-signment is coarse: the same trajectory-level advan-tage is broadcast across long sequences of reason-ing, API calls, tool observations, and final answers. Self-distillation (SD) offers an attractive comple-ment: use the policy’s own successful behavior, or 
+
+> *Work done at Amazon Web Services. Correspondence:
+> tianyd@amazon.com .
+
+a teacher conditioned on privileged training-time information, to supply a denser signal (Hübotter et al., 2026; Zhao et al., 2026; Wang et al., 2026; Lu et al., 2026). The hard part is making that signal help the policy gradient rather than fight it. 
+
+The hidden failure. We first show, on the τ 3-airline customer-service benchmark (Yao et al., 2024; Barres et al., 2025; Sierra Research, 2026), that naive SD actively degrades long-horizon tool-use. Over training, the model increasingly solves easy information-only cases without using tools, while state-changing action tasks collapse to zero success (§3). The aggregate score conceals the mechanism: the policy is not learning a better agent; it is abandoning executable tool-use behav-ior the base or supervised checkpoint already pos-sessed. 
+
+The lesson: use distillation for credit, not as a competing loss. The contrast with a GRPO+KL recipe is sharp: it preserves tool-use and reaches 
+
+0.583 test-split pass@1, whereas SDPO peaks at 0.317 and collapses on state-changing action tasks. Our subsequent AppWorld probes led to the same design constraint. Direct SD pressure can be live and non-inert, yet still degrade ac-tion quality when the teacher target is misaligned with what the verifier rewards; our strongest con-trolled ablation uses direct/uncapped SD and falls below the matched GRPO control. We therefore repurpose teacher/student divergence as a credit-assignment signal : it determines where the policy-gradient advantage should be concentrated, while the policy-gradient objective remains the model’s update driver. 
+
+The method. We introduce Sibling-Guided Credit Distillation (SGCD) . Dynamic sampling produces mixed groups of sibling rollouts for the same task, giving verified successful and failed attempts under the same prompt. A strong exter-1
+
+> arXiv:2606.12634v1 [cs.LG] 10 Jun 2026
+
+nal LLM summarizes those siblings into a step-wise credit reference: what the successful attempts checked, which branches failed, and where the failed attempts deviated. The current policy is then scored twice on the rollout: once under the ordinary student context and once under the credit reference as a stop-gradient teacher. Dense top-K reverse-KL and entropy produce divergence-driven credit features; a bounded credit-weighting rule converts those features into clipped token-level advantage weights inside the GRPO surrogate (§4). No direct distillation loss is needed for the actor weights: dis-tillation guides credit, and policy gradient performs the update. 
+
+Why it is deployable. The external LLM, sib-ling evidence, and credit reference are training-only. The deployed student receives the same clean prompt as the GRPO policy: no oracle, no sibling rollouts, no external LLM, and no task-specific credit reference. Because the divergence signal is detached from the actor parameters and only re-shapes the verified policy-gradient advantage, the method avoids the failure mode in which a privi-leged teacher distribution pulls the model toward actions that the clean deployment prompt cannot reproduce. 
+
+Contributions. 
+
+1. A tool-use diagnosis: naive self-distillation can reinforce benchmark shortcuts, preserving easy information-only behavior while destroy-ing state-changing action capability (§3). 2. SGCD : a sibling-guided credit-distillation method that builds a stepwise credit reference from mixed successful/failed rollouts and uses dense teacher/student divergence to reweight, not replace, the PG update (§4). 3. An empirical study on AppWorld and τ 3-airline. SGCD improves over a matched GRPO com-parator on both benchmarks, and ablations show that sibling credit references, divergence-driven credit reassignment, and PG dominance are nec-essary for the gain (§5). 
+
+2 Background and Related Work 
+
+Group-relative RL for tool-use agents. Policy-gradient reinforcement learning traces back to score-function estimators and the policy-gradient theorem (Williams, 1992; Sutton et al., 1999). PPO-style clipped policy optimization (Schulman et al., 2017) remains the practical base for many RL fine-tuning recipes. GRPO (Shao et al., 2024) esti-mates advantages from groups of sampled roll-outs without a learned value function; DAPO (Yu et al., 2025) adds Clip-Higher and dynamic sampling, keeping only mixed-outcome groups. We use GRPO as the policy-gradient backbone, borrowing the mixed-outcome sampling principle as an evidence source. Group-relative methods have become a practical backbone for reasoning and tool-use RL (Zhang et al., 2026; Wang and Ammanabrolu, 2025). SGCD keeps this policy-gradient backbone intact: its contribution is to reshape token credit inside the surrogate using sibling-derived evidence, not to replace the reward or train a separate value model. 
+
+Knowledge distillation and privileged informa-tion. Classical knowledge distillation transfers information from teacher probabilities or features to a student (Hinton et al., 2015); learning under privileged information conditions a teacher or train-ing signal on information unavailable at inference (Vapnik and Izmailov, 2015). Recent on-policy dis-tillation work emphasizes that the student’s own samples reduce exposure mismatch (Agarwal et al., 2024). SGCD adopts this on-policy setting, but changes the role of the distributional comparison: dense teacher/student divergence becomes a de-tached credit signal for policy-gradient weighting rather than an actor-gradient KL objective. 
+
+Self-distillation for RL. A family of recent meth-ods adds self-distillation to group-relative RL. SDPO (Hübotter et al., 2026) replaces the reward with a teacher/student log-ratio advantage and uses successful peer rollouts as context. OPSD (Zhao et al., 2026) adds a generalized Jensen–Shannon di-vergence (JSD; Lin, 1991) auxiliary to GRPO with a label-privileged teacher. Skill-SD (Wang et al., 2026) distills from self-generated natural-language skill summaries with importance-weighted reverse-KL. SDAR (Lu et al., 2026) gates token-level SD by an asymmetric σ(β∆) policy-shift gap; RLSD (Chen et al., 2026) reports a related SD-RL lad-der. These methods motivate teacher-side skills, sibling context, dense logit comparisons, and gates. Our negative result shows why, in long-horizon tool-use, the safe use is narrower: the distributional signal should identify where credit should move, while the verified policy gradient remains the only actor update driver. 2Self-distillation instability. Prior work reports that unconstrained self-distillation can collapse or drift when the teacher is noisy, overconfident, or instance-specific (Lu et al., 2026; Li et al., 2026; Fu et al., 2026; Sun et al., 2026). We contribute a concrete tool-use instance: zero-tool collapse on 
+
+τ 3-airline (§3). This failure is especially relevant to agents because a teacher can be confident about a locally plausible action sequence that is unrepro-ducible under the clean deployment prompt. 
+
+Positioning. SGCD differs from the closest SD-RL methods along three axes, with a compact comparison in Appendix Table 7. First, it builds the privileged signal from mixed siblings : veri-fied successful and failed rollouts for the same task, selected by dynamic sampling. Second, an external LLM converts those siblings into a step-wise credit reference, avoiding a persistent skill bank or inference-time dependency. Third, dense reverse-KL and entropy are used for divergence-driven credit reassignment and bounded advan-tage weights, rather than a standalone SD aux-iliary. Thus the method is still distillation–the teacher comparison supplies knowledge–but the gradient path remains policy-gradient dominant by construction. We use “distillation” in this credit-transfer sense: teacher-side information is transferred through detached credit weights in the policy-gradient surrogate, not through a teacher-matching actor loss. 
+
+3 The Failure Mode: Naive SD Destroys Tool-Use 
+
+Setup. We train Qwen3.5-4B on the τ 3-airline domain (Yao et al., 2024; Barres et al., 2025; Sierra Research, 2026) and evaluate on a held-out 20-task split under greedy pass@1. Tasks are catego-rized by their gold action set into state-changing ac-tion tasks (booking/cancellation/update; 13 tasks), 
+
+information-only tasks (4), transfer-only (1), and 
+
+no-action (2). 
+
+Aggregate result. Table 2 reports pass@1 across recipes. GRPO+KL reaches 0.583 ; SDPO peaks at 
+
+0.317 and scores 0% on state-changing action tasks at late steps. The aggregate hides the mechanism. 
+
+Mechanism: zero-tool collapse. A per-step roll-out audit shows that SDPO shifts toward no-tool information-only successes: the no-tool share rises from 0% to 100% , while mean tools per success falls 2.5 → 0.0. The GRPO+KL control stays at 
+
+0% zero-tool. Thus SDPO is not merely trading off categories; it preserves easy information-only answers while abandoning executable action behav-ior, as Table 2 shows. 
+
+Why direct SD fails. Stop-gradient on the teacher prevents updates to the teacher’s param-eters, but the target distribution still defines where the student is pulled. When the teacher places prob-ability mass on “skip the tool, answer directly” or on an action plan that is not supported by the clean deployment prompt, a KL/JSD auxiliary can faith-fully optimize the wrong target. This is why simply making the teacher stronger, denser, or more confi-dent is not enough: the actor gradient can still be steered away from what the verifier rewards. 
+
+Design lesson. The policy-gradient objective must remain the model’s update driver. Distilla-tion is useful only if it answers a narrower question: 
+
+which parts of a long trajectory deserve more or less of the verified advantage? SGCD (§4) follows this lesson. It uses teacher/student divergence to assign credit within the GRPO surrogate, not as an independent actor-gradient loss. 
+
+Relation to known SD instability. Prior work reports self-distillation instability on math rea-soning and dialogue (§2); the zero-tool collapse above is the corresponding tool-use instance–a spe-cific, measurable mechanism on a customer-service agent–and motivates a design that keeps the reward-grounded update in charge. 
+
+4 Sibling-Guided Credit Distillation 
+
+4.1 Overview 
+
+SGCD (Figure 1) augments a group-relative policy-gradient (PG) backbone with a distillation-derived credit signal. The pipeline has four stages: (1) dy-namic sampling produces mixed successful/failed sibling rollouts for the same task; (2) an external LLM turns those siblings into a stepwise credit reference; (3) the policy is scored under the ordi-nary student context and under the credit-reference teacher context, giving dense teacher/student diver-gence; and (4) that detached divergence reshapes the token-level advantage inside the GRPO surro-gate. The deployed model is the ordinary student policy: no external LLM, no credit reference, and no sibling evidence appear at inference. 3Figure 1: SGCD overview. Dynamic sampling creates mixed sibling rollouts; an external LLM summarizes their contrast into a training-only stepwise credit reference; detached dense teacher/student divergence produces credit features; and bounded credit weights reweight the GRPO advantage. The deployed student receives only the clean task prompt. 
+
+4.2 Mixed sibling evidence 
+
+For a task x, the rollout worker samples a sibling group Yx = {yx, 1, . . . , y x,n } under the current pol-icy, with verifier outcome rx,k ∈ { 0, 1}. A group is useful when it is mixed :
+
+0 <
+
+> n
+
+X
+
+> k=1
+
+rx,k < n. (1) Mixed groups contain both a verified successful route and failed alternatives under the same task prompt. Dynamic sampling is therefore not only a batch efficiency trick: it is the evidence source that lets SGCD compare siblings locally. 
+
+Credit-reference construction. For each mixed group, a strong external LLM converts policy-visible sibling traces into a training-only stepwise credit reference zx: reusable state checks, useful action choices, failed branches, and likely devia-tion points. We rebuild this reference from fresh on-policy siblings rather than maintaining a persis-tent skill bank; the exact prompt and long-context fallback are in Appendix B. 
+
+Leakage boundary. The credit reference is never shown to the deployed student. During construc-tion we keep only information visible in the train-ing rollouts and mask benchmark-private labels, evaluator internals, sensitive values, and answer-bearing literals. The goal is to abstract reusable credit evidence, not to let the student memorize hidden answers. 
+
+4.3 Dense teacher/student divergence 
+
+For a rollout token position t, let pKx,k,t be the stu-dent’s dense top-K distribution under the clean roll-out prefix, and let qKx,k,t be the same policy scored forward-only with credit reference zx inserted as teacher context. The support contains the teacher top-K tokens, the observed rollout token, and a tail bucket that preserves remaining mass. We primar-ily use reverse-KL, 
+
+dx,k,t = DKL 
+
+ pKx,k,t sg[ qKx,k,t ] , (2) with forward-KL and Jensen–Shannon divergence (JSD; Lin, 1991) as pilot divergence checks. The re-ported SGCD results use reverse-KL unless stated otherwise. The key implementation detail is the stop-gradient: dx,k,t and the teacher entropy are credit features, not a direct actor-gradient distilla-tion loss. 
+
+4.4 Divergence-driven credit reassignment 
+
+Long-horizon agent traces contain large stretches of boilerplate reasoning, setup, and tool output. SGCD therefore uses token-level divergence for 
+
+credit reassignment : operationally, it reallocates the scalar trajectory advantage across response to-kens, without claiming access to causal ground-truth credit. Within each rollout we normalize 
+
+dx,k,t , mark divergence spikes, and extend a high-credit span while the teacher entropy remains sta-ble; entropy rises or a divergence reset terminate the span. The resulting saliency sx,k,t ∈ [0 , 1] 
+
+4marks positions where the credit reference dis-agrees with the student’s trajectory in a confident, localized way. We use API/action spans as a safety/reporting mask, but not as the sole segmen-tation rule: fixed tool-call boundaries alone are too brittle for long-horizon, high-temperature rollouts. 
+
+4.5 Credit-weighted policy gradient 
+
+Let Ax,k be the group-relative trajectory advantage and rx,k,t (θ) the usual policy ratio. SGCD replaces the broadcast advantage with a token-weighted ad-vantage 
+
+bAx,k,t = Ax,k Wx,k,t ,sx,k,t = g(ux,k,t ),ux,k,t = sg dx,k,t , H (qKx,k,t ) ,
+
+(3) where g is the deterministic divergence-spike and entropy-termination segmenter from §4.4. In our implementation, the credit multiplier is 
+
+Wx,k,t = clip(1 + γ s x,k,t , 1, c ) , (4) where clip( a, ℓ, u ) = min(max( a, ℓ ), u ), c > 1,and γ ≥ 0; the reported runs use γ=1 and c=2 .Low-saliency tokens have W ≈ 1; high-saliency tokens amplify the existing advantage magnitude but never flip its sign. The stop-gradient detaches the feature construction from actor and teacher scor-ing, and the multiplier itself is a constant with re-spect to actor parameters: there is no learned credit-weight network and no gradient term through dx,k,t ,
+
+H(qK ), or a teacher-matching KL/JSD objective. For failed rollouts, high-saliency tokens receive a larger negative advantage. For successful roll-outs, high-saliency tokens receive concentrated pos-itive credit. Low-saliency tokens recover the ordi-nary GRPO advantage. The actor loss is the stan-dard clipped surrogate with bAx,k,t . Let ¯rx,k,t =clip( rx,k,t , 1 − ϵ, 1 + ϵ):
+
+LSGCD = − X
+
+> x,k,t
+
+min 
+
+
+
+rx,k,t bAx,k,t , ¯rx,k,t bAx,k,t 
+
+
+
+.
+
+(5) Policy gradient is therefore the only actor-gradient path. The dense teacher/student comparison and credit-reference construction determine where the verified advantage is concentrated, not what token distribution the actor must imitate. 
+
+4.6 Why this avoids the direct-SD failure 
+
+Earlier direct auxiliary variants can be summarized as LPG + λLSD : if the teacher target is wrong, priv-ileged, or unreproducible, the auxiliary creates a                           
+
+> test_normal test_challenge Method TGC SGC TGC SGC Base Qwen3.5-4B 23.8 10.7 11.3 2.2 GRPO 42.9 16.1 24.7 7.2
+> SGCD (ours) 45.6 17.9 27.0 8.5
+> Table 1: AppWorld held-out task-goal completion (TGC) and scenario-goal completion (SGC), %, greedy pass@1, Qwen3.5-4B. test_normal (n=168 tasks / 56
+> scenarios) and test_challenge (n=417 /139 ) are re-ported separately. SGCD nearly doubles task success over the un-finetuned base and improves consistently over the matched GRPO control under an identical har-ness.
+
+second actor gradient that can oppose the verifier. We observed exactly this failure: direct SD could be active, yet still degrade action quality because it optimized a teacher distribution rather than the verifier’s reward. SGCD removes that path. The credit reference and dense RKL are detached fea-tures; they identify where the verified advantage should be concentrated, while the only update to the student policy remains reward-grounded PG. This is the operational form of the diagnosis in §3: use distillation to improve credit assignment, not to overrule the policy gradient. 
+
+5 Experiments 
+
+5.1 Setup 
+
+We evaluate on two multi-turn tool-use bench-marks: AppWorld (Trivedi et al., 2024) and 
+
+τ 3-airline, a corrected airline task set in the τ -bench family (Yao et al., 2024; Barres et al., 2025; Sierra Research, 2026). AppWorld reports Task Goal Completion (TGC) and Scenario Goal Completion (SGC); τ 3-airline reports held-out pass@1 with action-category diagnostics. App-World starts directly from Qwen3.5-4B after di-agnostic SFT regressed (Appendix E); τ 3-airline uses our SFT-warm-start ladder. Full split, runtime, response-mask, and prompt-builder details are in Appendix B. The AppWorld GRPO comparator uses the same rollout and evaluation harness as SGCD, including mixed-group sampling. 
+
+5.2 Main results 
+
+Table 1 reports the main AppWorld held-out results. SGCD nearly doubles task success over the un-finetuned base on both splits ( test_normal TGC 
+
+23 .8 → 45 .6; test_challenge TGC 11 .3 →
+
+27 .0) and improves over the matched GRPO con-trol under the identical harness ( +2 .7 and +2 .3
+
+5Method step pass@1 action succ. info succ.                          
+
+> SFT base 800 0.438 26.9 68.8 SDPO 300 0.317 0.0 91.7 GRPO+KL 120 0.583 41.0 91.7
+> SGCD (ours) 120 0.602 43.5 93.8
+> Table 2: τ3-airline held-out 20-task pass@1 and per-category success rates (%). Action succ. is success on state-changing action tasks; info succ. is success on information-only tasks. SDPO retains information-only success while collapsing to 0% on state-changing action tasks; SGCD improves over GRPO+KL on the same benchmark. See Appendix B for the formal distinction between pass kand pass@ k.
+
+TGC respectively). The margin over GRPO is mod-est, which is the expected size of effect: GRPO already trains a competent agent, and SGCD’s role is to improve credit assignment inside that reward-grounded update. On τ 3-airline (Table 2), the same principle holds on the benchmark where we first diagnosed the failure. SGCD reaches 0.602 held-out pass@1 (43 .5% on state-changing action tasks), edging the GRPO+KL baseline ( 0.583 , 41 .0% ) and stand-ing far above SDPO, whose state-changing ac-tion success has collapsed to 0% . SGCD thus closes the diagnosis-to-fix loop: the recipe that uses distillation for credit assignment preserves and slightly extends the tool-use that unconstrained self-distillation destroys. 
+
+5.3 Ablations 
+
+Appendix Table 6 removes one component at a time from full SGCD, holding the recipe fixed. We keep the three most diagnostic controls in the main text. 
+
+Sibling credit reference. Removing the external-LLM credit reference and scoring with the ordi-nary self-context removes most of SGCD’s gain over matched GRPO ( test_normal TGC 45 .6 →
+
+44 .0). The mixed sibling contrast is therefore ac-tive: SGCD is not merely benefiting from dynamic sampling or a second forward pass. 
+
+Divergence-driven credit weighting. Replacing the divergence credit weights with a uniform token weight similarly erodes the gain ( 45 .6 → 43 .8). This supports the central claim that dense diver-gence is useful when it tells the policy gradient where to assign credit, rather than when it is treated as a separate imitation target. 
+
+Direct SD pressure. Allowing the distillation sig-nal to act as an uncapped/direct auxiliary drives performance below the matched GRPO control (test_normal TGC 45 .6 → 38 .2, vs. GRPO 42 .9). This ablation matches the diagnosis: once a teacher distribution creates a competing actor gradient, long-horizon tool-use can degrade even when the signal is dense and training-only. 
+
+Matched GRPO control. The GRPO row dis-ables SGCD entirely: no sibling credit reference, no teacher-side scoring, and no divergence-driven credit weights. It uses the same rollout and eval-uation harness, so the delta from that row to full SGCD is the sibling-guided credit mechanism. 
+
+5.4 Analysis 
+
+During SGCD training, dense reverse-KL and teacher entropy provide non-inert credit features, while the actor loss remains the PG surrogate with bounded token weights. The useful signal is there-fore visible in credit diagnostics–the number of se-lected segments, divergence magnitude, weight dis-tribution, and weight clipping–not in an auxiliary-loss magnitude. Entropy and completion metrics remain stable, and the deployed student carries no credit reference or external dependency. 
+
+6 Conclusion 
+
+We showed that naive self-distillation can silently destroy multi-turn tool-use: on τ 3-airline it pre-serves easy information-only behavior while state-changing action success collapses to zero. The remedy is not to make the distillation loss larger or more privileged, but to keep policy gradient in charge. SGCD uses dynamic sampling to obtain mixed successful and failed siblings, an external LLM to summarize their contrast into a stepwise credit reference, and dense teacher/student diver-gence to build bounded token-level credit weights for the GRPO surrogate. On AppWorld, SGCD im-proves over matched GRPO while nearly doubling task success over the base model; on τ 3-airline it improves over GRPO+KL on the same tasks where direct SD fails. The broader lesson is simple: for long-horizon tool-use, distillation is safest when it guides credit assignment and the verifier-grounded policy gradient remains the actor-gradient driver. 
+
+Limitations 
+
+Single model family and scale. All experiments use Qwen3.5-4B. Generalization across model fam-ilies and to larger scales (e.g. 8B) is future work. 6Benchmarks. SGCD is evaluated on two bench-marks (AppWorld and τ 3-airline). Broader cov-erage across additional agentic domains is future work. 
+
+External-LLM dependence at training time. 
+
+The credit reference is produced by a strong ex-ternal LLM during training. Its cost, availability, and quality are practical constraints. The deployed student has no such dependency, but training-time quality still matters because poor credit references can produce weak or noisy credit features. 
+
+Credit reference is not formal ground truth. 
+
+SGCD approximates stepwise reference behav-ior from verified siblings. This is weaker than a benchmark-provided stepwise oracle and can miss valid alternative plans. The bounded credit weights reduce the risk of overcommitting to one interpre-tation, but it does not make the credit reference infallible. 
+
+Provenance and ablation scope. The AppWorld SFT regression table is a diagnostic subset result, not a headline held-out result. The full SGCD result also depends on the exact external-LLM prompt and dynamic-sampling rollout set; we report the core controls but do not exhaustively sweep every prompt-builder or divergence variant. 
+
+Ethical Considerations 
+
+SGCD is a training-time method for tool-use agents and introduces no new data collection involving human subjects. The benchmarks used are public. The method’s privileged signal–external-LLM sum-maries of on-policy sibling rollouts–is confined to training; the deployed model receives no credit ref-erence, sibling evidence, oracle, or external model. The external summarizer should not be shown cre-dentials, evaluator internals, hidden gold actions, or answer-bearing deployment-invisible content. As with any agent that executes actions in real ap-plications, deployment should retain human over-sight for irreversible operations. SGCD improves training-time credit assignment; it is not a substi-tute for application-level safety controls. 
+
+References 
+
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Pi-otr Stanczyk, Sabela Ramos, Matthieu Geist, and Olivier Bachem. 2024. On-policy distillation of lan-guage models: Learning from self-generated mis-takes. Preprint , arXiv:2306.13649. Victor Barres, Honghua Dong, Soham Ray, Xujie Si, and Karthik Narasimhan. 2025. τ 2-Bench: Evaluat-ing conversational agents in a dual-control environ-ment. Preprint , arXiv:2506.07982. Hao Chen, Yang Li, and Wei Sun. 2026. Reinforcement learning with self-distillation for language-model rea-soning. Preprint , arXiv:2604.03128. Yuqian Fu, Wei Li, and Hao Chen. 2026. Revisiting on-policy distillation: Empirical failure modes and simple fixes. Preprint , arXiv:2603.25562. Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. 2015. Distilling the knowledge in a neural network. 
+
+Preprint , arXiv:1503.02531. Jonas Hübotter, Frederike Lübeck, Lejs Behric, An-ton Baumann, Marco Bagatella, Daniel Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Carlos Guestrin, and Andreas Krause. 2026. Re-inforcement learning via self-distillation. Preprint ,arXiv:2601.20802. Chen Li, Hao Wang, and Yu Zhang. 2026. The many faces of on-policy distillation. Preprint ,arXiv:2605.11182. Jianhua Lin. 1991. Divergence measures based on the Shannon entropy. IEEE Transactions on Information Theory , 37(1):145–151. Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Jun Wang, and Yong Li. 2026. Self-distilled agentic reinforce-ment learning. Preprint , arXiv:2605.15155. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Prox-imal policy optimization algorithms. Preprint ,arXiv:1707.06347. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. DeepSeekMath: Pushing the limits of mathemati-cal reasoning in open language models. Preprint ,arXiv:2402.03300. Sierra Research. 2026. τ 3-Bench: Advancing agent evaluation to knowledge and voice. Wei Sun, Hao Liu, and Yang Zhang. 2026. On the mech-anism and phenomenology of on-policy distillation. 
+
+Preprint , arXiv:2604.13016. Richard S. Sutton, David McAllester, Satinder Singh, and Yishay Mansour. 1999. Policy gradient methods for reinforcement learning with function approxima-tion. In Advances in Neural Information Processing Systems , volume 12. Harsh Trivedi, Tushar Khot, Mareike Hartmann, Ruskin Manku, Vinty Dong, Edward Li, Shashank Gupta, Ashish Sabharwal, and Niranjan Balasubramanian. 2024. AppWorld: A controllable world of apps and people for benchmarking interactive coding agents. 
+
+Preprint , arXiv:2407.18901. 
+
+7Vladimir Vapnik and Rauf Izmailov. 2015. Learning using privileged information: Similarity control and knowledge transfer. Ruiyi Wang and Prithviraj Ammanabrolu. 2025. A prac-titioner’s guide to multi-turn agentic reinforcement learning. Preprint , arXiv:2510.01132. Yifan Wang, Hao Liu, and Wei Zhang. 2026. Skill-conditioned self-distillation for multi-turn language-model agents. Preprint , arXiv:2604.10674. Ronald J. Williams. 1992. Simple statistical gradient-following algorithms for connectionist reinforcement learning. Machine Learning , 8(3–4):229–256. Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. 2024. τ -bench: A benchmark for tool-agent-user interaction in real-world domains. 
+
+Preprint , arXiv:2406.12045. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, and 1 others. 2025. DAPO: An open-source LLM reinforcement learning system at scale. Preprint , arXiv:2503.14476. Yifan Zhang, Wei Chen, and Hao Li. 2026. Co-evolving agents: Self-improving tool-use through iterative re-inforcement learning. Preprint , arXiv:2604.15840. Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. 2026. Self-distilled reasoner: On-policy self-distillation for large language models. Preprint , arXiv:2601.18734. 
+
+A SGCD Objective: Bounded Credit Reweighting 
+
+We record the properties used in §4. SGCD does not optimize a standalone KL/JSD actor loss. In-stead, it uses detached dense divergence features to produce a bounded token-level multiplier on the policy-gradient advantage. Let z = ( i, t ) index a masked response token and let Ai be the trajectory-level group-relative advantage. Let 
+
+rz (θ) = πθ(yz | xi, y i,<t )
+
+πold (yz | xi, y i,<t ) ,
+
+¯rz (θ) = clip( rz (θ), 1 − ϵ, 1 + ϵ).
+
+The ordinary clipped GRPO token loss is 
+
+ℓGRPO  
+
+> z
+
+(θ) = − min {rz (θ)Ai, ¯rz (θ)Ai}.
+
+SGCD computes detached credit features 
+
+uz = sg[ dz , H z , s z ], where dz is the dense teacher/student divergence, Hz is teacher entropy, and sz is the divergence-driven credit saliency. A bounded multiplier Wz = h(uz ) satisfies 
+
+1 ≤ Wz ≤ c. In the reported implementation, 
+
+Wz = clip(1 + γs z , 1, c ),
+
+with γ=1 and c=2 . The SGCD token loss is 
+
+ℓSGCD  
+
+> z
+
+(θ) = − min {rz (θ)AiWz , ¯rz (θ)AiWz }.
+
+Proposition 1 (no teacher-gradient path). 
+
+Since uz is stop-gradient, ∂W z /∂θ = 0 for actor parameters θ. Therefore actor gradients in SGCD flow only through the policy ratio rz (θ); there is no actor-gradient term of the form 
+
+∇θD(πθ∥qteacher ).
+
+Dense RKL and entropy are credit features, not a direct actor-gradient distillation loss. 
+
+Proposition 2 (positive scaling of GRPO). For every token z,
+
+ℓSGCD  
+
+> z
+
+(θ) = Wz ℓGRPO  
+
+> z
+
+(θ).
+
+Indeed, because Wz > 0,
+
+min {rz AiWz , ¯rz AiWz } = Wz min {rz Ai, ¯rz Ai}.
+
+Since Wz is detached from actor parameters, 
+
+∇θℓSGCD  
+
+> z
+
+(θ) = Wz ∇θℓGRPO  
+
+> z
+
+(θ).
+
+Corollary 1 (sign preservation). The reshaped advantage bAz = AiWz satisfies 
+
+sign( bAz ) = sign( Ai), | bAz | ≤ c|Ai|.
+
+Thus SGCD can scale local credit but cannot flip the sign of the verifier-grounded advantage. 
+
+Corollary 2 (tokenwise PG alignment). For ev-ery token z,
+
+∇θℓSGCD  
+
+> z
+
+, ∇θℓGRPO  
+
+> z
+
+= Wz ∇θℓGRPO  
+
+> z
+> 2
+
+≥ 0.
+
+Hence SGCD is tokenwise aligned with the corre-sponding GRPO update: it either scales the same clipped-surrogate policy-gradient direction or, in a flat clipped region, scales a zero gradient. 
+
+Corollary 3 (bounded contribution envelope). 
+
+For every token, 
+
+|ℓSGCD  
+
+> z
+
+| ≤ c|ℓGRPO  
+
+> z
+
+|,
+
+∥∇ θℓSGCD  
+
+> z
+
+∥ ≤ c∥∇ θℓGRPO  
+
+> z
+
+∥.
+
+For a batch B,
+
+∥∇ θLSGCD ∥ ≤ c X
+
+> z∈B
+
+∥∇ θℓGRPO  
+
+> z
+
+∥.
+
+This is a bound relative to the tokenwise policy-gradient contribution envelope. It does not require, and does not imply, that SGCD’s batch gradient is within a factor c of the realized GRPO batch gradient, because ordinary token gradients may cancel. 8Corollary 4 (bounded local movement). As-sume the average policy KL is locally smooth, so that for sufficiently small updates ∆θ,
+
+KL( πθ∥πθ+∆ θ) ≤ LKL 
+
+2 ∥∆θ∥2.
+
+For one SGCD step ∆θ = −η∇θLSGCD ,
+
+KL( πθ∥πθ+∆ θ)
+
+≤ LKL 
+
+2 η2c2 X
+
+> z∈B
+
+∥∇ θℓGRPO  
+
+> z
+
+∥
+
+!2
+
+.
+
+This is not a global convergence or trust-region theorem. It states that SGCD’s policy movement is bounded by a clipped, detached reweighting of verifier-grounded policy-gradient token contri-butions, rather than by an independent teacher-matching actor loss. 
+
+B Reproducibility Details 
+
+Shared runtime configuration. All AppWorld arms share the runtime in Table 3 and all τ 3-airline arms share the runtime in Table 4; within each benchmark every arm uses the same rollout, envi-ronment, and evaluation harness, and arms differ only in the credit signal (§4). The base model is Qwen3.5-4B. These tables list the shared environ-ment and sampling setup; method-specific hyper-parameters are given in §4 and §A.                                        
+
+> Runtime setting Value
+> Base model Qwen3.5-4B (raw) Rollouts per prompt ( n)8
+> Train / mini-batch 8/8
+> PPO epochs 1
+> Learning rate 1e −6
+> Max prompt / response 16 ,384 /16 ,384 tokens Max model length 32 ,768 tokens Max user / assistant turns 30 /30
+> Max observation 12 ,000 chars Env steps per task 30
+> Thinking enabled yes Rollout temp. / top-p(train) 1.0/1.0
+> Rollout temp. / top-p(val) 1.0/0.95
+> Decoding (eval) greedy (pass@1) GPUs / tensor parallel 8/1
+> Train / dev / test splits 90 /57 /168+417 tasks
+
+Table 3: Shared runtime and environment configuration for the AppWorld arms. SGCD and the comparators use this identical setup and differ only in the credit signal (§4). The response budget of 16 ,384 tokens is shared across up to 30 assistant turns; observations are truncated at 12 ,000 characters. Held-out evalua-tion uses test_normal (168 tasks / 56 scenarios) and 
+
+test_challenge (417 / 139 ) separately. 
+
+τ 3-airline runtime. The τ 3-airline arms share the runtime in Table 4. Unlike the AppWorld arms, the τ 3 policy is initialized from a supervised checkpoint, which the diagnosis tracks as the PG-dominant control (§3). The interaction is bounded to 16 user/assistant turns, and each tool/user obser-vation is truncated to 512 characters.                                 
+
+> Runtime setting Value
+> Base model Qwen3.5-4B, SFT-initialized Rollouts per prompt ( n)8
+> Train / mini-batch 8/8
+> PPO epochs 1
+> Learning rate 1e −6
+> Max prompt / response 16 ,384 /16 ,384 tokens Max model length 32 ,768 tokens Max user / assistant turns 16 /16
+> Max chars / observation 512
+> Thinking enabled yes Rollout temp. / top-p(train) 0.4/0.95
+> Rollout temp. / top-p(val) 0.4/0.95
+> Decoding (eval) greedy (pass@1) GPUs / tensor parallel 8/1
+> Domain / held-out split airline / 20-task
+
+Table 4: Shared runtime and environment configuration for the τ 3-airline arms. The policy is SFT-initialized; the matched GRPO+KL and SGCD arms share this setup and differ only in the credit signal. 
+
+τ 3-airline user simulator. All τ 3-airline exper-iments use a consistent user simulator across all arms: a strong instruction-following model (strong instruction-following) role-plays the airline cus-tomer according to the task specification. The same user-simulator model and configuration are shared by the SFT data generation, the GRPO+KL anchor, the SDPO collapse runs, and SGCD, so differences in agent performance cannot be attributed to user-side variation. 
+
+τ 3-airline SFT data and training. The super-vised initialization for the τ 3-airline arms (Table 4) was trained on ∼ 9,000 successful multi-turn tra-jectories generated deterministically by a strong agentic model (frontier agentic) paired with the same strong instruction-following user simulator. Only trajectories that achieved task success were re-tained; failed trajectories were discarded. The SFT recipe: Qwen3.5-4B base, full-parameter cross-entropy, max sequence length 32 ,768 , batch size 8
+
+(micro-batch 1 per GPU), learning rate 1e −5 (con-stant, no warmup), 2 epochs ( ∼ 1,600 steps). The checkpoint used across all RL arms is at step 800 
+
+(mid-training), which reaches pass@1 = 0 .438 on the held-out 20-task split (Table 2). This establishes the tool-use floor that naive SDPO subsequently destroys and that PG-dominant training preserves. 
+
+Evaluation protocol. AppWorld is scored with the benchmark’s state-based evaluator, reporting TGC and SGC separately for test_normal (168 
+
+9tasks / 56 scenarios) and test_challenge (417 /
+
+139 ) under greedy decoding (pass@1); splits are never aggregated. The τ 3-airline diagnosis uses a held-out 20-task split (13 state-changing action tasks, 4 information-only tasks, 1 transfer, 2 no-action tasks) under greedy pass@1, scored per cat-egory. The same user simulator (strong instruction-following) drives the customer side for both train-ing rollouts and held-out evaluation. The zero-tool-collapse audit measures, per training step, the fraction of information-only successes that invoke no tool and the mean number of tools per success. 
+
+pass k vs. pass@ k (formal definition). We fol-low the τ -bench evaluation protocol (Yao et al., 2024). The two metrics have opposite monotonic-ity in k:• pass@ k (standard code-generation convention): draw k independent rollouts; a task is solved if 
+
+at least one succeeds: 
+
+pass@ k = E
+
+"
+
+1 −
+
+> k
+
+Y
+
+> i=1
+
+(1 − si)
+
+#
+
+,
+
+where si ∈ { 0, 1} is the success indicator of roll-out i. Higher k increases pass@ k (more attempts 
+
+⇒ higher chance of at least one success). • pass k (τ -bench convention): draw k independent rollouts; a task is solved only if all k succeed: 
+
+pass k = E
+
+" kY
+
+> i=1
+
+si
+
+#
+
+.
+
+Higher k decreases pass k (more attempts ⇒
+
+stricter consistency requirement). pass k mea-sures reliability : can the agent solve the task 
+
+every time , not just once? In Table 2 and throughout this paper we report 
+
+pass@1 (equivalently pass 1), which is a single greedy rollout per task—at k=1 the two metrics coincide. The τ -bench authors motivate pass k as a reliability metric for deployed agents where consis-tency matters more than best-of-k luck (Yao et al., 2024). 
+
+Credit-reference construction. For a mixed sib-ling group, the external LLM receives the task in-struction and the generated sibling traces. If the entire set fits within context, all siblings are shown. If it is too long, we include the smaller outcome class and match it with the opposite class. When there are more successes than failures, we prefer shorter successful siblings; when there are more failures than successes, we prefer longer failed sib-lings. This keeps concise solutions and informa-tive failures while staying within the external LLM context. The reference is rebuilt from the current on-policy siblings each time the task is sampled; we do not use a persistent skill bank. 
+
+Leakage and literal masking. Before calling the external LLM, we remove benchmark-private su-pervision and values that should not be recoverable from the clean deployment prompt. Concretely, the sanitizer masks evaluator or oracle reports, hidden gold actions, credentials, payment or account val-ues, and answer-bearing literals. This rule is not AppWorld-specific: for any tool-use benchmark, the credit reference may summarize policy-visible behavior and observations, but it may not expose private labels or task answers. 
+
+Dense credit features. We score the clean student distribution and the credit-reference-conditioned teacher distribution on a local support containing teacher top-K tokens, the observed to-ken, and a tail bucket. Reverse-KL is the default divergence. We also implemented forward-KL and JSD (Lin, 1991) as heuristic pilot checks, but do not treat them as paper-grade ablation rows in the main tables. Divergence spikes and teacher entropy define credit saliency before the bounded credit multiplier produces token weights. 
+
+Response and credit masks. Policy-gradient loss is computed only on assistant-generated re-sponse tokens. System prompts, user/task prompts, API documentation, tool observations, simulator returns, and the credit-reference prefix itself are masked out. Generated reasoning tokens remain model output and can receive the ordinary PG loss; SGCD may also use their detached divergence as credit evidence. API/action spans are additionally logged as a safety and analysis slice, but fixed tool-call boundaries are not the only credit segments. Answer-bearing literals and masked values receive zero credit-reference weight. 
+
+Runtime monitoring. Dense teacher scoring adds an extra forward path, so we monitor step time, dense-scoring time, selected dense-token counts, credit-token counts, and peak GPU memory. The run is considered invalid if the dense features are all zero, the credit weights are inert, response masks include prompt/tool-observation tokens, or the de-10 Prompt block Template content      
+
+> Role You are a training-time credit analyst. Given one task and several policy-generated sibling rollouts with verifier outcomes, write a concise stepwise credit reference. Input Task instruction; visible tool/API traces and observations for each sibling; each sibling’s success/failure outcome; sanitized metadata needed to align steps. Rules Use only information present in the visible traces. Do not quote hidden labels, evaluator reports, credentials, or final answer literals. Prefer abstract state checks and action choices over copying task-specific values. Output (1) state checks that successful siblings establish; (2) reusable successful action branches; (3) failed branches and why they appear wrong; (4) likely deviation points where failures depart from successful evidence; (5) literals or values that should remain masked during credit scoring. Use Insert this reference only in the teacher-side scoring prefix during training. Never insert it into the student rollout prompt or deployment prompt.
+
+Table 5: Credit-reference prompt template. The template is intentionally benchmark-generic: sibling traces provide the evidence, while the prompt asks the external LLM to abstract reusable state/action credit rather than copy hidden answers.               
+
+> Configuration TGC norm. TGC chal. SGCD (full) 45.6 27.0
+> −sibling credit reference 44.0 25.4
+> −divergence credit weighting 43.8 25.3 direct/uncapped SD auxiliary 38.2 20.6 GRPO (SGCD off) 42.9 24.7
+
+Table 6: Ablating SGCD on AppWorld held-out TGC (%). The sibling credit reference and divergence-driven credit weights each contribute; replacing credit reweight-ing with direct uncapped SD pressure drives perfor-mance below matched GRPO, confirming that policy gradient must remain the actor-gradient driver (§5.3). 
+
+tached divergence path becomes a direct actor-gradient KL/JSD loss. 
+
+C Additional Result Tables 
+
+The main body reports headline results (Tables 1– 2). This section collects the full ablation grid (Ta-ble 6) and the self-distillation method family com-parison (Table 7) for reference. The ablation con-firms each SGCD component’s contribution and shows that replacing bounded credit reweighting with direct uncapped SD pressure degrades perfor-mance below the matched GRPO control. The fam-ily comparison positions SGCD’s use of distillation as detached credit features rather than a standalone actor-gradient loss—the structural distinction from prior SD methods. 
+
+D W&B Training-Trajectory Diagnostics 
+
+The held-out tables in the main paper are the pri-mary result. Figures 2 and 3 provide the cor-responding W&B training-trajectory diagnostics: they show that SDPO collapses on the same tool-use axes where SGCD remains stable. 
+
+E AppWorld SFT Diagnostic 
+
+Table 8 summarizes the diagnostic AppWorld SFT ladder that motivated direct-from-base RL for App-World. These runs used an early batch_001 diag-nostic subset, so they are not numerically compara-ble to the held-out test_normal /test_challenge 
+
+headline table. They nevertheless show the quali-tative issue: standard SFT reduced next-token loss while sharply degrading executable AppWorld be-havior. 11 Method Objective role Teacher / privileged context Signal used 
+
+SDPO (Hübotter et al., 2026) pure SD; reward replaced successful peer rollout sym. JSD, top-K≈100 
+
+OPSD (Zhao et al., 2026) GRPO +λ SD auxiliary reference answer / frozen-ref generalized JSD Skill-SD (Wang et al., 2026) GRPO +λ SD loss self-gen NL skill summaries imp.-weighted reverse-KL SDAR (Lu et al., 2026) GRPO +λ gated SD aux retrieved skills σ(β∆) gap gate 
+
+SGCD (ours) PG credit reweighting mixed siblings summarized into a credit refer-ence dense RKL+entropy, detached credit weights 
+
+Table 7: Self-distillation method family. SGCD uses distillation differently: teacher/student divergence is a detached credit-assignment signal for the policy-gradient surrogate, not a standalone actor-gradient auxiliary. 
+
+Run Rows / traj. TGC Test-pass 
+
+Base 4B – 15.8 51.5 
+
+SFT v0 770 turn rows 1.1 17.7 SFT v0.5 4,288 turn rows 0.6 15.3 SFT v0.6 393 trajectories looping –
+
+Table 8: Diagnostic AppWorld SFT regression on 
+
+batch_001 . The result motivates starting AppWorld SGCD from the base 4B model, unlike the τ 3-airline ladder where SFT is a viable initialization. 
+
+12 Figure 2: τ 3-airline W&B diagnostic trajectories. SDPO loses tool/action behavior during training, while SGCD preserves nonzero tool use and avoids the zero-tool fixed point. These dashboard traces diagnose the training-time failure mode; Table 2 reports the held-out pass@1 comparison. 
+
+Figure 3: AppWorld W&B diagnostic trajectories. SGCD maintains stable validation progress through the 240-step run, while the SDPO diagnostic run collapses early in both task success and completion-related signals. The AppWorld SDPO curve stitches resumed diagnostic runs and is used as failure evidence, not as a replacement for the held-out result table. 
+
+13
