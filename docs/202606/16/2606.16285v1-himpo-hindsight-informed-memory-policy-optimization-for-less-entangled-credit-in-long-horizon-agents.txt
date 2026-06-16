@@ -1,0 +1,479 @@
+Title: HiMPO: Hindsight-Informed Memory Policy Optimization for Less-Entangled Credit in Long-Horizon Agents
+
+URL Source: https://arxiv.org/pdf/2606.16285v1
+
+Published Time: Tue, 16 Jun 2026 01:47:36 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# HiMPO: Hindsight-Informed Memory Policy Optimization for Less-Entangled Credit in Long-Horizon Agents 
+
+Jiangze Yan 1,2 Yi Shen 1,2 Wenjing Zhang 1,2 Jieyun Huang 1,2 
+
+Zhaoxiang Liu 1,2 Ning Wang 1,2 Kai Wang 1,2 Shiguo Lian 1,2 
+
+> 1
+
+Unicom Data Intelligence, China Unicom 
+
+> 2
+
+Data Science & Artificial Intelligence Research Institute, China Unicom 
+
+{yanjz17, sheny73, liansg}@chinaunicom.cn 
+
+Abstract 
+
+Long-horizon agents rely on memory mecha-nisms to compress interaction history, but opti-mizing memory writing faces a distinct credit assignment challenge: a memory update may be rewarded or penalized due to downstream tool failures, noisy observations, or reasoning errors rather than its own contribution. This causally entangled credit can lead agents to discard useful evidence or preserve irrelevant information. We propose HiMPO, a Hindsight-Informed Memory Policy Optimization frame-work for assigning less-entangled credit to memory-writing actions in long-horizon agents. HiMPO first estimates the local utility of a memory update by comparing the task-relevant information recoverable from the previous and updated memories under the same pre-write state. It then uses hindsight relevance as a bounded retrospective filter that attenuates memory credit when local utility is not sup-ported by the target outcome. The resulting memory-specific advantage is applied only to memory tokens, while trajectory-level rewards optimize the rest of the agent behavior. Across judge-based open-domain tasks and objective compressive-memory QA, HiMPO improves over strong memory-based and RL-based base-lines while preserving compressed-context effi-ciency. Controlled interventions further show that HiMPO reduces blame leakage from tool-induced errors and improves attribution fidelity of memory updates. 
+
+1 Introduction 
+
+Long-horizon agents solve complex tasks by inter-leaving reasoning, tool invocation, and environmen-tal feedback, as in web search (Wu et al., 2025b), multi-hop question answering (Zhao et al., 2025), embodied planning (Qian et al., 2025), and tool-augmented reasoning (Wu et al., 2025a). However, full-history prompting causes the context to grow with the number of interaction steps, increasing token cost, stressing fixed context windows, and 
+
+Figure 1: Causally entangled memory credit. The same final failure can require opposite memory credits de-pending on whether the error originates from tools or memory. 
+
+degrading performance under long contexts. Mem-ory compression is therefore a key capability for efficient long-horizon agent learning. Existing memory mechanisms can be broadly divided into external retrieval and internal compres-sion. Retrieval-based methods store past interac-tions and retrieve relevant fragments on demand, 1
+
+> arXiv:2606.16285v1 [cs.CL] 15 Jun 2026
+
+but similarity-based access may be weakly aligned with the agent’s task objective. Compression-based methods instead summarize interaction histories into compact agent states, either with external sum-marizers or by integrating memory generation into policy learning. While end-to-end compression enables task-aware memory writing, it also intro-duces a new credit assignment problem: final out-comes are jointly determined by memory updates, tool calls, observations, and reasoning, making it unclear which component should be rewarded or penalized. For end-to-end memory compression, the credit assigned to memory updates is often causally entan-gled with other agent components. As illustrated in Figure 1, the same failed trajectory may require opposite memory credits. In Case A, the tool re-trieves incorrect evidence and the memory faith-fully summarizes it; the final answer is wrong, but the memory itself should not be penalized. In Case B, the tool retrieves correct evidence but the mem-ory drops a key fact, so the memory should receive negative credit. Outcome-based memory rewards cannot distinguish these cases, because both lead to failure. We refer to this problem as causally entangled memory credit assignment , where tool-, observation-, or reasoning-induced errors are incor-rectly propagated to memory updates. To reduce this entanglement, we argue that mem-ory credit should depend on two complementary signals. First, a memory update should provide local counterfactual utility: under the same com-pressed pre-write state, replacing the previous memory with the updated one should improve the recoverability of task-relevant information. Second, the update should be retrospectively relevant: when conditioned on the target outcome, it should be-come more likely relative to sibling memory writes, suggesting outcome-specific support beyond the surrounding context. HiMPO operationalizes this idea by treating each memory update as a policy-controlled writing action, estimating its local utility through a memory replacement counterfactual, and using hindsight relevance as a gate to down-weight potentially entangled credit. The resulting memory-specific advantage is applied only to <mem> tokens, while trajectory-level rewards continue to provide global training stability. We evaluate HiMPO under two complemen-tary protocols: judge-based open-domain long-horizon tasks and objective compressive-memory QA. HiMPO improves over strong RL-based and memory-based baselines under compressed-context inference. Beyond end-task performance, controlled interventions show that HiMPO reduces blame leakage from tool-induced errors and better localizes credit to affected memory updates. Our main contributions are summarized as fol-lows: • We identify causally entangled memory credit assignment as a key obstacle in training long-horizon agents with compressed mem-ory, where tool-, observation-, or reasoning-induced errors can be incorrectly propagated to memory updates. • We propose HiMPO, a hindsight-informed memory policy optimization framework for memory-write credit assignment. HiMPO uses a local memory-state counterfactual as the primary credit signal and uses hindsight relevance as a bounded retrospective filter, en-abling more faithful optimization of memory writing. • We conduct extensive experiments and con-trolled analyses on long-horizon agent bench-marks, showing that HiMPO improves task performance under compressed-context infer-ence and reduces blame leakage from non-memory errors. 
+
+2 Related Work 
+
+Memory Management for LLM Agents Mem-ory mechanisms have been widely studied to miti-gate context growth in long-horizon LLM agents. Retrieval-based systems, such as MemGPT (Packer et al., 2023), MemoryBank (Zhong et al., 2024), Mem0 (Chhikara et al., 2025) and A-MEM (Xu et al., 2025), store past interactions in external memory and retrieve relevant fragments when needed. However, they often rely on fixed workflows or similarity-based retrieval, which may be weakly aligned with task-level objec-tives. Summarization-based methods, such as Re-Sum (Wu et al., 2025b), instead compress accumu-lated histories into compact reasoning states. While these approaches reduce context length, they do not explicitly determine whether a specific memory up-date should be credited for the final outcome. 
+
+End-to-End Memory Compression and Self-Memory Optimization Recent methods inte-grate memory or summary generation into agent 2training. SUPO (Lu et al., 2025) incorporates summarization-based context management into multi-turn RL, MEM1 (Zhou et al., 2025) studies memory-reasoning synergy, and MemPO (Li et al., 2026) introduces a <mem> action optimized with trajectory- and memory-level advantages. These methods enable task-aware compression, but their supervision remains largely outcome-driven: mem-ory updates are rewarded by final success or answer likelihood, without distinguishing errors caused by memory, tools, observations, or reasoning. Un-like prior self-memory optimization, HiMPO treats each memory update as a state-writing transition and assigns credit by comparing the updated mem-ory against the previous memory under the same pre-write state. This shifts the optimization target from scoring a compressed memory state or prefix to estimating the incremental utility of a memory write. 
+
+Credit Assignment for Long-Horizon Agent Op-timization Credit assignment is challenging in long-horizon agent optimization, where sparse out-come rewards provide coarse supervision. Value-free RL methods such as GTPO (Tan et al., 2025) and GRPO (Shao et al., 2024) estimate advan-tages from group rewards, but often fail to iden-tify pivotal intermediate decisions. Finer-grained methods use process supervision, intrinsic rewards, state grouping, or hindsight signals, including GiGPO (Feng et al., 2025), EMPG (Wang et al., 2025), and HCAPO (Tan et al., 2026). However, they mainly target general actions or reasoning steps rather than memory updates as state-writing operations. HiMPO extends credit assignment to memory optimization via local counterfactual util-ity and hindsight-gated relevance filtering. 
+
+3 Method 
+
+3.1 Problem Setup and Overview 
+
+We consider long-horizon agent tasks where an LLM-based policy interacts with an external envi-ronment through multi-turn reasoning and tool use. Given a task query qi, the agent maintains a com-pressed memory state across interaction rounds. At step t, the policy first writes a memory summary 
+
+mi,t , then produces a reasoning segment ri,t and a tool call ci,t ; the environment subsequently returns an observation oi,t according to the issued tool call. We denote the pre-write state before generating the current memory as 
+
+Hi,t = ( qi, m i,t −1, r i,t −1, c i,t −1, o i,t −1), (1) where mi,t −1 is the previous compressed memory and (ri,t −1, c i,t −1, o i,t −1) is the most recent inter-action. For the first step, we use an empty memory 
+
+m∅ and omit the previous interaction. The mem-ory write at step t can therefore be viewed as a policy-controlled action 
+
+mi,t ∼ πθ(· | Hi,t ), (2) which updates the agent state from mi,t −1 to mi,t .A complete rollout is denoted as τi =
+
+{(mi,t , r i,t , c i,t , o i,t )}Ti
+
+> t=0
+
+, ending with a final an-swer or terminal decision. Each trajectory re-ceives an outcome reward RT (τi) according to task success, answer correctness, or format validity. Following group-based policy optimization, for a group of N rollouts sampled from the same query, we compute the trajectory-level advantage as 
+
+ATi = RT (τi) − μR
+
+σR + ϵ , (3) where μR and σR are the mean and standard devi-ation of trajectory rewards within the group. This trajectory-level signal provides coarse but stable global supervision for the whole rollout. However, our goal is to assign more faithful credit specifically to memory writes. A final suc-cess or failure is jointly affected by memory up-dates, tool calls, environment observations, and subsequent reasoning; therefore, directly propa-gating the outcome reward to memory tokens can lead to causally entangled credit. To address this, HiMPO assigns each memory write mi,t a memory-specific advantage constructed from two comple-mentary signals: 
+
+AMi,t = G( b∆i,t , log ρi,t ) · b∆i,t . (4) Here, b∆i,t estimates the local counterfactual utility of the update from mi,t −1 to mi,t , while log ρi,t 
+
+measures the hindsight relevance of this update with respect to the target successful outcome z⋆i .The gating function G(·) allows memory credit to pass only when the local utility of the update is consistent with its hindsight relevance. The result-ing memory-specific advantage is applied only to tokens inside the <mem> span, while all other tokens receive the standard trajectory-level advantage ATi .In this way, HiMPO preserves the global optimiza-tion stability of trajectory-level RL while provid-ing fine-grained and less-entangled supervision for memory writing. 3Figure 2: Overview of HiMPO. HiMPO first constructs a memory-specific credit signal by comparing the updated memory against the previous memory under the same compressed pre-write state. Hindsight relevance is then used as a bounded retrospective filter over this local utility. The resulting advantage is applied only to <mem> tokens, while trajectory-level rewards optimize the rest of the agent trajectory. 
+
+3.2 Local Counterfactual Utility 
+
+The first signal in HiMPO measures whether the current memory write adds task-relevant informa-tion beyond the previous memory. Given the pre-write state Hi,t , a memory candidate m, and the target successful outcome z⋆i , we score m by ren-dering the same pre-write state with its memory slot replaced by m. In other words, m is an al-ternative memory state, not an additional memory appended to Hi,t . We then define its answerability score as the average log-likelihood of the target outcome:          
+
+> S(Hi,t , m, z ⋆i) = 1
+> |z⋆i|
+> |z⋆i|
+> X
+> ℓ=1
+> log πθ
+>  z⋆i,ℓ |Hi,t , m, z ⋆i,<ℓ
+> .
+
+(5) This score estimates how much task-solving in-formation is recoverable from the memory when conditioned on the same compressed pre-write state 
+
+Hi,t .We then define the local counterfactual utility of the memory update mi,t −1 → mi,t as 
+
+∆i,t = S(Hi,t , m i,t , z ⋆i ) − S(Hi,t , m i,t −1, z ⋆i ). (6) By comparing the updated memory with the previ-ous memory under the same pre-write state, ∆i,t 
+
+estimates the marginal utility of the current mem-ory write rather than the cumulative quality of the whole memory history. For the first memory write, we use an empty memory m∅ as the counterfactual baseline: 
+
+∆i, 0 = S(Hi, 0, m i, 0, z ⋆i ) − S(Hi, 0, m ∅, z ⋆i ). (7) Since answerability scores may vary across in-teraction steps, we standardize ∆i,t within each rollout group and step index: 
+
+b∆i,t = ∆i,t − μ(g,t )∆
+
+σ(g,t )∆ + ϵ , (8) where μ(g,t )∆ and σ(g,t )∆ are computed over rollouts from the same prompt group g that contain a mem-ory write at step t. b∆i,t serves as the local memory signal before retrospective filtering. 
+
+3.3 Retrospective Filtering of Memory Utility 
+
+Hindsight relevance serves as a retrospective filter over b∆i,t —not a standalone reward—attenuating local credit when it is not supported by the target outcome relative to sibling memory writes. We view each memory update as a writing ac-tion wi,t : mi,t −1 → mi,t . Given the pre-write state Hi,t and the target outcome z⋆i , we compute the hindsight likelihood of the generated memory tokens yi,t, 1: |mi,t |:           
+
+> log hi,t =1
+> |mi,t |
+> |mi,t |
+> X
+> j=1
+> log πθ(yi,t,j |Hi,t , z ⋆i, y i,t,<j ).
+
+(9) Here, z⋆i denotes the oracle target outcome rather than the agent’s generated answer. Intuitively, if a memory write is important for reaching the target outcome, it should become more likely when the policy is conditioned on that outcome. Since directly estimating the prior probability of a natural-language memory write is difficult, we use a self-normalized proxy of the hindsight likelihood ratio. For each prompt group and step index, we center the hindsight likelihood by sibling 4rollouts: 
+
+log ρi,t = log hi,t − 1
+
+|G i,t |
+
+X
+
+> j∈G i,t
+
+log hj,t , (10) where Gi,t contains rollouts from the same prompt group that produce a memory write at step t.Thus, log ρi,t > 0 indicates that the write is more hindsight-relevant than its sibling writes, while 
+
+log ρi,t < 0 indicates lower retrospective rele-vance. We combine hindsight relevance with local util-ity through a sign-consistent gate:         
+
+> G(b∆i,t ,log ρi,t ) = σ
+> 
+> βeff
+> 
+> sgn( b∆i,t ) log ρi,t −τρ
+> 
+> ,
+
+(11) where σ(·) is the sigmoid function, τρ is a gate threshold, and βeff controls the sharpness of the gate. The resulting memory-specific advantage is 
+
+AMi,t = G( b∆i,t , log ρi,t ) · b∆i,t . (12) This gate opens only when the direction of lo-cal memory utility agrees with hindsight relevance. If b∆i,t > 0, the positive credit is amplified only when log ρi,t > 0, meaning that the write is also retrospectively aligned with the target outcome. If 
+
+b∆i,t < 0, the negative credit is preserved only when log ρi,t < 0, meaning that the write is un-likely under hindsight and is more likely to deserve negative credit. When the two signals disagree, the gate suppresses the credit, reducing the chance that memory updates are rewarded or penalized due to tool- or reasoning-induced errors. 
+
+3.4 Stabilized Token-Level Policy Optimization 
+
+The gated memory advantage in Equation (12) pro-vides a write-level credit signal, but directly apply-ing it to all memory updates may still introduce instability. We therefore adopt two simple stabi-lization mechanisms before scattering the memory advantage to tokens. First, we apply a protective memory-success mask on successful trajectories. If a trajectory al-ready reaches the target outcome, we avoid pushing the policy away from memory writes that occurred on a successful path: 
+
+AMi,t ← 0 if RT (τi) ≥ τsucc and AMi,t < 0. (13) This mask prevents negative micro-level memory signals from overriding the evidence that the over-all trajectory is successful. Second, since some memory updates are prefa-tory and only become useful after later observa-tions are collected, we optionally propagate mem-ory credit backward along the memory sequence using an exponential moving average: 
+
+eAMi,t = αA Mi,t + (1 − α) eAMi,t +1 , (14) with eAMi,T i = AMi,T i . This allows downstream mem-ory utility to flow back to earlier writes that store prerequisite information. Finally, we assign the resulting memory-specific advantage only to tokens inside the <mem> span. For the k-th token in trajectory τi, the token-level advantage is          
+
+> Ai,k =
+> (ATi+λMeAMi,t (k),k∈span( mi,t (k)),ATi,otherwise ,
+
+(15) where t(k) denotes the memory step associated with token k, and λM controls the strength of the memory-specific signal. The policy is then opti-mized with the standard clipped policy objective: 
+
+J (θ) = E
+
+"
+
+1
+
+|τi|
+
+> |τi|
+
+X
+
+> k=1
+
+min 
+
+
+
+ri,k (θ)Ai,k ,
+
+clip( ri,k (θ), 1 − ϵ, 1 + ϵ)Ai,k 
+
+
+
+− βKL DKL (πθ∥πref )
+
+#
+
+,
+
+(16) where ri,k (θ) = πθ(τi,k | qi, τ i,<k )/π θold (τi,k |
+
+qi, τ i,<k ). Thus, HiMPO preserves the global trajectory-level optimization signal for all tokens while injecting memory-specific, less entangled credit only into the memory-writing process. 
+
+3.5 Algorithm and Implementation Summary 
+
+HiMPO is implemented as a plug-in memory-credit module for group-based policy optimization. For each rollout group, it computes trajectory-level advantages from terminal rewards and memory-specific advantages for <mem> writes using local counterfactual utility and hindsight relevance. Af-ter optional memory-success masking and back-ward smoothing, the memory advantage is scat-tered only to <mem> tokens. All auxiliary signals are computed with batched log-probability scoring of existing tokens, without additional autoregres-sive decoding; at inference time, HiMPO follows the same <mem> -based compressed-context proto-col as prior self-memory agents. The complete al-gorithm and implementation details are elaborated in Appendix A. 5Accuracy (%, ↑)Benchmark Method 4k ctx. 8k ctx. 16k ctx. full ctx. M R M R M RBrowseComp-Plus ReAct 7.47 5.18 6.27 5.30 5.30 6.39 5.06 SFT only 6.75 2.05 7.59 7.47 6.75 6.51 6.27 MEM PO 6.99 2.29 7.95 7.71 6.99 6.75 6.63 SUPO 7.23 2.53 8.19 8.07 7.35 7.11 6.99                                           
+
+> HiMPO (Ours) 9.40 4.70 10.60 10.36 9.76 9.28 9.16
+> FRAMES ReAct 17.84 17.23 16.02 20.63 18.57 16.87 17.11 SFT only 20.02 20.63 20.15 20.87 20.51 20.27 20.51 MEM PO 20.39 21.00 20.51 21.24 20.87 20.63 20.87 SUPO 20.75 21.36 20.87 21.60 21.36 21.00 21.24
+> HiMPO (Ours) 23.18 23.67 23.30 23.91 23.54 23.18 23.67
+
+Table 1: The main results on judge-based open-domain tasks. M and R denote mem_aware and naive_recency ,respectively. All trainable rows in this table are reproduced from the same in-house Qwen-family 7B SFT initialization. This keeps the SFT initialization and evaluation stack matched across trainable methods. 
+
+4 Experiments 
+
+4.1 Experimental Setup Benchmarks and metrics. We evaluate HiMPO under two complementary protocols. For judge-based open-domain long-horizon evaluation, we use BrowseComp-Plus (BCP) (Chen et al., 2025b) and FRAMES (Krishna et al., 2025), where agents must retrieve, compress, and integrate evidence across multi-step interactions. Since answers in these benchmarks are often open-ended and may admit semantically equivalent forms, we re-port LLM-judged accuracy following the bench-mark protocol. For objective-answer compressive-memory QA, we use Local Wiki Search, the stan-dard benchmark adopted by prior memory-agent work, where gold answers enable word-level F1 and exact-match EM evaluation. For BCP, we ad-ditionally conduct a context-budget sweep to as-sess memory retention under truncation pressure. Where applicable, we also report token-efficiency metrics, including total tokens consumed per ques-tion (TT) and peak tokens per interaction step (PT). 
+
+Baselines. Across the two protocols, we compare HiMPO with ReAct (Yao et al., 2023), ReSearch (Chen et al., 2025a), DeepRe-searcher (Zheng et al., 2025), GRPO without memory (Shao et al., 2024), SFT-only memory agents, M EM PO (Li et al., 2026), SUPO (Lu et al., 2025), MEM1 (Zhou et al., 2025), and A-MEM (Xu et al., 2025). BCP and FRAMES use an in-house controlled stack: all trainable methods are reproduced from the same Qwen-family 7B SFT checkpoint. Local Wiki Search follows the original M EM PO protocol: HiMPO and SUPO are initialized from the public M EM PO SFT checkpoint 1, while the other baseline rows are taken from the M EM PO paper. 
+
+Implementation. Qwen3-32B is used only as the LLM judge for BCP and FRAMES, not as an eval-uated agent policy. For reproduced rows, we match rollout, decoding, retrieval, and evaluation settings across methods. Component ablations are run on both 4B and 7B SFT checkpoints with multiple random seeds. Additional details are provided in Appendix B. 
+
+4.2 Main Results on Judge-Based Open-Domain Tasks 
+
+Table 1 reports judge-based accuracy on BCP and FRAMES under full-context evaluation and context-budgeted truncation. Overall, HiMPO achieves the best performance across both bench-marks. On BCP, it improves full-context accuracy over M EM PO from 6.63 to 9.16 ( +2 .53 ) and over SUPO from 6.99 to 9.16 ( +2 .17 ), and also attains the highest memory-aware accuracy at every com-pressed budget, with margins over M EM PO rang-ing from +2 .41 at 4k to +2 .77 at 16k. The value of memory-aware compression over naive recency is most pronounced under tight budgets: at the 4k bud-get, HiMPO gains 4.70 points by switching from naive recency to memory-aware compression (9.40 vs. 4.70), and a similar gap appears for M EM PO and SUPO, indicating that the learned memory re-tains task-relevant evidence that recency truncation 
+
+> 1https://huggingface.co/NewBeeKing/MemPO_ Qwen2.5-SFT
+
+6discards. On FRAMES, HiMPO is also the strongest method in both full and compressed settings, al-though the gap between memory-aware compres-sion and naive recency is smaller than on BCP. This suggests that the benefit of explicit memory aggre-gation depends on the benchmark’s evidence struc-ture. Taken together, the results show that HiMPO improves judge-based open-domain performance, with the clearest memory-retention gains appearing under BCP’s controlled context-budget pressure. 
+
+4.3 Main Results on Objective Compressive-Memory QA 
+
+We further evaluate HiMPO under an objective-answer protocol using Local Wiki Search, the standard compressive-memory benchmark adopted by prior memory-agent work. Unlike BCP and FRAMES, this benchmark provides gold answers and is evaluated with word-level F1 and exact-match EM. To align with the original M EM PO protocol, we initialize HiMPO and SUPO from the public M EM PO SFT checkpoint and report other baseline rows from the M EM PO paper. We there-fore treat this benchmark as a prior-protocol com-parison rather than aggregating it with the judge-based results in Section 4.2. As shown in Table 2, HiMPO achieves the best average performance, improving over MEMPO from 37.6 to 40.2 F1 and from 29.4 to 31.6 EM. The gains are consistent across objective counts, includ-ing the longest 10-objective setting, where HiMPO reaches 25.1 F1 and 18.6 EM. Compared with SUPO, HiMPO also obtains substantially higher average F1/EM, suggesting that explicit memory-level credit provides benefits beyond outcome-only end-to-end compression. Importantly, these gains do not come at the cost of longer contexts. HiMPO matches MEMPO’s token efficiency with an average TT/PT of 1.2/0.2, while substantially reducing token usage compared with non-memory baselines such as GRPO with-out memory (4.4/0.8). These results show that HiMPO improves objective-answer accuracy while preserving the compressed-context efficiency of self-memory agents, providing complementary evi-dence to the judge-based open-domain results. 
+
+4.4 Ablation Study 
+
+We conduct a nested ablation to isolate the contribu-tion of each component in HiMPO. Starting from the full model, we progressively remove the stabi-lization mechanisms, the retrospective filter, and the memory-specific credit channel. Specifically, 
+
+w/o Stabilizers removes the memory-success mask and backward smoothing; w/o Retrospective Fil-ter leaves only local counterfactual memory utility; and w/o Memory-Specific Credit reduces training to trajectory-level GRPO. We also include M EM PO as an alternative memory-reward reference rather than a component ablation. As shown in Table 3, the full HiMPO config-uration performs best across all benchmarks and model scales, improving over the M EM PO refer-ence by +4 .8 pp on 4B and +4 .7 pp on 7B on av-erage. Removing the stabilizers reduces the gain to +3 .3 pp and +3 .0 pp, respectively, with a par-ticularly clear drop on the longer-horizon K=2 
+
+setting. Removing the retrospective filter causes a further degradation, especially on 4B, where the average gain drops from +3 .3 to +1 .1 pp. The w/o Memory-Specific Credit row serves as a trajectory-only lower bound. Notably, the w/o Retrospective Filter variant still improves over the M EM PO ref-erence on both model scales, indicating that the local memory-state counterfactual is itself a use-ful memory-credit signal. Overall, the ablation suggests that HiMPO’s gains are not explained by memory supervision alone, but are associated with the combination of local counterfactual utility, hindsight-gated filtering, and stabilization. 
+
+4.5 Deconfounding Analysis 
+
+End-task improvement alone does not show whether a memory reward assigns credit more faith-fully; it may simply act as a stronger regularizer. We therefore conduct controlled interventions that directly instantiate the two failure modes in Fig-ure 1. In Case A of Figure 1, the tool provides wrong evidence but the memory faithfully sum-marizes it, so memory should not receive strong negative credit. We test this with Tool Corrup-tion , which replaces tool returns with plausible but wrong evidence while keeping the memory faith-ful to the observed evidence. In Case B, the tool provides correct evidence but the memory drops a key fact, so memory should be penalized. We test this with Memory Drop , which removes a mem-ory step and checks whether the induced loss is localized to that write. We additionally use De-layed Utility Drop to evaluate whether credit can be propagated to early prefatory memory writes, and 
+
+Module Attribution to test whether perturbations to 
+
+<mem> , <tool_call> , and <think> produce local-7Local Wiki Search (F1 / EM, %; ↑) Efficiency ( ↓)2-objective 4-objective 6-objective 8-objective 10-objective Average Average Model F1 EM F1 EM F1 EM F1 EM F1 EM F1 EM TT PT ReAct 33.7 25.6 10.6 7.0 5.4 4.0 5.9 4.3 2.6 2.0 11.7 8.6 3.6 0.6 ReSearch 47.4 36.0 24.1 16.7 20.8 15.9 10.8 7.7 5.1 3.6 21.7 16.0 3.3 0.7 DeepResearcher 30.9 24.7 24.5 18.1 13.9 10.7 9.1 6.9 5.1 3.5 16.7 12.8 4.3 0.8 A-MEM 33.2 25.2 13.7 10.1 9.8 7.1 6.9 5.1 5.6 3.6 13.8 10.2 2.6 0.4 MEM1 47.7 37.1 26.5 18.9 18.8 14.1 19.0 13.6 19.6 13.4 26.3 19.4 1.4 0.2                                                         
+
+> GRPO (w/o mem) 54.6 43.0 38.3 28.6 29.8 22.6 19.0 13.7 11.0 7.8 30.5 23.1 4.4 0.8 MEM PO 56.5 46.2 42.8 31.9 34.3 26.9 30.5 23.7 24.2 18.2 37.6 29.4 1.2 0.2
+> SUPO 57.9 47.2 43.0 31.8 30.3 24.0 22.7 17.5 16.3 11.6 34.0 26.4 1.4 0.2 HiMPO (Ours) 61.3 51.0 47.5 36.8 35.1 27.2 31.9 24.4 25.1 18.6 40.2 31.6 1.2 0.2
+
+Table 2: Results on multi-objective Local Wiki Search. HiMPO and SUPO are initialized from the public M EM PO SFT checkpoint and trained/evaluated under the original M EM PO protocol. We verified stack compatibility by reproducing M EM PO within ±0.5 F1/EM of the reported numbers, and therefore cite the remaining baseline rows directly from the M EM PO paper.                                   
+
+> Model Variant K=2HQA NQ Avg. EM ∆vs. M EM PO
+> 4B HiMPO 0.376 0.349 0.389 0.371 +4.8
+> w/o Stabilizers 0.359 0.331 0.381 0.357 +3.3 w/o Retrospective Filter 0.316 0.314 0.374 0.335 +1.1 w/o Memory-Specific Credit 0.288 0.291 0.357 0.312 -1.2 MEM PO reference 0.301 0.303 0.367 0.324 –7B HiMPO 0.510 0.468 0.515 0.498 +4.7
+> w/o Stabilizers 0.478 0.457 0.507 0.481 +3.0 w/o Retrospective Filter 0.472 0.451 0.496 0.473 +2.2 w/o Memory-Specific Credit 0.430 0.423 0.439 0.431 -2.0 MEM PO reference 0.462 0.429 0.461 0.451 –
+
+Table 3: Ablation results on 4B and 7B models. HQA denotes HotpotQA. All scores are EM averaged over three seeds. ∆ reports the average EM difference rela-tive to the M EM PO reference. 
+
+Metric MEM PO HiMPO 
+
+Faithful-under-bad-tool ratio ↓ 1.00 0.42 
+
+Normalized vs. clean control ↓ 1.00 0.58 
+
+Memory Drop localization hit-rate ↑ 0.41 0.68 
+
+Delayed Credit Recovery ↑ 0.00 +0.11 
+
+Module Attribution concentration ↑ 0.36 0.64 
+
+Table 4: Controlled deconfounding results. Lower ratios indicate less blame leakage to faithful memories under corrupted tool evidence; higher localization and concen-tration scores indicate more accurate credit assignment. 
+
+ized credit shifts rather than diffuse blame leakage. Full intervention details and metric definitions are provided in Appendix D. Table 4 shows that HiMPO behaves in the de-sired direction for both cases in Figure 1. For Case A, where the error originates from corrupted tool evidence rather than the memory write, HiMPO reduces the faithful-under-bad-tool ratio from the MEM PO reference value of 1.00 to 0.42, and remains lower after normalization by the clean-control setting. This indicates less penalty leakage to faithful memories when the failure is induced by the non-memory intervention. For Case B, where task-relevant information is removed from memory, HiMPO improves memory-drop localization from 0.41 to 0.68, showing that the induced credit shift is more likely to concentrate on the affected memory write. Finally, the higher delayed-credit recovery and module-attribution concentration indicate that HiMPO better propagates credit to prefatory mem-ory writes and localizes intervention effects to the perturbed module. Together, these results provide interventional evidence that HiMPO reduces the symptoms of causally entangled memory credit as-signment, not solely as a byproduct of improving final task performance. 
+
+5 Conclusion 
+
+We introduced HiMPO, a hindsight-informed memory policy optimization framework for less-entangled credit assignment in long-horizon agents. By using local memory-state counterfactual util-ity as the primary credit signal and hindsight rel-evance as a bounded retrospective filter, HiMPO assigns more faithful credit to memory-writing ac-tions and reduces measured blame leakage from tools and reasoning. Across judge-based open-domain tasks and objective memory-QA, HiMPO improves over strong baselines while preserving compressed-context inference. Ablations and con-trolled interventions suggest that effective agent memory requires not only compression, but also less entangled memory credit assignment. 8Limitations 
+
+HiMPO has several limitations: • Dependence on target outcomes. HiMPO computes hindsight scores by conditioning on an oracle target or judge-provided target out-come. This is natural for training and offline credit analysis, but it assumes that a reliable target signal is available. Extending the frame-work to settings with ambiguous or weakly specified outcomes remains an important di-rection. • Partial rather than full causal identification. 
+
+The self-normalized hindsight ratio serves as a practical proxy for outcome-conditioned memory relevance. It helps reduce blame leak-age from tools and reasoning, but it does not constitute a complete causal identification pro-cedure. Unobserved confounders or imperfect state representations may still affect memory credit. • Fixed memory-writing schedule. HiMPO follows a fixed memory-writing protocol in which a memory update is produced after each interaction step. While this allows us to focus on deconfounded credit assignment for mem-ory updates, it does not address when memory writing should be triggered. Adaptive mem-ory scheduling could further reduce redundant writes and improve efficiency. • Scope of evaluated tasks. Our experiments focus mainly on search- and QA-style long-horizon agents, where memory compression and evidence retention are central. Extend-ing HiMPO to broader agent settings such as GUI control, code agents, and embodied envi-ronments remains an important direction for future work. 
+
+Ethics Statement 
+
+The training data are publicly released datasets (NQ, HotpotQA, 2WikiMultihopQA, MuSiQue, TriviaQA, Bamboogle, PopQA, plus a multi-objective wiki search dump distributed with the MEM PO release). The base models are pub-licly released Qwen-family checkpoints. For the BCP/FRAMES and ablation experiments, we use in-house SFT checkpoints trained on synthesized agent-format trajectories derived from the same publicly released datasets; For the Local Wiki Search experiments, we initialize from the pub-lic M EM PO SFT checkpoint following the original MEM PO protocol. Plausibly-wrong evidence used in the Tool Corruption Test is generated only inside the offline analysis loop and never enters training data nor the released artifacts. The method itself does not raise novel misuse risks beyond those of memory-based agents in general. During the writing process, AI-based tools were used only for grammar checking and language polishing. 
+
+References                      
+
+> Mingyang Chen, Linzhuang Sun, Tianpeng Li, Haoze Sun, Yijie Zhou, Chenzheng Zhu, Haofen Wang, Jeff Z. Pan, Wen Zhang, Huajun Chen, Fan Yang, Zenan Zhou, and Weipeng Chen. ReSearch: Learn-ing to reason with search for LLMs via reinforcement learning. arXiv preprint arXiv:2503.19470 , 2025a. Zijian Chen, Xueguang Ma, Shengyao Zhuang, Ping Nie, Kai Zou, Andrew Liu, Joshua Green, Kshama Patel, Ruoxi Meng, Mingyi Su, Sahel Sharifymoghaddam, Yanxi Li, Haoran Hong, Xinyu Shi, Xuye Liu, Nandan Thakur, Crystina Zhang, Luyu Gao, Wenhu Chen, and Jimmy Lin. BrowseComp-Plus: A more fair and transparent evaluation benchmark of deep-research agent. arXiv preprint arXiv:2508.06600 , 2025b. Dataset card:
+> https://huggingface.co/datasets/Tevatron/ browsecomp-plus .Prateek Chhikara, Dev Khant, Saket Aryan, Taran-jeet Singh, and Deshraj Yadav. Mem0: Building production-ready ai agents with scalable long-term memory, 2025. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for llm agent training, 2025. Satyapriya Krishna, Kalpesh Krishna, Anhad Mo-hananey, Steven Schwarcz, Adam Stambler, Shyam Upadhyay, and Manaal Faruqui. Fact, fetch, and rea-son: A unified evaluation of retrieval-augmented gen-eration. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT), Volume 1: Long Papers ,pages 4745–4759, Albuquerque, New Mexico, 2025. arXiv:2409.12941. Ruoran Li, Xinghua Zhang, Haiyang Yu, Shitong Duan, Xiang Li, Wenxin Xiang, Chonghua Liao, Xudong Guo, Yongbin Li, and Jinli Suo. MemPO: Self-memory policy optimization for long-horizon agents.
+> arXiv preprint arXiv:2603.00680 , 2026. Miao Lu, Weiwei Sun, Weihua Du, Zhan Ling, Xuesong Yao, Kang Liu, and Jiecao Chen. Scaling LLM multi-turn RL with end-to-end summarization-based con-
+
+9text management. arXiv preprint arXiv:2510.06727 ,2025. Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez. Memgpt: Towards llms as operating systems, 2023. Haofu Qian, Chenjia Bai, Jiatao Zhang, Fei Wu, Wei Song, and Xuelong Li. Discriminator-guided em-bodied planning for llm agent. In The Thirteenth International Conference on Learning Representa-tions , 2025. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. DeepSeek-Math: Pushing the limits of mathematical rea-soning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Hongze Tan, Zihan Wang, Jianfei Pan, Jinghao Lin, Hao Wang, Yifan Wu, Tao Chen, Zhihang Zheng, Zhihao Tang, and Haihua Yang. GTPO and GRPO-S: Token and sequence-level reward shaping with policy entropy. arXiv preprint arXiv:2508.04349 , 2025. Hui-Ze Tan, Xiao-Wen Yang, Hao Chen, Jie-Jing Shao, Yi Wen, Yuteng Shen, Weihong Luo, Xiku Du, Lan-Zhe Guo, and Yu-Feng Li. Hindsight credit assign-ment for long-horizon LLM agents. arXiv preprint arXiv:2603.08754 , 2026. Jiawei Wang, Jiacai Liu, Yuqian Fu, Yingru Li, Xintao Wang, Yuan Lin, Yu Yue, Lin Zhang, Yang Wang, and Ke Wang. Harnessing uncertainty: Entropy-modulated policy gradients for long-horizon llm agents, 2025. Junde Wu, Jiayuan Zhu, Yuyuan Liu, Min Xu, and Yueming Jin. Agentic reasoning: A streamlined framework for enhancing llm reasoning with agentic tools. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 28489–28503, Vienna, Austria, 2025a. Association for Computational Lin-guistics. doi: 10.18653/v1/2025.acl-long.1383. Xixi Wu, Kuan Li, Yida Zhao, Liwen Zhang, Litu Ou, Huifeng Yin, Zhongwang Zhang, Xinmiao Yu, Dingchu Zhang, Yong Jiang, Pengjun Xie, Fei Huang, Minhao Cheng, Shuai Wang, Hong Cheng, and Jin-gren Zhou. Resum: Unlocking long-horizon search intelligence via context summarization, 2025b. Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Jun-tao Tan, and Yongfeng Zhang. A-MEM: Agen-tic memory for LLM agents. arXiv preprint arXiv:2502.12110 , 2025. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. ReAct: Synergizing reasoning and acting in language models. In Proceedings of the 11th International Conference on Learning Representations (ICLR) , 2023. Xinjie Zhao, Fan Gao, Xingyu Song, Yingjian Chen, Rui Yang, Yanran Fu, Yuyang Wang, Yusuke Iwa-sawa, Yutaka Matsuo, and Irene Li. Reagent: Reversible multi-agent reasoning for knowledge-enhanced multi-hop qa. In Proceedings of the 2025 Conference on Empirical Methods in Natural Lan-guage Processing , 2025. Yuxiang Zheng, Dayuan Fu, Xiangkun Hu, Xiaojie Cai, Lyumanshan Ye, Pengrui Lu, and Pengfei Liu. Deep-Researcher: Scaling deep research via reinforcement learning in real-world environments. arXiv preprint arXiv:2504.03160 , 2025. Wanjun Zhong, Lianghong Guo, Qiqi Gao, Ye He, and Yanlin Wang. Memorybank: Enhancing large lan-guage models with long-term memory. In Proceed-ings of the AAAI Conference on Artificial Intelligence ,2024. Zijian Zhou, Ao Qu, Zhaoxuan Wu, Sunghwan Kim, Alok Prakash, Daniela Rus, Jinhua Zhao, Bryan Kian Hsiang Low, and Paul Pu Liang. MEM1: Learning to synergize memory and reasoning for efficient long-horizon agents. arXiv preprint arXiv:2506.15841 , 2025. 
+
+10 A Implementation Details 
+
+A.1 Training Algorithm 
+
+Algorithm 1 summarizes one training iteration of HiMPO. All auxiliary scoring is performed with batched log-probability forward passes on existing tokens; no additional autoregressive decoding is required. 
+
+Algorithm 1 HiMPO training step. 
+
+Require: Prompt q, target outcome z⋆, policy πθ,group size N 
+
+> 1:
+
+Sample N rollouts {τi}Ni=1 with memory writes {mi,t } 
+
+> 2:
+
+Compute trajectory rewards RT (τi) and advan-tages ATi 
+
+> 3:
+
+for each memory write mi,t do  
+
+> 4:
+
+Compute local utility ∆i,t using Equa-tion (6)  
+
+> 5:
+
+Normalize ∆i,t to obtain b∆i,t  
+
+> 6:
+
+Compute hindsight relevance log ρi,t using Equation (10)  
+
+> 7:
+
+Compute gated memory advantage AMi,t us-ing Equation (12)  
+
+> 8:
+
+end for  
+
+> 9:
+
+Apply the memory-success mask and delayed smoothing to obtain eAMi,t  
+
+> 10:
+
+Scatter eAMi,t to <mem> tokens via Equation (15)  
+
+> 11:
+
+Update πθ with the clipped policy objective in Equation (16) 
+
+A.2 Hyperparameters 
+
+Table 5 lists the HiMPO-specific hyperparameters used throughout the paper. All non-method hy-perparameters (rollout settings, optimizer, KL co-efficient) are held constant against the M EM PO-baseline reproduction so that the comparison pri-marily varies the memory-credit construction. 
+
+A.3 Adaptive Gate Sharpness 
+
+The sigmoid sharpness βeff in the gate (Equa-tion (11)) is recalibrated per batch from the em-pirical spread of the hindsight log-ratio: 
+
+βeff = clip 
+
+ cσlog ρ + ε , β min , β max 
+
+
+
+, (17) where σlog ρ is the standard deviation of log ρi,t 
+
+within the current batch. A statically chosen β
+
+silently mis-calibrates the gate when the natural scale of log ρ shifts with task length or memory length; on HotpotQA/NQ we observe σlog ρ ≈ 0.31 ,                            
+
+> Symbol Meaning Value
+> λMmemory-advantage weight (Equation (15)) 1.0
+> τρgate threshold (Equation (11)) 0
+> Cmin , C max clip range on ρi,t 0.1,10
+> αEMA smoothing coefficient (Equation (14)) 0.5
+> τsucc success threshold (Equation (13)) 1.0
+> ccalibration constant for βeff 1.39
+> βmin , β max clip range for βeff 0.5,20
+> NGRPO rollouts per prompt 16
+> batch prompts per optimizer step 128
+> turns max_assistant_turns per rollout 8
+
+Table 5: HiMPO-specific and shared rollout hyperpa-rameters. c = ln(0 .8/0.2) ≈ 1.39 is chosen so that, un-der approximately Gaussian log ρ, βeff σlog ρ=c places 
+
+30 –50% of samples past the σ(±c) thresholds. 
+
+so a fixed β=1 keeps the gate in the linear region of 
+
+σ(·) with < 1% saturation and mutes the hindsight signal. Adaptive βeff normalizes the argument of 
+
+σ(·) into a well-behaved active band regardless of scale drift. 
+
+A.4 Hindsight Context Construction 
+
+The hindsight context appends the target outcome 
+
+z⋆i to the pre-write state Hi,t under a frozen prompt template. We pin the template version (and its content hash) for the entire training run; bumping it mid-training would invalidate the log ρ distribution by construction. After computing the per-token log-likelihood average log hi,t (Equation (9)) and the group-centered log ρi,t (Equation (10)), we clip the centered value to [log Cmin , log Cmax ] to bound the contribution of outlier sibling writes before passing it to the gate. Centering is per-rollout-group at the same step position; this scope keeps the gate non-degenerate on single-mem-step trajectories, which dominate short-horizon QA. 
+
+A.5 SFT Data Synthesis 
+
+The in-house SFT corpus is generated by athree-stage pipeline that converts QA seeds into multi-turn agent trajectories with explicit 
+
+<mem> /<think> /<action> structure. A designer 
+
+produces a JSON skeleton mapping atomic facts to tool turns; a writer fills in memory, reasoning, and action content together with document bod-ies; and a critic audits the trajectory and either accepts it or triggers a writer retry (up to two re-tries). All three stages share the same backbone, MiniMax-M2.7. Each accepted trajectory is ex-panded into one SFT sample per assistant turn, with prior history independently truncated under 11 (full , partial , mem_only ) = (0 .30 , 0.30 , 0.40) to train <mem> self-sufficiency under context-budget pressure; about 20% of turns are additionally emit-ted in all three truncation variants under the same target output as a truncation-invariance augmenta-tion. After filtering, the corpus contains roughly 
+
+1×10 5 per-turn samples. 
+
+A.6 Training Infrastructure 
+
+Training uses VeRL 0.5 with SGLang multi-turn rollouts on a multi-node GPU clus-ter. For BCP/FRAMES, all trainable rows (M EM PO baseline , SUPO, HiMPO) reproduce from the same in-house Qwen-family 7B SFT checkpoint trained on synthesized agent-format trajectories, with data, rollout, optimizer, KL, retrieval, decoding, and judging settings held fixed. For Local Wiki Search, HiMPO and SUPO start from the public M EM PO SFT checkpoint and follow the original M EM PO protocol; other baseline rows are taken from the M EM PO paper. Component ablations are run on both 4B and 7B bases; within each scale, all variants share the same SFT initialization and differ only in memory-credit computation. Each RL-trained row is averaged over three random seeds. 
+
+A.7 Compute Overhead 
+
+HiMPO’s additional per-step cost comes from three compute_log_prob forwards per memory write (answerability under mi,t , answerability un-der mi,t −1, hindsight on mi,t ); no extra rollout or generation is required. Measured per-step wall-clock relative to the M EM PO-baseline dispatch on identical hardware: w/o Retrospective Filter 
+
+−13% (skips the hindsight forward), w/o Stabi-lizers +13 .9% , an intermediate variant that re-tains only the memory-success mask (no backward smoothing) +8 .7% , and HiMPO ( full ) +0 .5% .All variants land within a ±14% envelope; the non-monotonic ordering among variants with the retro-spective filter enabled reflects cluster-scheduling variance rather than the HiMPO math layer. The naive arithmetic prediction of 25 –30% overhead overstates the real cost because rollout generation dominates each per-step budget, not the extra for-wards. 
+
+B Extended Experimental Setup 
+
+B.1 BCP Context-Budget Sweep Protocol 
+
+We use BrowseComp-Plus (BCP) as the ques-tion stream because (i) it ships a fixed ∼100K-document corpus decoupled from any specific re-triever, (ii) its questions average 5–15 retrieval hops and naturally produce long prompts, and (iii) its judge pipeline is fixed and reproducible (Qwen3-32B). Every variable except context management is locked across cells of the sweep: fixed corpus, fixed retriever (Qwen3-Embedding-0.6B), fixed top-k=5 , fixed snippet cap of 512 tokens, fixed 
+
+> MAX
+
+-TOOL -CALLS =10 , and fixed decoding hyper-parameters. We sweep two axes: a per-prompt con-text budget B ∈ { 4096 , 8192 , 16384 , full } tokens (where full =32768 is the SGLang context-length cap), and a context-management strategy. 
+
+B.2 Truncation Strategies 
+
+A strategy fires when the rendered prompt token count exceeds 0.8 · B at the start of a turn: • mem_aware (training-aligned). Concatenate all <mem> blocks from older (assistant , tool )
+
+pairs into a synthetic checkpoint assistant turn, keep the two most recent pairs verbatim, and discard the rest. The most-recent tool re-sponse is never elided. • naive_recency (sliding-window baseline). Greedily keep (assistant , tool ) pairs from the most recent end backwards until the prompt fits; oldest pairs are dropped together with any 
+
+<mem> they contained. No <mem> aggregation is performed. The two strategies share the same token target, so the only thing that varies is what gets dropped . At the full budget neither strategy fires in practice, so both columns collapse to a single no-truncation reference. 
+
+B.3 Conditions and Cell Matrix 
+
+We evaluate five reproduced/controlled checkpoints in the BCP/FRAMES stack, arranged by train-ing stage: (i) ReAct on the untrained Qwen2.5-7B-Instruct base — a no-compressive-memory-training control; (ii) SFT-only , our in-house SFT checkpoint trained on synthesized agent trajecto-ries that teaches the XML trajectory shape but has not been shaped by any RL reward; (iii) the M EM PO baseline RL-trained on top of 12 the same in-house SFT initialization (its train-ing script is what our himpo.mode=baseline 
+
+dispatch reproduces bit-for-bit); (iv) SUPO RL-trained on top of the same in-house SFT ini-tialization following the original SUPO protocol; and (v) HiMPO ( full ) RL-trained on top of the same in-house SFT initialization. The controlled matrix is 5 ckpts × (3 budgets × 2 strategies +1 full-context reference ) = 35 cells ; each cell is judged independently by Qwen3-32B. 
+
+B.4 Caveats (i) The retriever is locked across methods within a cell, but each method emits its own search queries; query planning is therefore part of the method, not a controlled axis. (ii) The corpus and retriever differ from those used in the BCP leaderboard ref-erence numbers; absolute accuracies in Table 1 are not comparable to that leaderboard. (iii) The SFT-only ckpt has not learned a stopping behaviour — its status="completed" rate is ∼ 20% across most cells (vs. ∼ 80% for the two RL-trained ckpts) — so its accuracy row should be read as a partial-progress lower bound for that training stage. (iv) Calibration error as judged by Qwen3-32B is uninformative on this benchmark: M EM PO-trained ckpts do not emit confidence suffixes and the judge defaults to 100% , so the calibration col-umn would be dominated by parser artefacts. (v) 
+
+The mem_aware strategy preserves the two most recent pairs verbatim; part of the mem_aware -vs-
+
+naive_recency gap at B=4096 is attributable to this recency-buffer guarantee rather than to con-sumption of compressed <mem> content per se. The training-quality ordering of the gap still indicates that learned <mem> writes contribute on top of the recency-buffer effect. 
+
+C Extended Empirical Analysis 
+
+C.1 Search-Call Behaviour 
+
+The five checkpoints differ sharply in how they spend the locked tool budget. Averaged over the 
+
+full -context cell of BCP, mean search calls per question are: ReAct 3.5, M EM PO baseline 3.5,SUPO 5.6, HiMPO full 5.5, and SFT-only 8.8
+
+(which saturates the 10 -call cap on most ques-tions). The corresponding retrieval recall numbers — 5.3% (ReAct), 8.1% (M EM PO), 10 .9% (SUPO), 
+
+11 .4% (SFT-only), 12 .0% (HiMPO) — track the search counts and explain part of the accuracy or-dering. The upstream M EM PO RL reward over-discounts late searches and stops nearly as early as ReAct, whereas both SUPO and HiMPO learn to keep searching for ∼ 5.5 turns; HiMPO achieves this through the gate-and-mask shaping that keeps searching whenever each new (Hi,t −1 → Hi,t ) step shows positive b∆i,t . Against M EM PO baseline ,HiMPO searches 1.6× more times per question but obtains 1.48 × the retrieval recall and 1.38 × the accuracy, so it is not Pareto-dominated on search efficiency. 
+
+C.2 Reading the Ablation 
+
+A few finer-grained patterns are visible in Table 3 beyond the headline +4 .8/+4 .7 pp gains. The local utility signal b∆i,t alone helps more on the stronger base ( +1 .1 pp at 4B vs. +2 .2 pp at 7B), consistent with stronger models extracting more from the lo-cal counterfactual. Conversely, the retrospective filter G(·) delivers its largest single jump on 4B (+1 .1 to +3 .3 pp), where the local signal alone is weaker. The K=2 jump from w/o Stabilizers 
+
+to HiMPO ( +1 .7 pp at 4B, +3 .2 pp at 7B) is con-sistent with backward smoothing relocating credit toward prefatory writes on the longest-horizon set-ting. 
+
+D Deconfounding Suite Details 
+
+This appendix provides the full intervention pro-tocols for the controlled deconfounding analysis in Section 4.5. The goal of the suite is to test whether a memory advantage better aligns with intervention-induced changes attributable to mem-ory updates, rather than merely correlating with final trajectory success. All interventions are per-formed offline on collected trajectories: we keep the policy fixed and re-score existing tokens with batched log-probability forward passes, without additional autoregressive rollout. 
+
+D.1 Controlled Intervention Protocols 
+
+Table 6 summarizes the interventions used in the deconfounding suite. Each intervention targets a different source of causally entangled credit: cor-rupted tools, missing memory, delayed memory utility, and module-level perturbations. 
+
+Plausibly wrong evidence synthesis. For the Tool Corruption intervention, we avoid adding explicit corruption markers such as 
+
+[CORRUPTED-EVIDENCE] , since a trained agent may recognize the marker and refuse to summarize 13 Intervention Operation Question Desired Credit Behavior Main Diagnostics 
+
+Tool Corruption Replace a tool observation ot with a plausible but wrong passage while keeping the memory write faithful to the observed corrupted evidence. The wrong passage is generated to match the style and length of the original evi-dence, but contains an incorrect entity, date, location, or relation. If the tool provides wrong evi-dence and the memory faithfully summarizes it, should the mem-ory update be penalized? A faithful memory should receive lit-tle negative credit, because the error is tool-induced rather than memory-induced. Faithful-under-bad-tool ra-tio; normalized blame leak-age. Memory Drop Remove or blank the memory write 
+
+mt⋆ at a selected step t⋆, while keep-ing the surrounding tool observation and reasoning segments unchanged. When task-relevant information is removed from memory, does the memory advantage identify the responsible write? The largest advantage shift should concentrate on the dropped memory step t⋆, rather than being diffused across unrelated steps. Memory-drop localization hit-rate. Delayed Utility Drop Remove early memory writes that store prerequisite information before the final answer becomes locally re-coverable. These writes may not im-mediately increase answerability but can support later tool use or reason-ing. Does the method recover credit for prefatory memory writes whose utility is delayed? Delayed smoothing should increase the magnitude of useful early-step credit without over-amplifying unre-lated memory writes. Delayed-credit recovery. Module Attribution Perturb one module span at a time, including <mem> , <tool_call> , or 
+
+<think> , and measure where the in-duced advantage shift appears. Does the credit shift localize to the perturbed module, or does it leak into memory regardless of the true source of error? When a non-memory module is per-turbed, memory credit should not ab-sorb most of the shift; when memory is perturbed, the shift should concen-trate on memory. Module-attribution concen-tration; blame leakage. 
+
+Table 6: Controlled intervention protocols for evaluating less-entangled memory credit assignment. The interventions are designed to separate memory-induced errors from tool-induced and reasoning-induced errors. 
+
+the passage, invalidating the faithfulness assump-tion. Instead, we synthesize wrong evidence in the same style as the original tool return. The generated passage is required to preserve the surface format and approximate length of the original evidence while changing a key factual attribute. If synthesis fails, we fall back to a marker-based template and record the fallback rate. 
+
+D.2 Connection to the Main Results 
+
+The main paper reports a compact subset of these diagnostics in Table 4. The faithful-under-bad-tool ratio and normalized blame leakage test whether memory is over-penalized when the tool is respon-sible for the error. Memory-drop localization tests whether the method can still assign credit to mem-ory when the intervention directly removes task-relevant memory content. Delayed-credit recov-ery evaluates whether the smoothing component restores credit to early useful writes, while module-attribution concentration measures whether inter-vention effects remain localized to the perturbed component. Together, these diagnostics provide evidence that HiMPO reduces blame leakage from tools and reasoning while preserving sensitivity to genuine memory failures. 14
