@@ -1,0 +1,862 @@
+Title: ActiveMem: Distributed Active Memory for Long-Horizon LLM Reasoning
+
+URL Source: https://arxiv.org/pdf/2606.10532v1
+
+Published Time: Wed, 10 Jun 2026 00:42:00 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+## ActiveMem: Distributed Active Memory for Long-Horizon LLM Reasoning 
+
+Yunhan Jiang 1, 2 , Wenbin Duan 1, 2 , Shasha Guo 1*, Liang Pang 1*,Xiaoqian Sun 1, Huawei Shen 1
+
+> 1
+
+State Key Laboratory of AI Safety, Institute of Computing Technology, Chinese Academy of Sciences 
+
+> 2
+
+University of Chinese Academy of Sciences jiangyunhan20@mails.ucas.ac.cn {duanwenbin25e, guoshasha, pangliang, sunxiaoqian, shenhuawei}@ict.ac.cn 
+
+Abstract 
+
+Memory is essential for enabling large lan-guage model (LLM) agents to handle long-horizon reasoning tasks. Existing memory mechanisms are largely centralized, typically organizing retrieved information and interac-tion history within a single model context. This design imposes a fundamental trade-off: scal-ing reasoning trajectories risks context over-load, whereas aggressive content pruning may result in irreversible information loss. Seek-ing a better trade-off, we draw inspiration from human cognitive systems, especially the func-tional complementarity between the prefrontal cortex (executive control) and the hippocampus (memory management), suggesting that such a trade-off need not be inherent, but may instead stem from centralized memory organization. To this end, we propose ActiveMem, a hetero-geneous framework that decouples agent mem-ory from the core reasoning process. Specif-ically, a high-level Planner utilizes distilled semantic gists to execute reasoning, while a lightweight, distributed memory system oper-ates in parallel to actively accumulate and con-solidate these gists throughout the task. Ex-periments on BrowseComp-Plus and GAIA show that ActiveMem achieves state-of-the-art accuracy with significantly reduced overhead, demonstrating the effectiveness of distributed active memory for long-horizon reasoning. 
+
+1 Introduction 
+
+LLM agents have demonstrated remarkable capa-bilities in executing long-horizon reasoning tasks through sustained, multi-step interactions (Yao et al., 2023; Nakano et al., 2021; Wang et al., 2024). However, within these intricate workflows, the con-tinuous expansion of interaction contexts inevitably renders working memory management a critical bottleneck (Zhang et al., 2025b; Hu et al., 2025b). To this end, an effective working memory must 
+
+> *
+
+Corresponding authors. Vanilla ReAct LLMs  
+
+> ActiveMem (Ours)
+> DeepSeek -V3.2
+> GLM -5.1
+> Qwen3.5
+> K2.5
+> Centralized Agents
+> AgentFold
+> Context -Folding
+> MemAgent
+> MemoBrain
+
+Figure 1: ActiveMem outperforms both modern cen-tralized memory agents and vanilla ReAct LLMs in LLM-as-a-Judge accuracy while achieving substantially lower computational cost. 
+
+selectively retain task-relevant information and an-chor the model’s attention on pivotal tokens while compressing the active context window, thereby enabling agents to navigate complex, long-horizon tasks successfully. Despite this necessity, most current reasoning systems follow a centralized architecture where memory is tightly bound to a single core reasoner. In ReAct-style agents, for instance, retrieved infor-mation and intermediate trajectories continuously accumulate within the same model context win-dow (Yao et al., 2023). As reasoning chains extend, this centralization inevitably triggers severe con-text overload (Levy et al., 2024; An et al., 2024) and the lost-in-the-middle phenomenon (Liu et al., 2024; Shi et al., 2023), thereby undermining rea-soning performance. To mitigate this issue, con-temporary approaches introduce various context compression mechanisms (Sun et al., 2025; Ye et al., 2025; Qian et al., 2026; Wu et al., 2025; Zhou et al., 2025; Zhang et al., 2025a; Mei et al., 2025). However, these strategies invariably incur permanent information loss— either by dropping older memories entirely or compressing them into coarse step-level summaries . This leaves memory  
+
+> arXiv:2606.10532v1 [cs.AI] 9 Jun 2026 (a) Coupled Centralized Memory
+> 𝑚 !
+> 𝑚 "
+> Reasoning
+> Context
+> 𝑠 !
+> 𝑚 #
+> step t ~ t+k: …..
+> evidence:
+> 𝑚 $
+> 𝑚 %
+> 1. Dropping
+> 𝑚 !
+> 2. Summarizing
+> 𝑚 !
+> 𝑚 "
+> 𝑠 #
+> ……
+> (b) Decoupled Distributed Memory
+> Reasoning
+> Context
+> 𝑚 !
+> 𝑚 "
+> 𝑚 $
+> Memorizers Memory
+> Shards
+> Clean
+> Context
+> Persistent
+> Storage
+> Operator
+> … …
+> Planner
+> Planner
+
+Figure 2: Comparison between (a) Coupled Centralized Memory and (b) our proposed Decoupled Distributed Memory (ActiveMem). In the centralized paradigm, existing approaches manage context growth by selectively retaining memories or compressing them into step-level summaries, trading information completeness for a bounded context. ActiveMem takes a different path: evidence is routed to parallel Memorizers that produce distilled semantic gists, stored persistently in Memory Shards and coordinated by an Operator, enabling the Planner to reason over a consistently compact context without discarding the underlying information. 
+
+content irreversibly degraded and unrecoverable for subsequent reasoning steps (Figure 2 (a)). This dilemma exposes a fundamental limitation of cen-tralized memory designs: memory storage and rea-soning computation are tightly coupled, creating an inherent trade-off between trajectory scaling and memory fidelity. Drawing inspiration from human cognitive sys-tems, we argue that this seemingly inherent trade-off stems fundamentally from the limitations of cen-tralized memory organization. The human brain masterfully circumvents this bottleneck through the functional complementarity between the pre-frontal cortex (executive control) and the hippocam-pus (memory management). The prefrontal cortex (PFC), serving as the master executive controller, issues top-down executive signals to guide retrieval rather than acting as a massive repository for de-tailed memory content (Lara and Wallis, 2015). Complementarily, the hippocampus executes par-allel pattern completion, integrating these execu-tive signals to reactivate and distribute holistic, ab-stract information across the neocortex (Horner et al., 2015), frequently trading granular episodic details for structured distilled semantic gists (Hindy et al., 2026). This biological mechanism suggests a promising design paradigm: structurally decou-pling memory systems from reasoning processes. Motivated by the above insight, we introduce Ac-tiveMem , a heterogeneous framework that imple-ments a decoupled and distributed active memory architecture to overcome the limitations of central-ized paradigms. Specifically, ActiveMem consists of two primary modules: a high-level Planner and a Distributed Memory System . The Planner handles reasoning and top-down query generation, remain-ing exclusively focused on executing core reason-ing chains over compact context windows. Com-plementing this, the Distributed Memory System replaces monolithic context buffers with a paral-lelized and sharded architecture that is inherently lightweight and active. This architecture comprises three tightly coordinated components: (1) Memo-rizers , which exploit the inherent parallelizability of information processing to concurrently process retrieved documents and extract distilled semantic gists; (2) Memory Shards , which actively partition, persistently store, and consolidate these gists across localized nodes throughout the task lifecycle; and (3) an Operator , which dynamically orchestrates proactive routing and semantic reuse across the en-tire shard network. As illustrated in Figure 2(b), this collaborative design keeps the Planner’s con-text horizon bounded and clean while preserving document-level insights, thereby substantially miti-gating the trade-off between trajectory scaling and memory fidelity. 
+
+Contributions. (1) Neuroscience-inspired cog-nitive decoupling. We propose a decoupled memory-reasoning paradigm inspired by the func-tional synergy between the prefrontal cortex and hippocampus. This architecture frees the central-ized reasoning core by segregating executive con-trol from distributed memory consolidation. (2) The ActiveMem framework. We introduce Ac-tiveMem, a heterogeneous framework that materi-alizes this paradigm into a distributed and active memory architecture. It empowers Memorizers to concurrently process retrieved documents and synthesize consolidated semantic gists, which are dynamically maintained across localized shards throughout the task lifecycle. (3) Superior ac-curacy with lower computational cost. Active-Mem achieves the highest LasJ accuracy among nine baselines while incurring substantially lower computational complexity in terms of PFLOPs, as shown in Figure 1. 
+
+2 Related Work 
+
+Memory management has become a central chal-lenge in LLM agents. Existing centralized ap-proaches can be grouped into three forms. The first is vanilla centralized memory, where raw tra-jectories or retrieved documents are directly fed back into one model context, as in ReAct-style agents (Yao et al., 2023). The second targets long-term dialogue management—methods such as A-MEM (Xu et al., 2025), Mem0 (Chhikara et al., 2025), MemGPT (Packer et al., 2023), Memo-ryBank (Zhong et al., 2024), Memory-R1 (Yan et al., 2025), and Mem-α (Wang et al., 2025) fo-cus on preserving user interaction histories across extended conversations rather than supporting tool-augmented long-horizon reasoning. The third ad-dresses long-horizon reasoning more directly, ei-ther through compression-based strategies that sum-marize past trajectories or raw documents (Sun et al., 2025; Ye et al., 2025; Yu et al., 2025; Zhang et al., 2025a), or through structured organization over working memory (Hu et al., 2025a; Qian et al., 2026). These methods improve how agents manage working memory and advance the ability to handle long-horizon tasks, but memory and reasoning re-main tightly coupled within one central reasoning node, creating a trade-off between retaining suffi-cient detail and maintaining efficient inference. A smaller but growing line of work explores distributed memory across multiple agents or mod-ules. MIRIX (Wang and Chen, 2025) introduces a modular multi-agent memory system that assigns memory consolidation to specialized controllers organized by memory type, such as episodic, se-mantic, and procedural memory. However, this form of distribution follows a memory taxonomy rather than the evolving information needs of the reasoning process. Its memory modules therefore do not actively distill task-relevant information un-der Planner-issued sub-queries, limiting their ef-fectiveness for long-horizon reasoning tasks where relevant evidence must be dynamically interpreted and selectively surfaced to a central reasoner. Our work differs from both lines of research. Centralized methods keep memory and reason-ing tightly coupled within a single model context. Methods that compress or truncate this context can reduce overload, but may discard information needed for later reasoning. Existing distributed methods, like MIRIX, organize memory by mem-ory type rather than by the information needs of the reasoning process, which limits their ability to support long-horizon tasks that require dynamic document selection. ActiveMem addresses this limitation by decoupling memory formation from reasoning. Parallel Memorizers process raw docu-ments under queries issued by the Planner and pro-duce query-conditioned memory summaries, which are stored in persistent Memory Shards and selec-tively returned to the Planner when needed. 
+
+3 Method 
+
+We introduce ActiveMem, a distributed memory framework that decouples memory management from high-level reasoning. The Planner generates retrieval queries and integrates the returned seman-tic gists to guide subsequent reasoning or produce the final answer. The Distributed Memory System consists of persistent Memory Shards, lightweight Memorizers and Operator: Memorizers process retrieved documents in parallel and produce dis-tilled semantic gists; Memory Shards actively accu-mulate and consolidate these gists throughout the task; and the Operator coordinates routing, memory reuse, and consolidation across shards. Figure 3 illustrates the overall architecture of ActiveMem. 
+
+3.1 Planner 
+
+The Planner maintains a compact reasoning state 
+
+st = ( x, h t, m t−1), where x is the original ques-tion, ht records the trimmed interaction history, and 
+
+mt−1 contains the distilled memory returned from the previous step. To keep the reasoning context bounded, ActiveMem retains only the most recent 
+
+K interaction steps: 
+
+ht = Trim ( ht−1 ∪ { at, o t}) , (1) where at denotes the Planner’s action and ot de-notes the tool observation. Trim retains only the Planner 
+
+(397B -A17B) 
+
+Thinking Process      
+
+> <think>Wait! Maybe Edgar Irving Williams is the target… he’s the cousin of William C.
+> Williams Now I need to verify: 1. his birth and death… 2. he went to boarding
+> school…3. parent conducted séance </think>
+> Edgar birth and death Edgar boarding school William’ parent seances
+
+Answer 
+
+> <answer>.
+> Irving
+> </answer>
+> OR
+> Distilled Semantic Gists
+> 1. Edgar Irving Williams born in
+> 1884, died in 1974 ……
+> 2. Edgar Irving Williams went to
+> boarding school while ……
+> 3. Williams C. Williams‘ mother
+> conducted séance once ……
+> Operator(4B)
+
+𝑞 !: 𝑞 ": 𝑞 #:         
+
+> # 9043 𝑞 !# 65615 𝑞 "# 25183 𝑞 #
+> Corpus/Web
+> 𝑞 !𝑞 "𝑞 #
+> retrieve #9043
+> SEEN NOT
+> SEEN
+> OP.JUDGE
+
+…… #65615     
+
+> #25183
+> …… NEW SIMILAR
+> Memory
+> Shard #N
+> Memorizer
+> (4B)
+> 𝑔 $
+> %(new)
+> ..,mother
+> once seances…
+> Memory
+> Shard #1
+> 𝑔 !
+> %(old)
+> went to boarding
+> school while…
+> Memorizer
+> (4B)
+
+……       
+
+> N shards
+> Memory
+> Shard #0
+> 𝑔 &
+> %(new)
+> …born in 1884
+> died in 1974…
+> Memorizer
+> (4B)
+> OP.CONSO 9043: 𝑔 '() 9043: 𝑔 &
+> %
+> 9043: 𝑔 *+,-+
+> (Consolidating
+> Asynchronously)
+
+Memory 
+
+Reasoning 
+
+> Clean & Concise Context
+> 𝑜 !𝑜 !"#𝑜 $%&'!
+> Keep recent K
+
+Input Question 
+
+> A student who ……
+> 1. studied architect
+> 2. was born in 18xx, died in 19xx
+> 3. had a sibling who was a doctor
+> and poet
+> 4. ‘s parent once conduct seances
+> 5. attended boarding school while
+> parent on trip
+> 6. married in 19xx and has 4
+> children
+> What is the middle name?
+> 𝑞
+> Complex Query
+
+Figure 3: Overview of our ActiveMem framework. The Planner issues retrieval queries Qt to recall documents from an external corpus. Each document is paired with its query to form a memory task and routed to the appropriate shard. For repeated documents, the Operator checks semantic similarity to a prior task: if similar, the stored gist is returned directly; otherwise, the Memorizer distills a new gist for the Planner while the Operator consolidates it into the shard asynchronously. This decouples memory from reasoning—the memory system continuously accumulates gists in persistent shards, while the Planner operates over a clean, compact distilled context. 
+
+most recent K interaction steps; the discarded con-tent is not lost, as its gist has already been stored in the Memory Shards. The Planner maps this com-pact state to a set of retrieval queries, i.e. ,
+
+Qt = π(st), (2) where each element (qi, k i) ∈ Q t specifies a re-trieval query qi and its retrieval budget ki, i.e. , the number of documents requested by the Planner for that query. After receiving the distilled gists from the memory system, the Planner updates its reason-ing state and either issues another retrieval request or produces the final answer. 
+
+3.2 Distributed Memory System 
+
+The distributed memory system is designed to pre-serve document-level memory without overload-ing the Planner’s reasoning context. It contains three components: Memory Shards that store per-sistent gists, parallel Memorizers that distill query-conditioned gists from retrieved documents, and an Operator that coordinates routing, reuse, and shard updates. Together, they provide a persistent and parallel memory layer for maintaining and reusing distilled information across the task. 
+
+3.2.1 Memory Shards 
+
+Memory Shards serve as the persistent storage layer of ActiveMem. Instead of merging information from different documents into a single compressed context, ActiveMem maintains a fixed set of log-ical shards throughout the task. Each shard Bj is implemented as a key–value store indexed by doc-ument c. For each document entry, the shard stores the distilled gist gc and the set of queries that have previously used this document: 
+
+Bj [c] =  gc, Hc
+
+, Hc = {q(1) , q (2) , . . . } (3) Because Memory Shards persist throughout the task and are logically isolated, distilled gists pro-duced at any step remain available for later rea-soning and are further enriched through asyn-chronous consolidation rather than discarded. This ensures that distilled information remains recover-able throughout the task while keeping the Plan-ner’s core reasoning context clean and compact, mitigating the trade-off between context overload and information loss that centralized agents face. 
+
+3.2.2 Memorizers 
+
+Inspired by the functional role of the hippocampus, each Memorizer is designed as a query-conditioned memory module. Given a query q and the asso-ciated raw content c routed by the Operator, the Memorizer produces a content-specific gist: 
+
+gc = ω(c, q ), gc ∈ G ∪ { ∅}, (4) where gc ∈ G denotes a valid gist when c is relevant to q, and gc = ∅ denotes an empty gist otherwise. The query q provides top-down guidance by spec-ifying which aspect of c should be retained. The Memorizer filters out irrelevant information and re-turns only the distilled gist gc to the Planner. This prevents the Planner from directly processing raw content while preserving the information needed for the current reasoning step. Multiple Memo-rizers operate in parallel and write their outputs independently to their assigned Memory Shards. Automatic Training Data Construction. Avanilla small language model often produces ver-bose responses and unnecessary reasoning traces when directly used as a Memorizer. We there-fore construct supervised data from real agent in-teractions to train the Memorizer for concise and content-grounded distillation. We follow the train/test split of BrowseComp-Plus introduced by Context-Folding (Sun et al., 2025). On the training split, we run the full Active-Mem pipeline and collect 12,000 query-document pairs, denoted as (q, c ). Each pair contains a query 
+
+q issued by the Planner during task execution and a retrieved document c routed to the memory system. These pairs are collected from actual agent trajec-tories, and therefore reflect the agent’s genuine information needs during long-horizon reasoning. For each query-document pair (q, c ), we use 
+
+gpt-oss-120b as the teacher model to gen-erate a concise semantic gist gc conditioned on the query, following the knowledge distillation paradigm (Hinton et al., 2015). The resulting triples (q, c, g c) are used as supervised training examples for the Memorizer. We maintain a document-level separation between the training and test sets. Specifically, documents used to construct Memorizer training examples are excluded from the test-time document pool. This ensures that the Memorizer is evaluated on documents that do not overlap with its training corpus. 
+
+Memorizer Training. Given the supervised triples (q, c, g c), we fine-tune the Memorizer with a conditional next-token prediction objective:        
+
+> LSFT =−E(q,c,g c)∼D
+> "X
+> t
+> log pω(gc,t |q, c, g c,<t )
+> #
+> ,(5)
+
+where D denotes the Memorizer training set, 
+
+ω denotes the trainable parameters of the Memo-rizer, and gc,t is the t-th token of the target gist 
+
+gc. This objective teaches the Memorizer to gener-ate concise gists that are grounded in the retrieved document and conditioned on the Planner’s query. 
+
+3.2.3 Operator 
+
+The Operator is the control layer between the Plan-ner and the distributed memory system. It converts Planner queries and retrieved documents into mem-ory tasks, routes them to the appropriate Memoriz-ers, and manages when existing shard entries can be reused or updated. This allows ActiveMem to avoid redundant memory computation while keep-ing document-level memory up to date. 
+
+Algorithm 1 ActiveMem Inference                                                                                 
+
+> Input: Question x, Max steps T, Shards {Bj}, Shard num-ber N, History window K
+> Output: Answer a
+> 1: Initialize all memory shards and set conversation history to system prompt and input question
+> 2: for t= 1 , . . . , T do
+> 3: Qt←π(st),st= ( x, h t, m t−1)
+> 4: if Qt=submit_answer (a)then
+> 5: return a
+> 6: Dt←RETRIEVE (Qt)
+> 7: Gt← ∅
+> 8: for parallel (q, c, B j)∈ROUTE (Dt), at most N
+> concurrent do
+> 9: if c / ∈Bjthen
+> 10: Memory miss: distill g←ω(c, q )and write
+> (g, q )to shard Bj
+> 11: else if J(q, B j[c].H) = SIMILAR then
+> 12: Memory hit: reuse g←Bj[c].g directly
+> 13: else
+> 14: Memory hit with new query: distill g←
+> ω(c, q )and merge into Bjasynchronously
+> 15: Gt[c]←g
+> 16: ot←Serialize (Gt)
+> 17: h←Trim (h+= ( mt, o t), K )
+
+Memory Reuse. When a memory task (q, c ) ar-rives, the Operator first judges whether document 
+
+c has already been used to answer a similar query. It compares q with the query history Hc stored in the corresponding shard: 
+
+J(q, Hc) ∈ { SIMILAR , NEW }.
+
+If the query is labeled as SIMILAR , the stored gist 
+
+gc is returned directly to the Planner, avoiding an additional Memorizer call. If it is labeled as NEW ,the task is dispatched to the Memorizer to produce a new query-conditioned gist. 
+
+Asynchronous Consolidation. The Operator ad-ditionally runs a consolidation pass that is decou-pled from the main reasoning loop and does not block ongoing inference. When the same raw con-tent has been distilled from multiple retrieval an-gles, the Operator merges the resulting gists into a single enriched shard entry that preserves all enti-ties while eliminating redundancy: 
+
+(g′
+
+> c
+
+, H′
+
+> c
+
+) = Consolidate (gc, g new , Hc, q ), (6) 
+
+3.3 ActiveMem Inference 
+
+Algorithm 1 summarizes the complete inference procedure of ActiveMem. At each step t, the Plan-ner observes state st = ( x, h t, m t−1)—comprising the original question, the trimmed interaction his-tory, and distilled memory returned from the pre-vious step—and emits a set of retrieval queries Qt.If the Planner instead calls submit_answer (a),inference terminates and the answer a is returned. Otherwise, the Retriever fetches a document set 
+
+Dt in response to Qt, and ROUTE assigns each re-trieved document to a stable Memory Shard. The assigned documents are processed by Memoriz-ers in parallel, with at most N Memorizers run-ning concurrently to match the number of available shards. For each document, the Operator applies one of three policies: a memory miss triggers fresh distillation and writes the new gist (g, q ) to the shard; a memory hit with a semantically similar query reuses the stored gist without invoking the Memorizer; a memory hit with a new query dis-tills an updated gist and launches an asynchronous merge that consolidates old and new gists in the background without blocking the Planner. After all documents are processed, the collected gists Gt are assembled into observation ot, appended to history, and TRIM retains only the most recent K interac-tion steps to keep the Planner context compact. 
+
+4 Experiments 
+
+4.1 Experimental Setup Datasets. We evaluate ActiveMem on two widely used benchmarks. BrowseComp-Plus (Chen et al., 2025) is our primary benchmark. We evaluate on 150 examples following the Easy, Medium, and Hard split introduced by Context-Folding (Sun et al., 2025), which supports fine-grained analysis. 
+
+GAIA (Mialon et al., 2024) is a general-purpose agent benchmark. We use its WebSearch validation subset (106 examples) to focus the comparison on information-intensive retrieval tasks. 
+
+Baselines. We compare ActiveMem with two cat-egories of baselines. Vanilla ReAct LLMs include Kimi-K2.5 (Kimi Team, 2026), Qwen3.5-397B-A17B (Qwen Team, 2026), GLM-5.1 (GLM, 2026), and DeepSeek-V3.2 (DeepSeek-AI, 2025), all oper-ating under a standard ReAct loop without memory compression. To control context length, all vanilla baselines adopt a two-stage page-reading mecha-nism: the model first reads a 512-token preview; if deemed relevant, it issues an open action to load the full 4,096-token content. Centralized Memory Agents include Context-Folding(Sun et al., 2025), AgentFold (Ye et al., 2025), MemoBrain (Qian et al., 2026), and MemAgent 1(Yu et al., 2025). For 
+
+> 1To align MemAgent with our task setting, we implement a sequential variant as a baseline to our parallel Memorizers by processing retrieved documents through MemAgent-7B.
+
+a fair comparison, all models adopt Qwen3.5-397B-A17B as the backbone LLM, with all experiments executed under this unified setup. 
+
+Metrics. We evaluate the performance of the model using three metrics. LasJ (LLM-as-a-Judge) measures answer correctness using Qwen3.5-397B-A17B as the judge model. PFLOPs measures total inference-time computational cost and serves as a model-agnostic proxy for both model scale and processed context length. Although token count is a widely used metric for measuring model effi-ciency, it masks crucial parameter-scale discrepan-cies across heterogeneous systems, making cross-model efficiency comparisons highly misleading. To address this, we strictly count linear FLOPs from matrix multiplications and quadratic FLOPs from self-attention, with architecture-specific ad-justments for hybrid-attention and Dynamic Sparse Attention (DSA) models. We also report total token count (in millions) alongside PFLOPs to provide a complementary view of context volume processed during inference. ACT (Accuracy-Cost Trade-off) is a composite metric that balances model perfor-mance against computational cost. By penaliz-ing raw accuracy with log-normalized PFLOPs, ACT effectively differentiates competitive methods based on their underlying efficiency. More details are provided in Appendix A.3. 
+
+4.2 Main Results 
+
+As shown in Table 1 and Table 2, we conclude three key observations: (1) ActiveMem achieves the strongest accuracy–cost trade-off across both benchmarks. On BrowseComp-Plus, ActiveMem obtains the highest overall LasJ score of 0.79 and the highest ACT score of 0.785. On GAIA, it also achieves the best LasJ score of 0.62 with the lowest computational cost. The baseline results reveal two different limitations. Vanilla ReAct LLMs accumu-late retrieved documents in the reasoning context, increasing context length and PFLOPs as inference proceeds. Centralized memory agents reduce con-text growth through compression, but may discard useful information from the document. Memo-Brain illustrates this trade-off: on BrowseComp-Plus, its relatively low cost of 1,640 PFLOPs comes with a lower LasJ score of 0.63, while ActiveMem improves accuracy by +0.16 (0.63 → 0.79). On GAIA, ActiveMem matches MemoBrain’s accu-racy while reducing computation by 63.7% (516 
+
+→ 187 PFLOPs). These results suggest that Ac-Model Easy Medium Hard Total                                                                                                   
+
+> LasJ PFLOPs LasJ PFLOPs LasJ PFLOPs LasJ PFLOPs (tokens) ACT
+> Vanilla ReAct LLMs
+> Kimi-k2.5 1.00 1023 0.80 6803 0.26 21643 0.69 29469 (157M) 0.640 DeepSeek-V3.2 0.98 1515 0.76 5078 0.34 8128 0.69 14721 (140M) 0.652 GLM-5.1 0.96 1179 0.74 5213 0.34 10508 0.68 16901 (158M) 0.640 Qwen3.5-397B-A17B 0.98 1300 0.78 4999 0.22 12207 0.66 18506 (297M) 0.618
+> Centralized Memory Agents
+> MemAgent 0.96 316 0.56 1507 0.26 2491 0.59 4314 (167M) 0.573 MemoBrain 0.98 256 0.70 464 0.20 920 0.63 1640 (47M) 0.630 AgentFold 0.96 458 0.80 1466 0.30 3832 0.69 5757 (116M) 0.668 Context-Folding 0.96 283 0.84 1025 0.36 2613 0.72 3920 (76M) 0.705
+> ActiveMem (Ours) 1.00 204 0.94 653 0.44 1355 0.79 2145 (188M) 0.785
+
+Table 1: Overall evaluation on BrowseComp-Plus. Bold and underline indicate the best and second-best results.                                    
+
+> Model LasJ PFLOPs (tokens) ACT
+> Vanilla ReAct LLMs
+> Kimi-k2.5 0.54 2442 (32M) 0.497 GLM-5.1 0.58 2233 (28M) 0.539 DeepSeek-V3.2 0.55 3839 (47M) 0.500 Qwen3.5-397B-A17B 0.53 1007 (15M) 0.502
+> Centralized Memory Agents
+> AgentFold 0.59 535 (15M) 0.573 MemoBrain 0.59 516 (16M) 0.573 MemAgent 0.53 363 (13M) 0.520
+> ActiveMem (Ours) 0.62 187 (12M) 0.620
+
+Table 2: Overall evaluation on GAIA. Bold denotes the best result, and underlining denotes the second best. 
+
+tiveMem improves efficiency without sacrificing accuracy. By distilling retrieved documents in par-allel and preserving reusable document-specific gists in Memory Shards, ActiveMem keeps the Planner’s context compact while retaining infor-mation needed for later reasoning. (2) Active-Mem’s advantage is more pronounced on the BrowseComp-Plus Hard split. On Easy ques-tions, most methods are close to saturation, leaving limited room for differentiation. As the difficulty level increases, ActiveMem shows a clearer advan-tage. On the Medium split, ActiveMem reaches 0.94, outperforming the best baseline by +0.10 ab-solute LasJ score (0.84 → 0.94), corresponding to a relative improvement of +11.9%. On the Hard split, ActiveMem achieves 0.44, improving over the best baseline by +0.08 absolute LasJ score (0.36 
+
+→ 0.44), corresponding to a relative improvement of +22.2%. This result highlights the benefit of decoupled memory under more difficult retrieval-intensive reasoning. By returning distilled gists instead of raw retrieved documents, ActiveMem keeps the Planner’s context compact and reduces the degradation caused by long contexts or lossy                
+
+> Module Tokens (M) PFLOPs Share
+> Planner 16.69 606 28.3% Memorizer 163.88 1478 68.9% Operator 7.44 61 2.8% Total 188.14 2145 100%
+
+Table 3: Module-level breakdown of token usage and PFLOPs for ActiveMem on BrowseComp-Plus. 
+
+centralized compression. (3) Offloading token-intensive processing to lightweight Memorizers enables more favorable test-time scaling at lower cost. As shown in Table 3, Memorizers account for 68.9% of total PFLOPs while the Planner con-tributes only 28.3%. By routing most token pro-cessing to small models, ActiveMem processes substantially more tokens than centralized agents (188M vs. 47–167M on BrowseComp-Plus) while keeping total PFLOPs low, since the marginal cost per token is much lower for a 4B Memorizer than for the large Planner. The higher token consump-tion on BrowseComp-Plus reflects the benchmark’s tighter question constraints, which demand broader evidence gathering; ActiveMem’s ability to process more evidence at lower cost is consistent with the test-time scaling principle (Snell et al., 2024). On GAIA, where questions are less constrained and agents converge faster, token counts are uniformly lower across all methods. Case studies are provided in Appendix A.4. Figure 4 shows that ActiveMem scales better as the number of reasoning steps in-creases. Its per-case cost curve remains flatter than those of the baselines, and the cost gap widens at higher step counts, reflecting lower sensitivity to context length. Context-Folding is an exception, as its lower cost stems from early branch termination rather than reduced per-step computation. Figure 4: Average computational cost per case (PFLOPs) across reasoning step ranges. Shaded regions indicate ±1 standard deviation.             
+
+> Model P. PFLOPs M. PFLOPs Tot. PFLOPs LasJ
+> ActiveMem w/o Shards 546 1739 2285 0.750 ActiveMem 606 1478 2145 0.786
+
+Table 4: Ablation on Memory Shards. P., M., and Tot. denote Planner, Memorizer, and total inference cost (PFLOPs), respectively. 
+
+4.3 Ablation Studies 
+
+We ablate two main design choices in ActiveMem: persistent Memory Shards and Memorizer variants. Additional analyses of Trim window size, Memo-rizer scale trade-offs, and Memory Consolidation are in Appendix A.4. 
+
+4.3.1 Memory Shards Reduce Redundancy and Preserve Information 
+
+We ablate Memory Shards by removing shard-based storage and retrieval while keeping the Mem-orizer unchanged. We define this variant as Ac-tiveMem w/o Shards , where distilled gists are re-turned directly to the Planner at each step rather than stored for selective reuse. The comparative results are reported in Table 4. Removing Memory Shards reduces both accu-racy and efficiency. Without shard-based storage, overlapping queries trigger redundant Memorizer passes on the same raw content, raising Memorizer PFLOPs from 1478 to 1739. At the same time, previously distilled gists are not consolidated back into the Planner’s context on new queries—keeping Planner context smaller (546 vs. 606 PFLOPs) but causing information loss that degrades final accu-racy. These results demonstrate the complementary roles of distillation and Memory Shards: the for-mer compresses content into semantic gists, while the latter persists and reuses these gists across rea-soning steps, eliminating redundant computation. Together, they also preserve information across rea-soning steps, contributing to higher accuracy.                 
+
+> Type P. PFLOPs M. PFLOPs Tot. PFLOPs LasJ
+> Instruct 1120 1378 2659 0.667 Thinking (Vanilla) 731 1833 2647 0.733 Thinking (SFT) 606 1478 2145 0.786
+
+Table 5: Ablation on Memorizer variants. 
+
+4.3.2 A Stronger Memorizer Improves Reasoning Quality 
+
+We compare three 4B-scale Memorizer variants with all other components fixed: Qwen3-4B-Instruct-2507 (instruction-tuned), Qwen3-4B (Qwen Team, 2025) (vanilla reasoning), and our SFT-trained Memorizer-4B. As shown in Table 5, the choice of Memorizer de-sign is critical to final task performance. Compared with the Qwen3-4B-Instruct-2507, both reasoning-oriented variants achieve higher LasJ accuracy. This suggests that a reasoning-capable Memorizer can produce more precise and compact gists for the Planner. The effect is also reflected in Planner cost: the two reasoning-oriented variants substantially re-duce Planner PFLOPs, indicating that a cleaner and less redundant distilled context makes downstream reasoning more efficient. This improvement comes with a higher Memorizer cost, since reasoning-oriented Memorizers spend more computation on their own intermediate reasoning. However, the additional cost is offset by consistent gains in an-swer accuracy. SFT further improves this trade-off. Compared with vanilla Qwen3-4B, Memorizer-4B makes distillation more concise and task-aligned, siginificantlyreducing Memorizer cost from 1833 to 1478 PFLOPs and Planner cost to 606 PFLOPs, while improving LasJ to 0.786. 
+
+5 Conclusion 
+
+We introduce ActiveMem, a neuroscience-inspired framework that decouples memory management from high-level reasoning. ActiveMem separates executive reasoning from parallel active mem-ory consolidation, alleviating the trade-off be-tween context overload and information loss in centralized memory designs. Extensive evalua-tions on diverse benchmarks show that ActiveMem achieves higher accuracy than competitive base-lines while substantially reducing computational overhead. These results validate our distributed design and suggest that decoupled active memory provides an efficient and scalable foundation for long-horizon reasoning. Limitations 
+
+There are two limitations to this work. First, al-though we report computational efficiency metrics, we do not directly measure deployment-level ef-ficiency, such as wall-clock latency or monetary cost. These quantities are highly sensitive to serv-ing infrastructure, API response variability, rate limits, hardware utilization, and provider-specific pricing assumptions. Since our experiments in-volve both commercial API models and locally deployed open-source models, a fair comparison would require a fully controlled deployment setting with consistent serving infrastructure. We leave such profiling to future work. Second, the gen-eralizability of ActiveMem beyond the evaluated domains remains an open question. The Memorizer is trained via supervised fine-tuning on agent in-teraction data collected from BrowseComp-Plus, a web-search benchmark consisting mainly of tightly constrained factual questions. While this leads to effective memory distillation on the evaluated tasks, its applicability to other distinct paradigms, such as mathematical reasoning, code generation, or mul-timodal agent workflows, has not been systemati-cally cross-validated. Adapting ActiveMem to new domains may require collecting domain-specific interaction data and further tuning the Memorizer. 
+
+References 
+
+Shengnan An, Zexiong Ma, Zeqi Lin, Nanning Zheng, Jian-Guang Lou, and Weizhu Chen. 2024. Make your LLM fully utilize the context. In Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Sys-tems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 .Zijian Chen, Xueguang Ma, Shengyao Zhuang, Ping Nie, Kai Zou, Andrew Liu, Joshua Green, Kshama Patel, Ruoxi Meng, Mingyi Su, Sahel Shari-fymoghaddam, Yanxi Li, Haoran Hong, Xinyu Shi, Xuye Liu, Nandan Thakur, Crystina Zhang, Luyu Gao, Wenhu Chen, and Jimmy Lin. 2025. Browsecomp-plus: A more fair and transparent eval-uation benchmark of deep-research agent. CoRR ,abs/2508.06600. Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. 2025. Mem0: Building production-ready AI agents with scalable long-term memory. In ECAI 2025 - 28th European Confer-ence on Artificial Intelligence, 25-30 October 2025, Bologna, Italy - Including 14th Conference on Presti-gious Applications of Intelligent Systems (PAIS 2025) ,Frontiers in Artificial Intelligence and Applications, pages 2993–3000. IOS Press. DeepSeek-AI. 2025. Deepseek-v3.2: Pushing the frontier of open large language models. CoRR ,abs/2512.02556. GLM. 2026. GLM-5: from vibe coding to agentic engineering. CoRR , arXiv:2602.15763. Nicholas C Hindy, Ryan Coleman, and Surya Ra-jan Meenakshi Selvam. 2026. Hippocampal reac-tivation trades episodic detail for semantic gist in human memory. Journal of Cognitive Neuroscience ,pages 1–13. Geoffrey E. Hinton, Oriol Vinyals, and Jeffrey Dean. 2015. Distilling the knowledge in a neural network. 
+
+CoRR , abs/1503.02531. Aidan J Horner, James A Bisby, Daniel Bush, Wen-Jing Lin, and Neil Burgess. 2015. Evidence for holistic episodic recollection via hippocampal pattern com-pletion. Nature communications , 6(1):7462. Mengkang Hu, Tianxing Chen, Qiguang Chen, Yao Mu, Wenqi Shao, and Ping Luo. 2025a. Hiagent: Hier-archical working memory management for solving long-horizon agent tasks with large language model. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2025, Vienna, Austria, July 27 - August 1, 2025 , pages 32779–32798. Association for Computational Linguistics. Yuyang Hu, Shichun Liu, Yanwei Yue, Guibin Zhang, Boyang Liu, Fangyi Zhu, Jiahang Lin, Honglin Guo, Shihan Dou, Zhiheng Xi, Senjie Jin, Jiejun Tan, Yan-bin Yin, Jiongnan Liu, Zeyu Zhang, Zhongxiang Sun, Yutao Zhu, Hao Sun, Boci Peng, and 28 oth-ers. 2025b. Memory in the age of AI agents. CoRR ,abs/2512.13564. Kimi Team. 2026. Kimi K2.5: visual agentic intelli-gence. CoRR , abs/2602.02276. Antonio H Lara and Jonathan D Wallis. 2015. The role of prefrontal cortex in working memory: a mini review. Frontiers in systems neuroscience , 9:173. Mosh Levy, Alon Jacoby, and Yoav Goldberg. 2024. Same task, more tokens: the impact of input length on the reasoning performance of large language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand, August 11-16, 2024 , pages 15339–15353. Association for Computational Linguistics. Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language models use long contexts. Trans. Assoc. Comput. Linguistics , 12:157–173. Lingrui Mei, Jiayu Yao, Yuyao Ge, Yiwei Wang, Bao-long Bi, Yujun Cai, Jiazhi Liu, Mingyu Li, Zhong-Zhi Li, Duzhen Zhang, Chenlin Zhou, Jiayi Mao, Tianze Xia, Jiafeng Guo, and Shenghua Liu. 2025. A sur-vey of context engineering for large language models. 
+
+CoRR , abs/2507.13334. Grégoire Mialon, Clémentine Fourrier, Thomas Wolf, Yann LeCun, and Thomas Scialom. 2024. GAIA: a benchmark for general AI assistants. In The Twelfth International Conference on Learning Representa-tions, ICLR 2024, Vienna, Austria, May 7-11, 2024 .OpenReview.net. Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, Xu Jiang, Karl Cobbe, Tyna Eloundou, Gretchen Krueger, Kevin Button, Matthew Knight, Benjamin Chess, and John Schulman. 2021. Webgpt: Browser-assisted question-answering with human feedback. 
+
+CoRR , abs/2112.09332. Charles Packer, Vivian Fang, Shishir G. Patil, Kevin Lin, Sarah Wooders, and Joseph E. Gonzalez. 2023. Memgpt: Towards llms as operating systems. CoRR ,abs/2310.08560. Hongjin Qian, Zhao Cao, and Zheng Liu. 2026. Mem-obrain: Executive memory as an agentic brain for reasoning. CoRR , abs/2601.08079. Qwen Team. 2025. Qwen3 technical report. CoRR ,abs/2505.09388. Qwen Team. 2026. Qwen3.5: Towards native multi-modal agents. Freda Shi, Xinyun Chen, Kanishka Misra, Nathan Scales, David Dohan, Ed H. Chi, Nathanael Schärli, and Denny Zhou. 2023. Large language models can be easily distracted by irrelevant context. In Interna-tional Conference on Machine Learning, ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA , Proceed-ings of Machine Learning Research, pages 31210– 31227. PMLR. Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Ku-mar. 2024. Scaling LLM test-time compute optimally can be more effective than scaling model parameters. 
+
+CoRR , abs/2408.03314. Weiwei Sun, Miao Lu, Zhan Ling, Kang Liu, Xuesong Yao, Yiming Yang, and Jiecao Chen. 2025. Scaling long-horizon LLM agent via context-folding. CoRR ,abs/2510.11967. Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei, and Jirong Wen. 2024. A survey on large language model based autonomous agents. Frontiers Comput. Sci. , 18(6):186345. Yu Wang and Xi Chen. 2025. MIRIX: multi-agent memory system for llm-based agents. CoRR ,abs/2507.07957. Yu Wang, Ryuichi Takanobu, Zhiqi Liang, Yuzhen Mao, Yuanzhe Hu, Julian J. McAuley, and Xiaojian Wu. 2025. Mem-α: Learning memory construction via reinforcement learning. CoRR , abs/2509.25911. Xixi Wu, Kuan Li, Yida Zhao, Liwen Zhang, Litu Ou, Huifeng Yin, Zhongwang Zhang, Yong Jiang, Pengjun Xie, Fei Huang, Minhao Cheng, Shuai Wang, Hong Cheng, and Jingren Zhou. 2025. Re-sum: Unlocking long-horizon search intelligence via context summarization. CoRR , abs/2509.13313. Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. 2025. A-MEM: agentic memory for LLM agents. CoRR , abs/2502.12110. Sikuan Yan, Xiufeng Yang, Zuchao Huang, Ercong Nie, Zifeng Ding, Zonggen Li, Xiaowen Ma, Hin-rich Schütze, Volker Tresp, and Yunpu Ma. 2025. Memory-r1: Enhancing large language model agents to manage and utilize memories via reinforcement learning. CoRR , abs/2508.19828. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023. React: Synergizing reasoning and acting in language models. In The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5, 2023 . OpenReview.net. Rui Ye, Zhongwang Zhang, Kuan Li, Huifeng Yin, Zhengwei Tao, Yida Zhao, Liangcai Su, Liwen Zhang, Zile Qiao, Xinyu Wang, Pengjun Xie, Fei Huang, Siheng Chen, Jingren Zhou, and Yong Jiang. 2025. Agentfold: Long-horizon web agents with proactive context management. CoRR ,abs/2510.24699. Hongli Yu, Tinghong Chen, Jiangtao Feng, Jiangjie Chen, Weinan Dai, Qiying Yu, Ya-Qin Zhang, Wei-Ying Ma, Jingjing Liu, Mingxuan Wang, and Hao Zhou. 2025. Memagent: Reshaping long-context LLM with multi-conv rl-based memory agent. CoRR ,abs/2507.02259. Yuxiang Zhang, Jiangming Shu, Ye Ma, Xueyuan Lin, Shangxi Wu, and Jitao Sang. 2025a. Memory as ac-tion: Autonomous context curation for long-horizon agentic tasks. CoRR , abs/2510.12635. Zeyu Zhang, Quanyu Dai, Xiaohe Bo, Chen Ma, Rui Li, Xu Chen, Jieming Zhu, Zhenhua Dong, and Ji-Rong Wen. 2025b. A survey on the memory mechanism of large language model-based agents. ACM Trans. Inf. Syst. , 43(6):155:1–155:47. Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. 2024. Memorybank: Enhancing large language models with long-term memory. In Thirty-Eighth AAAI Conference on Artificial Intelligence, AAAI 2024 , pages 19724–19731. AAAI Press. Zijian Zhou, Ao Qu, Zhaoxuan Wu, Sunghwan Kim, Alok Prakash, Daniela Rus, Jinhua Zhao, Bryan Kian Hsiang Low, and Paul Pu Liang. 2025. MEM1: learning to synergize memory and reasoning for effi-cient long-horizon agents. CoRR , abs/2506.15841. A Appendix 
+
+A.1 Implementation Details 
+
+ActiveMem instantiates the Planner with Qwen3.5-397B-A17B, the Memorizer with Memorizer-4B, the Operator with Qwen3-4B, and the re-trieval module with Qwen3-Embedding-8B. Ta-ble 6 shows the model and parameter settings for ActiveMem and all four baselines. To ensure a fair comparison, all systems share the same Planner backbone (Qwen3.5-397B-A17B) with identical temperature and step budget. For each baseline, hyperparameters not listed in the table follow the settings reported in the respective original paper. All SFT training was conducted on 4 NVIDIA A100 (80GB) GPUs. For inference, the Planner model (Qwen3.5-397B-A17B) was accessed via API due to its large parameter count, while all other models—including the Memorizer, Operator, and retrieval module—were each served locally on a single NVIDIA A100 (80GB) GPU. All models and datasets used in this work are publicly avail-able and used in accordance with their respective licenses for non-commercial research purposes. 
+
+A.2 Prompts 
+
+We provide the full prompts for all four model roles in ActiveMem. The Planner prompt defines a three-step decision flow governing when to search versus when to submit a final answer. The Operator: Sim-ilarity Judge prompt instructs a lightweight model to detect query overlap so that stored gists can be reused without redundant retrieval. The Operator: Memory Consolidation prompt merges an existing document gist with a newly produced one while pre-serving all factual content. The Memorizer prompt directs the extraction model to produce a concise, document-grounded gist for a given sub-query, out-putting NONE only when no relevant information is present. 
+
+Planner 
+
+You are a strategic task planner. Your job is to decide what to search for in the corpus or when to answer, fol-lowing a clear three-step decision flow. 
+
+## Tools (function calling) 
+
+• advance_search(tasks) : parallel dense re-trieval + worker analysis. • Input: {"tasks": [{"query": string, "topk": int}, ...]} 
+
+• 1–4 tasks per call; each task must target a DIFFERENT aspect or candidate (different person, relation, time/place, etc.). • 3 <= topk <= 8; use larger topk only when neces-
+
+sary. • submit_answer(answer) : when you already have enough evidence, submit a short English phrase that directly answers the user’s question. 
+
+## Decision flow (follow in order) Step 1 – Decompose the question: 
+
+• Break down the user question into the mini-mal set of information pieces needed to answer it (who / what / when / where / relations, etc.). • Think of these as independent sub-questions or search paths. 
+
+Step 2 – Match against what you already know: 
+
+• Use the latest tool results (provided as messages from tools) to decide which pieces are already satisfied and which are still missing. • If current knowledge is enough to form a complete, precise answer, call submit_answer with a concise, direct answer phrase. Do NOT search again in that case. 
+
+Step 3 – Organize search queries for parallel re-trieval: 
+
+• For any missing pieces, prepare search tasks for 
+
+advance_search .• Each task.query must be a SHORT English key-word phrase, not a full sentence, combining key enti-ties / dates / relations. • Avoid near-duplicate queries; each task should explore a distinct hypothesis, angle, or candidate. 
+
+Output rules: 
+
+• NEVER fabricate tool outputs; always wait for real tool responses. • NEVER answer in free-form prose; every final answer must be returned via submit_answer .• Keep internal reasoning minimal; your visible output is ONLY function calls chosen according to the flow above. 
+
+Operator: Similarity Judge 
+
+You are a strict semantic-equivalence judge for short information-seeking queries over the SAME document. You will receive a NEW sub-query and a list of PREVI-OUS sub-queries that were already answered using this document. Decide whether the NEW sub-query is asking for es-sentially the same information aspect(s) as ANY of the previous sub-queries, so that the stored summary is al-ready sufficient. 
+
+Decision rules: 
+
+• Output SIMILAR if the NEW sub-query targets the same entity(ies) AND the same attribute/relation/time-scope as at least one previous sub-query. Minor para-phrase, synonym, or word order changes → SIMILAR .• Output NEW if the NEW sub-query targets a different attribute, a different time point, a different entity, or asks for strictly more specific information than any previous one. • When in doubt, output NEW .
+
+Output format (STRICT): 
+
+• Output ONLY one token: either exactly SIMILAR or exactly NEW .• Do NOT include quotes, punctuation, reasoning, or any extra text. Operator: Memory Consolidation  
+
+> You are a memory consolidator. You will receive: • an OLD summary previously produced for this docu-ment • a NEW summary just produced for this document (for a different sub-query) • the list of sub-queries that led to OLD • the new sub-query that led to NEW Your job: produce ONE merged summary that preserves all document-grounded facts from both OLD and NEW, de-duplicating identical statements.
+> Hard rules:
+> • Do NOT add any external knowledge or speculation. • Do NOT drop factual content that is present in OLD or NEW. • Prefer concrete entities, dates, and relations over vague wording. • Keep the merged summary concise: at most 5 sentences,
+> ≤150 words. • Output ONLY the merged summary text. No prefixes, no bullet points, no explanation, no quotes.
+> Memorizer
+> You are a precise information extraction assistant for a single document. You will receive ONE sub-query phrase and ONE document snippet. Your job is to write a SHORT summary of information in THIS document that is relevant to the sub-query.
+> VERY IMPORTANT:
+> • If the document contains ANY information related to the sub-query (even partially), you MUST write a summary. • You may ignore parts of the sub-query that are NOT supported by the document. • Output ‘NONE’ ONLY when the document contains NO information related to the sub-query at all. • Do NOT guess or add external knowledge.
+> Output rule:
+> • If there is some relevant information: output ONLY a concise summary in 1–2 sentences ( ≤40 words), no bullet points, no explanation. • If there is truly no relevant information: output EX-ACTLY ‘NONE’.
+
+A.3 Metrics A.3.1 PFLOPs Computation Details Why PFLOPs. Several cost metrics are com-monly used in agent evaluation, each with limi-tations. Token count is the most prevalent proxy and maps directly to API billing. However, token count ignores model scale: a single token processed by Qwen3.5-397B-A17B incurs far more compu-tation than one processed by a 4B model, making cross-system token comparisons misleading when the underlying models differ. LLM call count is even coarser—it conflates calls to models of vastly different sizes and cannot distinguish a lightweight coordination call from a full reasoning pass. Wall-clock latency is the most intuitive measure for de-ployment but is strongly hardware-dependent and difficult to reproduce across different infrastruc-ture configurations, making it unsuitable for fair academic comparison. PFLOPs addresses these shortcomings by jointly accounting for model scale (via Nact ) and context length (via the quadratic at-tention term), yielding a hardware-agnostic, model-agnostic estimate of total computation that enables fair comparison across heterogeneous systems. We note that PFLOPs is itself an approximation: it counts only the two dominant arithmetic terms (lin-ear projections and full attention matmuls) and does not capture memory-bandwidth costs, KV cache effects, or auxiliary operations. Nevertheless, as a relative ranking metric applied uniformly across all systems, it provides a principled and reproducible basis for comparison. 
+
+Formula. For a single LLM call with Sin prefill tokens and Sout decode tokens, let T = Sin + Sout .The FLOPs for that call are estimated as: FLOPs = 2 Nact T
+
++ Lfull · nheads · (dQK + dV ) · T 2,
+
+and reported as PFLOPs = FLOPs /10 15 . To-tal PFLOPs per case are obtained by summing this estimate over all LLM calls made during inference, across all modules (Planner, Memo-rizer, and Operator). Here Nact denotes the num-ber of parameters activated per token, including dense attention/projection parameters and activated MoE/shared expert parameters. For dense models, 
+
+Nact equals the total parameter count. The first term approximates the FLOPs of linear projections and FFN/MoE matrix multiplications, while the second term captures the dominant quadratic cost of causal full attention, with the causal mask reducing the effective attention window by half (canceling the factor of 2 from the matrix multiply). For MLA models, we use dQK = dnope + drope ,yielding an architecture-normalized estimate rather than an exact kernel-level FLOP count. For hybrid-attention models, only the Lfull full-attention layers contribute to the quadratic term; linear-attention layers are treated as sequence-linear costs and are absorbed into the linear-time approximation. For models with Dynamic Sparse Attention (DSA), the attention term is replaced by: Attn DSA = Cidx · T 2
+
++ Cmain · T · min( T, k top ),System Component Parameter Value 
+
+ActiveMem Planner Model Qwen3.5-397B-A17B Temperature 0.3 Max steps T 50 History window K 10 Memorizer Model Memorizer-4B Temperature 0.2 Max doc. tokens 4,096 Operator Model Qwen3-4B Judge temperature 0.0 Judge max tokens 8Consol. temp. 0.2 Consol. max tokens 1,024 Retrieval Embedding model Qwen3-Embedding-8B Memory Memory shards B 16 Consol. pool size 16 AgentFold Planner Model Qwen3.5-397B-A17B Temperature 0.3 Max steps T 50 Summary LLM Model gpt-oss-120b ( ∼5.1B active) Temperature 0.2 Context-Folding Planner Model Qwen3.5-397B-A17B Temperature 0.3 Max steps T 50 MemoBrain Planner Model Qwen3.5-397B-A17B Temperature 0.3 Max steps T 50 MemoBrain Model MemoBrain-8B Temperature 0.7 Auxiliary Model Qwen3-30B-A3B-Instruct-2507 Temperature 0.7 MemAgent Planner Model Qwen3.5-397B-A17B Temperature 0.3 Max steps T 50 MemAgent Model RL-MemAgent-7B Temperature 0.3 
+
+Table 6: Implementation details for all evaluated systems. 
+
+where Cidx = L · nidx · didx denotes the cost coefficient of the lightweight indexer, Cmain =
+
+L · nheads · (dQK + dV ) denotes the cost coeffi-cient of the main sparse attention over the selected candidates, and ktop is the number of KV candi-dates selected by the indexer ( ktop = 2048 for both DeepSeek-V3.2 and GLM-5.1). 2
+
+> 2
+
+The formula counts only the two dominant FLOPs terms. Auxiliary operations (RMSNorm, SiLU activations, MoE rout-ing, embedding lookup) are not separately itemized, as they are not expected to change the relative ranking across systems dominated by linear projections and attention matmuls. KV cache effects (e.g., reduced attention cost from prefix caching or paged attention) are likewise excluded: such behavior is highly infrastructure-dependent and difficult to estimate re-liably across different deployment configurations. We apply the same formula uniformly to all systems to ensure a fair and reproducible comparison. 
+
+A.3.2 ACT: Accuracy–Cost Tradeoff 
+
+A single accuracy metric cannot distinguish be-tween a system that achieves high accuracy at mod-est cost and one that achieves the same accuracy by spending orders of magnitude more computation. Conversely, a pure efficiency metric favors systems that answer cheaply at the expense of correctness. ACT (Accuracy–Cost Tradeoff) is designed to cap-ture both dimensions in a single scalar that reflects the accuracy–efficiency operating point of each sys-tem. 
+
+Cost normalization. Raw PFLOPs values span several orders of magnitude across systems (e.g., from ∼200 to ∼30 ,000 PFLOPs in our BrowseComp-Plus results). A linear normaliza-tion would give disproportionate weight to the few high-cost outliers. We therefore apply log-normalization:              
+
+> CostNorm i=log( PFLOPs i)−min jlog( PFLOPs j)max jlog( PFLOPs j)−min jlog( PFLOPs j),
+
+which maps all systems to [0 , 1] and treats equal multiplicative differences in cost as equal differ-ences on the normalized scale—a natural choice since computational cost tends to scale multiplica-tively with context length and model size. 
+
+ACT definition. ACT is defined as a penalized accuracy: ACT i = LasJ i − α · CostNorm i,
+
+where α = 0 .05 is the penalty weight. LasJ accu-racy is the primary objective, and a system that achieves the highest accuracy should still rank highly even at elevated cost. The role of the cost term is to break near-ties in accuracy in favor of the more efficient system, and to flag systems whose marginal accuracy gain does not justify the addi-tional computation. At α = 0 .05 , the most expen-sive system (CostNorm = 1 ) incurs a maximum penalty of 5 percentage points, which is approxi-mately the minimum meaningful accuracy gap ob-served in our benchmarks. CostNorm is computed separately within each benchmark so that ACT val-ues are directly comparable across rows within a table but should not be compared across tables. 
+
+Interpretation. A system with higher ACT achieves a better accuracy–efficiency operating point: either higher accuracy at comparable cost, or comparable accuracy at substantially lower cost. Because normalization is benchmark-relative, adding or removing a system can shift all Cost-Norm values; ACT should therefore be interpreted in the context of the full comparison set rather than as an absolute score. 
+
+A.4 Additional Analysis A.4.1 Trim Window Size Balances Planner Context and Efficiency 
+
+The Trim mechanism controls how many recent in-teraction steps are retained in the Planner’s context, with the window size denoted by k. To assess its effect, we vary k ∈ { 5, 10 , 15 } and compare these settings with a no-Trim variant, ActiveMem w/o Trim , as shown in Table 7. We observe that k = 10 provides the best accuracy–efficiency trade-off. When k is too small (i.e. , k = 5 ), the Planner receives insufficient recent                         
+
+> Trim kP. PFLOPs M. PFLOPs Tot. PFLOPs LasJ
+> k= 5 446.20 1718.79 2253.84 0.740
+> k= 10 606.04 1477.56 2144.55 0.786
+> k= 15 833.13 1580.96 2493.78 0.733 w/o Trim 1225.13 1519.63 2801.09 0.747
+
+Table 7: Ablation on Trim window size. 
+
+context and must compensate by issuing more re-trieval queries, substantially increasing Memorizer load (1718.79 PFLOPs) and degrading accuracy. When k is too large ( i.e. , k = 15 ) or absent en-tirely, Planner cost grows sharply as it processes longer and noisier context windows, without a cor-responding accuracy gain. These results confirm that k = 10 is a well-calibrated operating point and that the Trim mechanism is robust within a moderate range around this value. 
+
+A.4.2 Memorizer Scale Trades Accuracy Against Efficiency 
+
+We vary the Memorizer across three parameter scales (0.6B, 1.7B, and 4B) while holding all other components fixed, in order to characterize how model size shapes the accuracy–efficiency trade-off. Table 8 reports the results on BrowseComp-Plus.                 
+
+> Scale P. PFLOPs M. PFLOPs Tot. PFLOPs LasJ
+> Memorizer-0.6B 744 371 1201 0.560 Memorizer-1.7B 642 780 1498 0.687 Memorizer-4B 606 1478 2145 0.786
+
+Table 8: Ablation on Memorizer scale on BrowseComp-Plus (LasJ). 
+
+The results reveal a non-trivial interaction be-tween Memorizer scale and Planner efficiency. While reducing Memorizer scale substantially low-ers Memorizer cost (from 1,478 to 371 PFLOPs for Memorizer-4B vs. 0.6B), Planner cost moves in the opposite direction, rising from 606 to 744 PFLOPs. This counter-intuitive pattern stems from a capabil-ity gap: a weaker 0.6B Memorizer fails to reliably capture critical information during distillation, so the gists it produces are incomplete or misleading. The Planner, receiving lower-quality evidence, is forced into more rounds of suboptimal reasoning— issuing additional retrieval queries, re-examining previously processed content, and converging more slowly—which drives up its own cost. The final LasJ of 0.560 confirms that this additional Planner effort fails to compensate for the information loss at the distillation stage. Viewed across all three scales, the Planner cost decreases monotonically as Memorizer scale in-creases (744 → 642 → 606 PFLOPs), indicating that a stronger Memorizer produces more precise and complete gists, reducing the Planner’s reason-ing burden at every step. This suggests that invest-ing compute in a more capable Memorizer yields compounding returns: lower Planner cost, higher accuracy, and a more predictable overall computa-tion profile. Memorizer-0.6B reduces total PFLOPs by roughly 44% relative to Memorizer-4B, but at the cost of a 22.6% point accuracy drop—a dispro-portionate exchange that makes aggressive scale reduction an unfavorable operating point in prac-tice. 
+
+A.4.3 Memory Consolidation Keeps Planner Context Compact and Clean 
+
+To isolate the effect of the Operator’s asynchronous consolidation mechanism, we evaluate ActiveMem (w/o Conso.) , a variant in which newly produced gists are appended directly to the existing shard content without any merging or deduplication. Ta-ble 9 compares this variant against the full Active-Mem on BrowseComp-Plus.             
+
+> System P. PFLOPs M. PFLOPs Tot. PFLOPs LasJ
+> ActiveMem (w/o Conso.) 767.74 1543.48 2311.22 0.720 ActiveMem 606.04 1477.56 2144.55 0.786
+
+Table 9: Ablation on memory consolidation on BrowseComp-Plus (LasJ). 
+
+Without consolidation, Memory Shards grow monotonically as each newly produced gist is ap-pended verbatim to the existing content. Over the course of a long-horizon task, this causes the gist loaded back into the Planner’s context to become increasingly verbose and redundant. Two conse-quences follow. First, Planner PFLOPs rise notably (606 → 768, +26.5%), since the Planner must at-tend over a longer and noisier memory context at each reasoning step—a direct manifestation of the quadratic attention cost that consolidation is designed to suppress. Second, the accumulated noise degrades reasoning quality: the Planner re-ceives overlapping or conflicting statements across appended gists, making it harder to identify the most task-relevant signals, which leads to a 6.6 percentage point drop in LasJ (0.786 → 0.720). These results highlight the dual role of consol-idation in ActiveMem. Beyond simply reducing memory footprint, consolidation actively distills ac-cumulated evidence into a compact, non-redundant form, ensuring that the Planner always operates over a clean and bounded context regardless of how many documents have been processed. This property is precisely what allows ActiveMem to maintain both high accuracy and low Planner cost as task length increases. 
+
+A.4.4 Memory Hit Rate as a Search Saturation Indicator                         
+
+> Step Range Easy Medium Hard
+> 1–3 3.1 2.0 3.8 4–6 5.4 4.8 6.3 7–10 7.4 6.8 7.7 11–15 7.5 7.8 8.7 16–20 6.7 9.3 8.4 21–30 5.0 10.2 9.4 31–50 —11.2 10.7
+
+Table 10: Memory hit rate (%) by step range and diffi-culty level. 
+
+The three difficulty levels exhibit qualitatively different memory hit trajectories, as shown in Ta-ble 10. For easy cases, the hit rate peaks at steps 7–10 ( ≈7.5% ) and subsequently declines to 5–6%. Easy cases average only 8.8 steps, so cases that reach step 16+ are a self-selected subset that failed to find an answer early. At this point, having ex-hausted the small cluster of documents relevant to a straightforward question, the agent is forced to issue increasingly peripheral queries; these queries return documents far from the previously visited region, producing more first-seen documents rather than memory hits, and the hit rate consequently falls. For medium cases, the hit rate rises mono-tonically from 2.0% to 11.2% with no reversal, re-flecting an agent that has sufficient steps to saturate its local retrieval space while repeatedly circling nearby documents. Hard cases also rise monoton-ically but tell a more nuanced story. The natural hypothesis is that harder questions cause the agent to fail to find key information, fall back on repeated searches, and thereby accumulate higher memory hits. While this mechanism is valid, Table 10 re-veals an important qualification: hard cases start slightly above medium at steps 1–10, yet fall below medium thereafter. This is because the inherent nature of hard questions prevents the agent from ac-cumulating a dense cluster of retrieved documents around any single topic—the search space is too broad and the relevant signals too sparse for re-peated queries to converge on the same small set of documents. As a result, hard-case agents oper-Question: A 2014 wedding with 4 constraints: 
+
+#1 DJ recognized as top state wedding DJ in a 2023 article 
+
+#2 Venue capacity ≤ 250 guests (as of 2023) 
+
+#3 Photographer was a husband -and -wife team 
+
+#4 Invitation printer founded in the mid -1980s 
+
+→ Who designed the invitations? 
+
+Step 1 query: 2014 wedding DJ top wedding DJ state 2023 article 
+
+query: husband wife photographer team wedding 2014 
+
+Memorizer Generating Gists in Parallel / Memory Hit 
+
+doc 4059(not seen) à Memorizer #0 :
+
+Lists top wedding DJs in Charlotte NC, including Split Second Sound, DJ Will Gill... 
+
+doc 67764(not seen) à Memorizer #15 :
+
+Rach Loves Tray is a husband -and -wife team 
+
+…… Shard #0 
+
+Doc 4059: <gist: Top DJs> 
+
+Shard #14 
+
+(Empty) 
+
+Shard #15 
+
+Doc 67764: <gist: R.L.T. 
+
+husband and wife team> 
+
+Reasoning Context 
+
+Doc 4059: Lists top wedding DJs in Charlotte NC, including Split Second Sound, DJ 
+
+Will Gill... 
+
+Doc 67764: Rach Loves Tray is a husband -and -wife team 
+
+Step 2~10 Explored multiple false leads, yet none of them matched all 
+
+Iteratively narrow the search space. Each candidate matches one or two 
+
+constraints but fails the rest — Steve Foltz lacks 2023 recognition; Mike & 
+
+Samantha's wedding has no verifiable top -state DJ; Laura Lonsdale works on 
+
+birthday cards, not wedding invitations. 
+
+Step 11 query: Mike Samantha 2014 wedding DJ venue invitations 
+
+Memorizer Generating Gists in Parallel/ Memory Hit 
+
+doc 76272(not seen) à Memorizer #14 :
+
+A wedding at Champagne Manor featured DJ Split Second Sound and invitations by Demi Mabry 
+
+…… 
+
+…… Shard #0 
+
+Doc 4059: <gist: Top DJs> 
+
+Shard #14 
+
+Doc 76272: <gist: invitation 
+
+Demi Mabry> 
+
+Shard #15 
+
+Doc 67764: <gist: R.L.T. 
+
+husband and wife team> 
+
+Reasoning Context 
+
+Doc 76272:A wedding at Champagne Manor featured DJ Split Second Sound and invitations by Demi Mabry 
+
+Step 12 
+
+query: Champagne Manor capacity 
+
+query: Demi Mabry wedding photographer printer 
+
+query: DJ Split Second Sound top DJ 2023 
+
+Memorizer Generating Gists in Parallel / Memory Hit 
+
+doc 78784(not seen) à Memorizer #0 :
+
+Champagne Manor can accommodate up to 250 guests for weddings 
+
+doc 76272(op.judge: seen, but new query ) à Memorizer #14 :
+
+This wedding invitation printed through Copy Express, photographed by Rach Loves Tray 
+
+doc 4059( memory shard #0 hit!) 
+
+doc xxxxx à Memorizer #5… 
+
+…… Shard #0 
+
+Doc 4059: <gist: Top DJs >
+
+Doc 78784: <gist: venue> 
+
+Shard #15 
+
+Doc 67764: <gist: R.L.T. 
+
+husband and wife team> 
+
+Reasoning Context 
+
+Doc 4059: Lists top wedding DJs in Charlotte NC, including Split Second Sound, DJ 
+
+Will Gill... 
+
+Doc 78784: Champagne Manor can accommodate up to 250 guests for weddings 
+
+Doc 76272: This wedding invitation printed through Copy Express, photographed by 
+
+Rach Loves Tray 
+
+Shard #14 
+
+Doc 76272: <gist: invitation Demi 
+
+Mabry, R.L.T, Copy Exp .>
+
+op.conso 
+
+Step 13 
+
+query: Copy Express founded time 1980s 
+
+query: Rach Loves Tray photographer husband and wife 
+
+query: Demi Mabry Wedding 1980s printer details 
+
+Memorizer Generating Gists in Parallel / Memory Hit 
+
+doc 53878(not seen) à Memorizer #0 :
+
+Copy Express of Charlotte, Inc. opened in 1986 
+
+doc 76272(op.judge: seen, and similar query) à memory shard#14 hit! :
+
+doc 67764(op.judge: seen, and similar query) à memory shard#0 hit!: 
+
+doc xxxxx à Memorizer #3… 
+
+…… Shard #0 
+
+Doc 4059: <gist: Top DJs >
+
+Doc 78784: <gist: venue> 
+
+Shard #15 
+
+Doc 67764: <gist: R.L.T. 
+
+husband and wife team> 
+
+Reasoning Context 
+
+Doc 53878: Copy Express of Charlotte, Inc. opened in 1986 
+
+Doc 76272: A wedding at Champagne Manor featured DJ Split Second Sound, 
+
+invitation designed by Demi Mabry and printed through Copy Express, 
+
+photographed by Rach Loves Tray. 
+
+Doc 67764: Rach Loves Tray is a husband -and -wife team 
+
+Shard #14 
+
+Doc 76272: <gist: invitation Demi 
+
+Mabry, R.L.T, Copy Exp .>
+
+Step 14 The evidence is enough, final check and submit the answer 
+
+Thinking Process 
+
+I have gathered substantial evidence: - Demi Mabry’s wedding was held at Champagne 
+
+Manor - The wedding had Split Second Sound as DJ (noted as top Charlotte wedding DJ in 
+
+North Carolina) - Rach Loves Troy (husband -and -wife team) was the photographer -
+
+Champagne Manor can accommodate up to 250 guests - Copy Express printed the 
+
+invitations (opened in 1986, mid -1980s) - Demi Mabry designed the invitations The question 
+
+asks for the designer of the invitations, which is Demi Mabry. So I should submit the answer 
+
+Answer: Demi Mabry Question: 
+
+In 2022, before December, what does "R" stand for in the three core 
+
+policies of the content type violated in the public logs on the Legume 
+
+Wikipedia page? 
+
+Step 1 query: Legume Wikipedia page 2022 violation public logs 
+
+Memorizer Generating Gists in Parallel / Memory Hit 
+
+web_496d(not seen) à Memorizer #0: 
+
+This page discusses Wikipedia policy violations, AI bans, and related topics. 
+
+web_xxxx(not seen) à Memorizer #3… 
+
+…… Shard #0 
+
+web_496d : <gist: wiki policy 
+
+violations> 
+
+Reasoning Context 
+
+web_496d: This page discusses Wikipedia policy violations, AI bans, 
+
+and related topics. 
+
+Shard #14 
+
+(empty) 
+
+Shard #15 
+
+(empty) 
+
+Step 2 query: Wikipedia three core content policies R stands for 
+
+Memorizer Generating Gists in Parallel / Memory Hit 
+
+web_9a6b(not seen) à Memorizer #0: 
+
+The three Wikipedia core content policies are NPOV, Verifiability, and No Original Research; R stands for No 
+
+Original Research. 
+
+web_bbd8(not seen) à Memorizer #14: 
+
+Wikipedia's three core content policies are Verifiability, Neutral Point of View, and a ban on Original Research (R). 
+
+…… 
+
+Shard #0 
+
+web_496d : <gist: wiki policy 
+
+violations> 
+
+web_9a6b: <gist: R is Research> 
+
+Shard #14 
+
+web_bbd8 : <gist: R stand for 
+
+Research> 
+
+Shard #15 
+
+(empty) 
+
+Reasoning Context 
+
+web_9a6b: The three Wikipedia core content policies are NPOV, Verifiability, and No Original 
+
+Research; R stands for No Original Research. 
+
+web_bbd8: Wikipedia's three core content policies are Verifiability, Neutral Point of View, and a 
+
+ban on Original Research (R). 
+
+Step 3 The evidence is enough, final check and submit the answer 
+
+Thinking Process 
+
+The search results indicate that the three core content policies of Wikipedia are: Neutral Point of View (NPOV), 
+
+Verifiability, No Original Research. The "R" in the context of these policies stands for "Research" (specifically 
+
+"No Original Research"). Let me verify this is what the question is asking about — the "R" in the three core 
+
+policies related to content violations on the Legume Wikipedia page in 2022 before December. The three core 
+
+content policies are often abbreviated, and "R" would stand for "Research" as in "No Original Research." 
+
+Answer: Research Figure 5: Case study traces for a BrowseComp-Plus instance (top) and a GAIA instance (bottom) . Each box shows the query issued, the Memorizer-produced gist or Memory Hit result, and the resulting Reasoning Context passed to the Planner. The BrowseComp-Plus question involves multiple interrelated constraints and requires a broader, longer search trajectory to satisfy all of them simultaneously. The GAIA question has fewer constraints and converges to the answer in far fewer steps. 
+
+ate within a wide but diffuse retrieval space, only occasionally re-encountering the same documents, which keeps the hit rate from rising as steeply as in medium cases where the agent circles more tightly around a narrower topic area. These patterns together suggest that memory hit rate can serve as a practical search saturation in-dicator. A low hit rate in early steps reflects an effective exploration phase in which the agent is discovering new documents at each turn. A rising hit rate in later steps signals that the locally reach-able document set is approaching exhaustion and the agent has begun cycling within already-visited content. When the per-step hit rate exceeds ≈10 –
+
+12% for several consecutive steps, continued search is unlikely to yield further marginal benefit, and an early-stopping criterion could be triggered accord-ingly. We leave the formal design and evaluation of such a mechanism to future work. 
+
+A.4.5 Case Study 
+
+We present two representative cases from BrowseComp-Plus and GAIA to illustrate the work-ing pipeline of ActiveMem. GAIA questions typi-cally involve fewer and more directly verifiable con-straints, allowing ActiveMem to converge to an an-swer within a small number of steps. BrowseComp-Plus questions are substantially harder: they in-volve multiple interrelated constraints that must be jointly satisfied, requiring longer reasoning trajec-tories and a larger number of retrieved documents before sufficient evidence accumulates. 
+
+BrowseComp-Plus. Figure 5 (top) traces the tra-jectory for a question asking for the designer of wedding invitations from a 2014 ceremony, sub-ject to four constraints: the DJ was recognized as top state wedding DJ in a 2023 article, the venue accommodates up to 250 guests, the photographer was a husband-and-wife team, and the invitation printer was founded in the mid-1980s. At Step 1, two parallel queries initialize two shards: doc4059 (Charlotte NC top DJ list includ-ing Split Second Sound) and doc67764 (a husband-and-wife photo team). Steps 2–10 explore mul-tiple false leads—Steve Foltz lacks 2023 recogni-tion; Mike & Samantha’s wedding has no verifiable top-state DJ; Laura Lonsdale works on birthday cards—and none satisfies all four constraints si-multaneously. The pivot occurs at Step 11, when doc76272 is retrieved and distilled into: “A wed-ding at Champagne Manor featured DJ Split Sec-ond Sound and invitations by Demi Mabry,” linking the DJ, venue, and answer candidate in one gist. At Step 12, the Similarity Judge returns SIMILAR for doc4059, triggering a Memory Hit that confirms Split Second Sound’s top-state recognition without re-invoking the Memorizer; for doc76272 the Judge returns NEW , so the Memorizer re-distills and the Operator consolidates the result into Shard #14. At Step 13, a fresh retrieval confirms Copy Express opened in 1986, and a Memory Hit on doc67764 confirms Rach Loves Troy as the husband-and-wife photographer. All four constraints are satisfied, and the Planner submits Demi Mabry at Step 14. 
+
+GAIA. Figure 5 (bottom) traces a two-hop ques-tion: what does “R” stand for in the three core policies of the content type violated in the Legume Wikipedia page logs before December 2022? At Step 1, the query “Legume Wikipedia page 2022 violation public logs” retrieves a page in-dicating that the violation concerned Wikipedia’s core content policies, identifying the content type needed for the second hop. At Step 2, the query 
+
+“Wikipedia three core content policies R stands for” 
+
+retrieves two independent documents that both identify “R” as “Research” (No Original Research). The Planner submits Research after a brief verifica-tion pass, completing the trajectory in three steps with two fresh retrievals and no Memory Hits. 
+
+A.5 The Use of AI Assistants 
+
+In this paper, AI assistants (ChatGPT and Claude) were used exclusively for language polishing, in-cluding grammar correction, phrasing, and stylistic refinement. They were not used to generate sci-entific content such as research ideas, methods, experiments, or related work. No confidential, per-sonal, or proprietary information was shared with the models. The authors take full responsibility for the scientific content, which was entirely authored and verified by the authors.

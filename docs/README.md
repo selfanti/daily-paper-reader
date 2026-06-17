@@ -6,71 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-16
-- 运行时间：2026-06-16 22:59:17 UTC
+- 最新运行日期：2026-06-17
+- 运行时间：2026-06-17 22:21:23 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日推荐17篇论文，精读6篇，重点聚焦LLM智能体训练与安全可扩展强化学习。最值得关注的两篇9分精读分别提出回顾性进度感知自我精炼训练方法和可证明安全且可扩展的强化学习框架。建议优先精读这两篇论文，深入理解智能体自我改进与安全强化学习的前沿思路。
-- 详情：[/202606/16/README](/202606/16/README)
+1) 今日精选17篇论文，聚焦LLM长程推理与记忆优化，精读两篇高分论文均达9.0/10。  
+2) 最值得关注的两个方向：分布式主动记忆框架（ActiveMem）与观测安全约束下的记忆保留方法，均针对长期语言智能体设计。  
+3) 建议优先精读这两篇9分论文，深入理解如何在推理中动态管理记忆，可结合速读列表中的多智能体交互与弹性查询策略进行拓展。
+- 详情：[/202606/17/README](/202606/17/README)
 
 ### 精读区论文标签
-1. [Retrospective Progress-Aware Self-Refinement for LLM Agent Training](/202606/16/2606.14302v1-retrospective-progress-aware-self-refinement-for-llm-agent-training)  
+1. [ActiveMem: Distributed Active Memory for Long-Horizon LLM Reasoning](/202606/17/2606.10532v1-activemem-distributed-active-memory-for-long-horizon-llm-reasoning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：基于回溯的进度感知智能体自我精炼方法
-2. [Provably Safe, Yet Scalable Reinforcement Learning](/202606/16/2606.14536v1-provably-safe-yet-scalable-reinforcement-learning)  
+   evidence：面向LLM智能体的分布式主动记忆架构
+2. [Learning What to Remember: Observability-Safe Memory Retention via Constrained Optimization for Long-Horizon Language Agents](/202606/17/2606.10616v3-learning-what-to-remember-observability-safe-memory-retention-via-constrained-optimization-for-long-horizon-language-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向自主智能体的可证明安全强化学习框架
-3. [HiMPO: Hindsight-Informed Memory Policy Optimization for Less-Entangled Credit in Long-Horizon Agents](/202606/16/2606.16285v1-himpo-hindsight-informed-memory-policy-optimization-for-less-entangled-credit-in-long-horizon-agents)  
+   evidence：长时程语言智能体的记忆保留优化
+3. [A Gradient Perspective on RLVR Stability and Winner Advantage Policy Optimization](/202606/17/2606.16154v1-a-gradient-perspective-on-rlvr-stability-and-winner-advantage-policy-optimization)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：基于后见之明的记忆策略优化与信用分配
-4. [Tensor-Coord: Algebraic Decomposition of Joint Plan Tensors for Conflict-Free Multi-Agent LLM Planning](/202606/16/2606.16478v1-tensor-coord-algebraic-decomposition-of-joint-plan-tensors-for-conflict-free-multi-agent-llm-planning)  
+   evidence：提出胜者优势策略优化（WAPO）策略梯度方法用于语言模型推理训练
+4. [SEAGym: An Evaluation Environment for Self-Evolving LLM Agents](/202606/17/2606.17546v1-seagym-an-evaluation-environment-for-self-evolving-llm-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过张量分解实现多智能体强化学习协作
-5. [Context-Aware RL for Agentic and Multimodal LLMs](/202606/16/2606.17053v1-context-aware-rl-for-agentic-and-multimodal-llms)  
+   evidence：自我进化LLM智能体的评估环境
+5. [OPD-Evolver: Cultivating Holistic Agent Evolver via On-Policy Distillation](/202606/17/2606.17628v1-opd-evolver-cultivating-holistic-agent-evolver-via-on-policy-distillation)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：上下文感知强化学习用于智能体大模型
-6. [How Task Structure Limits Multi-Agent Success: An Information-Theoretic Analysis](/202606/16/2606.13733v1-how-task-structure-limits-multi-agent-success-an-information-theoretic-analysis)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：多智能体成功限制的信息论分析
+   evidence：通过在线策略蒸馏实现具有记忆层次结构的自我进化智能体
+6. [EnvRL: Learn from Environment Dynamics in Agentic Reinforcement Learning](/202606/17/2606.17680v1-envrl-learn-from-environment-dynamics-in-agentic-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：从环境动力学中学习以改进智能体强化学习
 
 ### 速读区论文标签
-1. [AgentSpec: Understanding Embodied Agent Scaffolds Through Controlled Composition](/202606/16/2606.14674v1-agentspec-understanding-embodied-agent-scaffolds-through-controlled-composition)  
+1. [Graph-based Target Back-Propagation for Context Adaptation in Multi-LLM Agentic Systems](/202606/17/2606.14155v1-graph-based-target-back-propagation-for-context-adaptation-in-multi-llm-agentic-systems)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：具身智能体脚手架的模块化框架，包含记忆和推理
-2. [PACT: Privileged Trace Co-Training for Multi-Turn Tool-Use Agents](/202606/16/2606.16215v1-pact-privileged-trace-co-training-for-multi-turn-tool-use-agents)  
+   evidence：多LLM智能体系统的上下文自适应框架
+2. [Elastic Queries Reinforcement Learning: Self-Aware Policy Execution for VLA Models](/202606/17/2606.14375v1-elastic-queries-reinforcement-learning-self-aware-policy-execution-for-vla-models)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：使用强化学习信号的多轮工具使用智能体的特权轨迹共训练
-3. [HarnessBridge: Learnable Bidirectional Controller for LLM Agent Harness](/202606/16/2606.12882v1-harnessbridge-learnable-bidirectional-controller-for-llm-agent-harness)  
+   evidence：面向VLA模型的自适应策略执行的强化学习
+3. [Evolutionary Bilevel Reward Shaping for Generalization in Reinforcement Learning](/202606/17/2606.16236v1-evolutionary-bilevel-reward-shaping-for-generalization-in-reinforcement-learning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：进化双层奖励塑造提升RL泛化能力
+4. [Rethinking Groups in Critic-Free RLVR](/202606/17/2606.17250v1-rethinking-groups-in-critic-free-rlvr)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：无评论家RLVR中提出负标记过滤实现单回放训练
+5. [Resilient Consensus in Agentic AI](/202606/17/2606.15024v1-resilient-consensus-in-agentic-ai)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：可学习的智能体-环境交互控制器
-4. [HarnessX: A Composable, Adaptive, and Evolvable Agent Harness Foundry](/202606/16/2606.14249v1-harnessx-a-composable-adaptive-and-evolvable-agent-harness-foundry)  
+   evidence：多智能体共识与协调，应对对抗性LLM智能体
+6. [STRIDE: Strategic Trajectory Reasoning via Discriminative Estimation for Verifiable Reinforcement Learning](/202606/17/2606.15866v1-stride-strategic-trajectory-reasoning-via-discriminative-estimation-for-verifiable-reinforcement-learning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：智能体运行时中的可组合记忆架构
-5. [Trust Between AI Agents: Measuring Formation, Breakage, and Recovery, with Implications for Governing Multi-Agent Systems](/202606/16/2606.14923v1-trust-between-ai-agents-measuring-formation-breakage-and-recovery-with-implications-for-governing-multi-agent-systems)  
+   evidence：基于判别轨迹推理的可验证强化学习
+7. [Diffusion Offline Reinforcement Learning for Fair and Energy-Efficient UAV-Assisted Wireless Networks](/202606/17/2606.16331v1-diffusion-offline-reinforcement-learning-for-fair-and-energy-efficient-uav-assisted-wireless-networks)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：多智能体合作系统中的信任度量
-6. [LatentGym: A Testbed For Cross-Task Experiential Learning With Controllable Latent Structure](/202606/16/2606.15306v1-latentgym-a-testbed-for-cross-task-experiential-learning-with-controllable-latent-structure)  
+   evidence：扩散离线强化学习用于无人机自主决策
+8. [PathRouter: Aligning Rewards with Retrieval Quality in Agentic Graph Retrieval-Augmented Generation](/202606/17/2606.16409v1-pathrouter-aligning-rewards-with-retrieval-quality-in-agentic-graph-retrieval-augmented-generation)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：跨任务经验学习以实现持续学习智能体
-7. [CoAgent: Concurrency Control for Multi-Agent Systems](/202606/16/2606.15376v1-coagent-concurrency-control-for-multi-agent-systems)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：多智能体LLM系统的并发控制
-8. [Reward Hacking in Language Model Agents: Revisiting AI Safety Gridworlds](/202606/16/2606.15385v1-reward-hacking-in-language-model-agents-revisiting-ai-safety-gridworlds)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：语言模型智能体中的RL奖励黑客问题
-9. [Discovering Interpretable Multi-Parameter Control Policies for Evolutionary Algorithms Using Deep Reinforcement Learning](/202606/16/2606.10129v1-discovering-interpretable-multi-parameter-control-policies-for-evolutionary-algorithms-using-deep-reinforcement-learning)  
+   evidence：面向智能体图检索增强生成的路径感知强化学习
+9. [Orchestra-o1: Omnimodal Agent Orchestration](/202606/17/2606.13707v1-orchestra-o1-omnimodal-agent-orchestration)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：深度RL用于进化算法中可解释的多参数控制
-10. [ARMOR-MAD: Adaptive Routing for Heterogeneous Multi-Agent Debate in Large Language Model Reasoning](/202606/16/2606.13197v1-armor-mad-adaptive-routing-for-heterogeneous-multi-agent-debate-in-large-language-model-reasoning)  
+   evidence：全模态智能体编排实现多智能体协作
+10. [RL-Index: Reinforcement Learning for Retrieval Index Reasoning](/202606/17/2606.16316v1-rl-index-reinforcement-learning-for-retrieval-index-reasoning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：异构多智能体辩论的自适应路由
-11. [Communication Policy Evolution for Proactive LLM Agents](/202606/16/2606.14314v1-communication-policy-evolution-for-proactive-llm-agents)  
+   evidence：将索引推理建模为强化学习问题，构建智能体索引框架
+11. [Can LLM Agents Infer World Models? Evidence from Agentic Automata Learning](/202606/17/2606.16576v1-can-llm-agents-infer-world-models-evidence-from-agentic-automata-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：主动LLM智能体的通信政策演化
+   evidence：LLM智能体通过交互学习世界模型
 
 
 <div class="dpr-home-promo-card">
