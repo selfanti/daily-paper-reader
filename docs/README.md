@@ -6,71 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-18
-- 运行时间：2026-06-18 21:32:04 UTC
+- 最新运行日期：2026-06-19
+- 运行时间：2026-06-19 20:37:22 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日聚焦强化学习前沿：精读高分论文涵盖摊销离散采样与言语强化学习闭环反馈，速读关注元学习与自主智能体方向。两篇9.0分精读文章分别提出PPO优化离散采样策略及经验提取与治理框架，是今日最值得深读的内容。建议优先研读这两篇核心论文，理解强化学习在采样效率与反馈机制上的突破，再拓展至元学习与神经符号智能体等应用。
-- 详情：[/202606/18/README](/202606/18/README)
+今日聚焦多智能体安全强化学习与组合设计，精读两篇高分论文。
+最值得关注：TRIDENT打破安全-物理耦合实现可证明安全；SIGMA通过技能-事件图实现组合多智能体设计。
+普通读者可延伸探索基于因果对象模型的MCTS规划与LLM驱动的长期记忆压缩技术。
+- 详情：[/202606/19/README](/202606/19/README)
 
 ### 精读区论文标签
-1. [Proximal Policy Optimization for Amortized Discrete Sampling](/202606/18/2606.15793v1-proximal-policy-optimization-for-amortized-discrete-sampling)  
+1. [TRIDENT: Breaking the Hybrid-Safety-Physics Coupling for Provably Safe Multi-Agent Reinforcement Learning](/202606/19/2606.18308v1-trident-breaking-the-hybrid-safety-physics-coupling-for-provably-safe-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：将近端策略优化应用于GFlowNet进行离散采样
-2. [Closing the Feedback Loop: From Experience Extraction to Insight Governance in Verbal Reinforcement Learning](/202606/18/2606.17591v1-closing-the-feedback-loop-from-experience-extraction-to-insight-governance-in-verbal-reinforcement-learning)  
+   evidence：可证明安全的多智能体强化学习，处理混合动作与物理动力学
+2. [SIGMA: Skill-Incidence Graphs for Compositional Multi-Agent Design](/202606/19/2606.19758v1-sigma-skill-incidence-graphs-for-compositional-multi-agent-design)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：言语强化学习中的记忆管理，支持智能体自我进化与适应
-3. [EvolveNav: Proactive Preflection and Self-Evolving Memory for Zero-Shot Object Goal Navigation](/202606/18/2606.18235v1-evolvenav-proactive-preflection-and-self-evolving-memory-for-zero-shot-object-goal-navigation)  
+   evidence：基于技能关联图的组合式多智能体设计
+3. [AtomMem: Building Simple and Effective Memory System for LLM Agents via Atomic Facts](/202606/19/2606.19847v1-atommem-building-simple-and-effective-memory-system-for-llm-agents-via-atomic-facts)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：零样本目标导航中的自我进化记忆框架
-4. [What Must Generalist Agents Remember?](/202606/18/2606.18746v1-what-must-generalist-agents-remember)  
+   evidence：基于原子事实的LLM智能体长期记忆系统
+4. [MetaResearcher: Scaling Deep Research via Self-Reflective Reinforcement Learning in Adversarial Virtual Environments](/202606/19/2606.19893v1-metaresearcher-scaling-deep-research-via-self-reflective-reinforcement-learning-in-adversarial-virtual-environments)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通用智能体为近最优表现必须记忆什么的形式化分析
-5. [R2D-RL: A RoboCup 2D Soccer Environment for Multi-Agent Reinforcement Learning](/202606/18/2606.18786v1-r2d-rl-a-robocup-2d-soccer-environment-for-multi-agent-reinforcement-learning)  
+   evidence：在对抗环境中通过自我反思强化学习实现智能体自我进化
+5. [Connect the Dots: Training LLMs for Long-Lifecycle Agents with Cross-Domain Generalization Via Reinforcement Learning](/202606/19/2606.20002v1-connect-the-dots-training-llms-for-long-lifecycle-agents-with-cross-domain-generalization-via-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：用于机器人足球的多智能体强化学习环境，包含合作与对抗交互
-6. [EvoArena: Tracking Memory Evolution for Robust LLM Agents in Dynamic Environments](/202606/18/2606.13681v2-evoarena-tracking-memory-evolution-for-robust-llm-agents-in-dynamic-environments)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：基于补丁的记忆范式EvoMem，追踪记忆演变
+   evidence：强化学习驱动长生命周期智能体自我进化
+6. [Hierarchical Control in Multi-Agent Games: LLM-based Planning and RL Execution](/202606/19/2606.20014v1-hierarchical-control-in-multi-agent-games-llm-based-planning-and-rl-execution)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：多智能体强化学习与分层大模型规划
 
 ### 速读区论文标签
-1. [Knowledge Reutilization in Meta-Reinforcement Learning](/202606/18/2606.18132v1-knowledge-reutilization-in-meta-reinforcement-learning)  
+1. [MemRefine: LLM-Guided Compression for Long-Term Agent Memory](/202606/19/2606.13177v1-memrefine-llm-guided-compression-for-long-term-agent-memory)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：元强化学习通过知识重利用实现快速适应
-2. [Learning Red Agent Policy from Observations for Neurosymbolic Autonomous Cyber Agents](/202606/18/2606.18223v1-learning-red-agent-policy-from-observations-for-neurosymbolic-autonomous-cyber-agents)  
+   evidence：基于LLM引导的长期智能体记忆压缩
+2. [Causal Object-Centric Models for Planning with Monte Carlo Tree Search](/202606/19/2606.14418v1-causal-object-centric-models-for-planning-with-monte-carlo-tree-search)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：强化学习用于自主网络防御智能体，结合模仿学习
-3. [Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards](/202606/18/2606.18810v1-learning-from-own-solutions-self-conditioned-credit-assignment-for-reinforcement-learning-with-verifiable-rewards)  
+   evidence：基于对象中心蒙特卡洛树搜索的模型基强化学习
+3. [Do as the Romans Do: Learning Universal Behaviors from Heterogeneous Agents](/202606/19/2606.18537v1-do-as-the-romans-do-learning-universal-behaviors-from-heterogeneous-agents)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：带有自条件信用分配的强化学习
-4. [Skill-MAS: Evolving Meta-Skill for Automatic Multi-Agent Systems](/202606/18/2606.18837v1-skill-mas-evolving-meta-skill-for-automatic-multi-agent-systems)  
+   evidence：通过通用奖励推断从异构智能体学习通用行为
+4. [WorldLines: Benchmarking and Modeling Long-Horizon Stateful Embodied Agents](/202606/19/2606.18847v1-worldlines-benchmarking-and-modeling-long-horizon-stateful-embodied-agents)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：自动多智能体系统的可进化元技能
-5. [The Illusion of Multi-Agent Advantage](/202606/18/2606.13003v1-the-illusion-of-multi-agent-advantage)  
+   evidence：智能体记忆架构
+5. [Playful Agentic Robot Learning](/202606/19/2606.19419v1-playful-agentic-robot-learning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：通过自我导向的趣味游戏实现持续技能习得和智能体进化
+6. [From Trainee to Trainer: LLM-Designed Training Environment for RL with Multi-Agent Reasoning](/202606/19/2606.17682v1-from-trainee-to-trainer-llm-designed-training-environment-for-rl-with-multi-agent-reasoning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：质疑多智能体系统优越性，与协调评估相关
-6. [Video-Based Optimal Transport for Feedback-Efficient Offline Preference-Based Reinforcement Learning](/202606/18/2606.16856v1-video-based-optimal-transport-for-feedback-efficient-offline-preference-based-reinforcement-learning)  
+   evidence：LLM设计的强化学习训练环境，结合多智能体推理
+7. [A Neuro-Symbolic Approach to Strategy Synthesis for Strategic Logics](/202606/19/2606.17962v1-a-neuro-symbolic-approach-to-strategy-synthesis-for-strategic-logics)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：基于视频最优传输的离线偏好强化学习，用于高效奖励学习
-7. [Distributed General-Purpose Agent Networks: Architecture, Key Mechanisms, and Prototypes](/202606/18/2606.17368v1-distributed-general-purpose-agent-networks-architecture-key-mechanisms-and-prototypes)  
+   evidence：面向多智能体系统的神经符号策略合成
+8. [Beyond Reward Engineering: A Data Recipe for Long-Context Reinforcement Learning](/202606/19/2606.18831v1-beyond-reward-engineering-a-data-recipe-for-long-context-reinforcement-learning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：分布式多智能体网络中的协调与合作
-8. [Environment-Grounded Automated Prompt Optimization for LLM Game Agents](/202606/18/2606.17838v1-environment-grounded-automated-prompt-optimization-for-llm-game-agents)  
+   evidence：面向长上下文强化学习的以数据为中心的方法，使用GRPO策略梯度
+9. [RODS: Reward-Driven Online Data Synthesis for Multi-Turn Tool-Use Agents](/202606/19/2606.19047v1-rods-reward-driven-online-data-synthesis-for-multi-turn-tool-use-agents)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：通过进化循环自动优化提示实现智能体自进化
-9. [EvoBrowseComp: Benchmarking Search Agents on Evolving Knowledge](/202606/18/2606.13120v1-evobrowsecomp-benchmarking-search-agents-on-evolving-knowledge)  
+   evidence：奖励驱动的在线数据合成，根据智能体能力边界自适应生成训练数据
+10. [Autonomous Event-Driven Multi-Agent Orchestration for Enterprise AI at Scale](/202606/19/2606.20058v1-autonomous-event-driven-multi-agent-orchestration-for-enterprise-ai-at-scale)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：基于三代理协作的搜索代理基准
-10. [Self-Evolving Visual Questioner](/202606/18/2606.13929v1-self-evolving-visual-questioner)  
+   evidence：事件驱动的多智能体编排任务管理
+11. [Optimal Order of Multi-Agent and General Many-Body Systems](/202606/19/2606.20485v1-optimal-order-of-multi-agent-and-general-many-body-systems)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：无外部监督的自我进化框架
-11. [Maximum Entropy Inverse Reinforcement Learning for Mean-Field Games with Average Reward](/202606/18/2606.16759v1-maximum-entropy-inverse-reinforcement-learning-for-mean-field-games-with-average-reward)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：面向均值场博弈的逆强化学习，隐式涉及多智能体合作
+   evidence：分析多智能体系统秩序与协调的理论框架
 
 
 <div class="dpr-home-promo-card">

@@ -1,0 +1,520 @@
+Title: MemRefine: LLM-Guided Compression for Long-Term Agent Memory
+
+URL Source: https://arxiv.org/pdf/2606.13177v1
+
+Published Time: Fri, 12 Jun 2026 00:48:01 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# MEM REFINE : LLM-Guided Compression for Long-Term Agent Memory 
+
+Minjae Kim 1 Jinheon Baek 2 Soyeong Jeong 2 Sung Ju Hwang 2,31Korea University 2KAIST 3DeepAuto.ai 
+
+kmj200392@korea.ac.kr {jinheon.baek, starsuzi, sungju.hwang}@kaist.ac.kr 
+
+Abstract 
+
+Large language model (LLM) agents are in-creasingly expected to operate over long-term interactions, where information from past dia-logues must be preserved and recalled to sup-port future tasks. However, as interactions accu-mulate, the memory store grows without bound and fills with redundant entries that inflate stor-age cost and degrade retrieval by crowding out the most useful evidence. Furthermore, this is especially limiting on resource-constrained platforms with hard memory budgets, motivat-ing us to formulate storage-budgeted memory management , the task of keeping an already constructed memory store within a fixed bud-get while preserving information useful for fu-ture interactions. To this end, we then propose MEM REFINE , an LLM-guided framework that, since surface similarity poorly reflects factual value, uses similarity only to propose candidate pairs and defers delete, merge, and preserve de-cisions to an LLM judge based on factual con-tent, iterating until the budget is met. Across multiple memory frameworks and long-term conversation benchmarks, M EM REFINE con-sistently meets target budgets while preserving downstream performance and outperforming rule-based baselines under tight budgets. 
+
+1 Introduction 
+
+Large language model (LLM) agents are increas-ingly expected to operate over long-term interac-tions, where useful information may be distributed across extended sequences of past conversations, sessions, or events (Zhong et al., 2024; Maharana et al., 2024; Xu et al., 2025). To support such inter-actions, recent agent frameworks equip LLMs with persistent memory stores that record interaction histories and supply them as evidence for future tasks (Packer et al., 2023; Zhong et al., 2024; Xu et al., 2025; Chhikara et al., 2025; Wu et al., 2025). However, persistent memory creates a storage-efficiency problem that compounds over time. As 
+
+Figure 1: Conceptual overview of storage-budgeted memory management. As long-term interactions ac-cumulate, agent memory grows without bound and fills with redundant entries, inflating storage cost. M EM RE- 
+
+> FINE
+
+refines the already constructed store under a fixed storage budget, keeping it compact while preserving information useful for future retrieval. 
+
+the agent continues to interact, the memory store grows without bound and gradually fills with en-tries that overlap with or duplicate information al-ready captured elsewhere (Zhong et al., 2024; Xu et al., 2025; Fang et al., 2025; Liu et al., 2026), which both inflates storage cost (a particularly acute issue on resource-constrained platforms such as on-device deployments, where memory budgets are hard-bounded) and degrades retrieval, since the agent may surface near-duplicate or low-value en-tries. Motivated by this, we introduce a new task of storage-budgeted memory management , where agent memory needs to be continuously kept within a fixed budget while preserving information that remains useful for future interactions. Existing approaches to compression, however, do not target this setting. Session-level summariza-tion (Wang et al., 2025; Chen et al., 2025) com-presses raw conversation history before it enters memory rather than the resulting store, prompt or 1
+
+> arXiv:2606.13177v1 [cs.CL] 11 Jun 2026
+
+retrieved-context compression (Jiang et al., 2023; Xu et al., 2024; Jiang et al., 2024) operates at in-ference time on the evidence provided to the LLM, and structure-based graph pruning (Brin and Page, 1998) relies on criteria such as centrality that do not capture whether entries are factually redundant, complementary, or distinct. As a result, none of these approaches jointly reduces an already con-structed memory store to a target storage budget while reasoning about the factual content of entries. To address this, we introduce post-construction memory compression , where an already constructed memory store is reduced to a target storage bud-get while retaining information useful for down-stream tasks, and propose M EM REFINE , an LLM-guided framework that instantiates this task as a general module inserted after memory construction and before retrieval, without modifying the host memory pipeline. The central insight is that while surface-level similarity is useful for surfacing can-didate pairs of related memories, similarity alone is too weak to decide their fate, since two textually similar entries may carry redundant facts that can be removed, complementary facts that should be merged, or distinct facts that both warrant preserva-tion. Motivated by this, M EM REFINE uses similar-ity to propose candidate pairs but defers the com-pression decision itself to an LLM judge, which ex-amines each pair and decides, based on factual con-tent rather than surface wording, whether it should be deleted, merged, or preserved, until the memory store fits within the target storage budget. We validate M EM REFINE on two representa-tive memory frameworks with different represen-tations, namely an A-MEM-style graph memory of linked structured notes (Xu et al., 2025) and the Mem0 pipeline that constructs entries through an ingestion-and-update process (Chhikara et al., 2025), evaluated across multiple LLM judges and conversation lengths on standard and scaled LoCoMo-style benchmarks (Maharana et al., 2024). Across settings, M EM REFINE consistently meets the target storage budget while preserving down-stream performance under moderate compression, and degrades gracefully rather than collapsing un-der tighter budgets. Moreover, compared with rule-based baselines that replace the LLM judge with fixed similarity or graph-structure heuristics, M EM -REFINE is consistently more robust, supporting our hypothesis that compression decisions benefit from LLM-guided factual judgment even when similar-ity alone is sufficient for candidate selection. 
+
+2 Related Work 
+
+Long-Term Memory for LLM Agents Long-term memory has become a central component for dialogue systems and LLM agents that operate over information accumulated across extended interac-tions. Early work on long-term and multi-session dialogue showed that conversational agents need to store, update, and retrieve information from pre-vious sessions to maintain consistency over time (Xu et al., 2022; Bae et al., 2022; Jang et al., 2023). More recent work develops external memory sys-tems for LLM agents, including user-level mem-ory banks (Zhong et al., 2024), explicit read-write memory modules (Modarressi et al., 2023), virtual context management (Packer et al., 2023), struc-tured note graphs (Xu et al., 2025), and general-purpose memory layers for agents (Chhikara et al., 2025), alongside benchmarks that evaluate whether such systems can recall information over extended histories (Maharana et al., 2024; Wu et al., 2025). However, these efforts predominantly focus on 
+
+growing memory, namely how new information is added and recalled as interactions accumulate, leaving the inverse problem of shrinking an already constructed store under a storage budget largely un-addressed. In contrast, we treat post-construction storage reduction as a standalone task, compressing an existing memory store to fit a target budget while leaving the host memory framework unchanged. 
+
+Memory and Context Compression Reducing the cost of storing or processing long-term informa-tion has been studied in related but distinct settings. Session-level memory summarization compresses dialogue histories into compact summaries before they enter memory, for instance, through recur-sive summarization for long-term dialogue mem-ory (Wang et al., 2025) or compressive memory-enhanced dialogue generation (Chen et al., 2025). In the meantime, inference-time context compres-sion instead reduces the evidence or prompt fed to the LLM rather than the underlying store, includ-ing RECOMP for retrieved documents (Xu et al., 2024) and LLMLingua and LongLLMLingua for long-context prompts (Jiang et al., 2023, 2024). Structure-based reduction shrinks memory graphs offline via criteria such as centrality or connectivity (Brin and Page, 1998; Wang et al., 2026), while recent agent-memory frameworks improve mem-ory efficiency through filtering, consolidation, or lightweight updates interleaved with the construc-tion pipeline (Fang et al., 2025; Liu et al., 2026). 2None of these approaches, however, takes re-ducing an already constructed memory store to a fixed storage budget through reasoning about the factual content of its entries as the explicit ob-jective: summarization preempts memory rather than shrinking it, context compression touches the inference-time prompt rather than the store, and structure- or update-based methods either rely on criteria insensitive to content or remain coupled to the construction pipeline. In contrast, we fill this gap by directly compressing an existing mem-ory store toward a target storage budget, applying LLM-guided judgments over semantically related entries to decide whether each pair carries redun-dant facts to be removed, complementary facts to be merged, or distinct facts to be preserved, while remaining decoupled from the underlying memory construction and retrieval pipelines. 
+
+3 Method 
+
+We present M EM REFINE , an LLM-guided frame-work that compresses an already constructed agent memory store to a target storage budget while pre-serving information useful for future interactions. We first formalize storage-budgeted memory man-agement as a budget-constrained max-min program over query-agnostic memory compression, and in-troduce M EM REFINE , an LLM-guided pairwise refinement procedure that operationalizes it. 
+
+3.1 Problem Formulation Notation. Let M0 = {mi}ni=1 denote an already constructed memory store, where each entry mi
+
+pairs textual content with an embedding vector and, depending on the host memory framework, may additionally carry links, timestamps, meta-data, or other structured fields. We assume a down-stream pipeline that, given a query q and a memory store M , retrieves a context c = Ret (q; M ) and produces an answer a = LLM (q, c ). Downstream utility is then measured by a task-specific score 
+
+U (q, M ) ∈ [0 , 1] that compares a against a refer-ence answer (e.g., token-level F1 on factual recall). 
+
+Storage-Budgeted Memory Management. We formalize storage-budgeted memory management as the task of producing a compressed memory store M ′ from M0 that fits within a fixed storage budget while remaining as useful as possible across an unknown future query distribution over a query space Q. Formally, let F(M0) denote the set of memory stores reachable from M0 through edit operations, such as deletions and merges of en-tries, and let ρ ∈ (0 , 1] specify a storage budget ratio. Since the compressor cannot tailor M ′ to any particular query, we cast compression as a query-agnostic max-min program that hedges against the worst-case downstream query, defined as follows: 
+
+max   
+
+> M′∈F (M0)
+
+min  
+
+> q∈Q
+
+U (q, M ′)
+
+s.t. size( M ′) ≤ ρ · size( M0),
+
+(1) where the inner minimization picks out the worst-case query under M ′, so that the outer maximiza-tion is forced to retain enough evidence for every plausible q ∈ Q rather than only the easy ones 1.
+
+Query-Agnostic Compression. We note that di-rectly optimizing Equation 1 is intractable: Q is unobserved at compression time, U requires run-ning the full downstream pipeline for every can-didate M ′, and F(M0) is combinatorial in n. Yet the inner minimization itself implies a useful con-straint on removable content: since the compressor should hedge against every plausible query, it can only safely discard entries that are either redun-dant (already covered by some other entry in M ′)or non-factual (carrying no information useful to any plausible query). This contrasts with inference-time prompt or context compressors (Jiang et al., 2023; Xu et al., 2024; Jiang et al., 2024), which use the incoming query as a selection signal to prune evidence at the token level. In contrast, we treat compression as a preservation problem and oper-ationalize this view by replacing the intractable inner minimization with a tractable per-pair surro-gate, namely a judge (powered by an LLM) that, for each pair of semantically related entries, decides whether their content is redundant, complementary, or distinct, and authorizes only those edits that pre-serve facts not redundantly stored elsewhere. 
+
+3.2 MEM REFINE 
+
+Pairwise Refinement. A direct alternative to the per-pair surrogate above would be to assign an im-portance score to each memory entry independently and remove low-scoring entries until the budget is met. However, this fails to capture the central property that motivates Equation 1: the value of a memory entry is relational rather than independent,                   
+
+> 1Equivalently, the dual form min M′∈F (M0)size( M′)sub-ject to U(q, M ′)≥U(q, M 0)−ϵfor all q∈ Q expresses the same intent of reducing memory size while uniformly preserving downstream utility within a tolerance ϵ.
+
+3Figure 2: Overview of the M EM REFINE pipeline. Given an already constructed memory store, M EM REFINE 
+
+proposes semantically similar memory pairs and lets an LLM judge delete redundant, merge complementary, or preserve distinct memories, iterating until the store meets the storage budget. 
+
+since an entry may appear marginal in isolation yet become indispensable when combined with an-other; conversely, an entry may look high-value yet be safely removable because the same fact is already stored elsewhere in M ′. These two failure modes look identical under any per-entry criterion (e.g., embedding norm, recency, or graph central-ity), so single-entry scoring cannot tell when an edit removes a fact not redundantly covered elsewhere. To resolve this, M EM REFINE operates on pairs of semantically related memory entries: for any pair 
+
+(u, v ), the joint content decomposes exhaustively into a redundant case (the content of one is already covered by the other), a complementary case (each entry contributes content the other lacks), and a distinct case (the two entries assert unrelated facts), which directly induces a delete –merge –preserve ac-tion space matching the edits admitted by F(M0).Furthermore, M EM REFINE realizes this by iterat-ing over candidate pairs and selecting one action per pair until the budget is met or no unresolved candidate remains; Algorithm 1 summarizes the procedure, with each step detailed below. 
+
+Candidate Pair Selection. At each iteration, MEM REFINE selects the most similar pair of en-tries that has not yet been judged, denoted as fol-lows: (u, v ) ← arg max (u,v ) /∈S cos( eu, e v), where 
+
+eu denotes the embedding of mu and S caches pairs previously judged as PRESERVE to avoid re-visiting them in subsequent iterations. Notably, similarity here serves only as a proposal mecha-nism: it surfaces pairs whose content is most likely to overlap, but does not determine whether either entry should be removed. This separation matters because high cosine similarity can equally indicate redundancy, complementarity, or merely topical overlap, all of which call for different actions. 
+
+Algorithm 1 MEM REFINE compression procedure.                                                                           
+
+> Require: Input memory store M0, storage budget ratio ρ
+> Ensure: Compressed memory store M′
+> 1: B←ρ·size( M0)
+> 2: M′←M0
+> 3: S ← ∅ ▷Pairs judged as PRESERVE
+> 4: while size( M′)> B do
+> 5: (u, v )←MostSimilarPair (M′,S)
+> 6: if (u, v ) = ∅then
+> 7: break
+> 8: end if
+> 9: d←Judge (u, v )
+> 10: if d. action = DELETE then
+> 11: Remove d. target from M′
+> 12: Prune dangling links if links exist 13: else if d. action = MERGE then
+> 14: m←Merge (u, v, d. instruction)
+> 15: Replace uand vwith min M′
+> 16: Inherit the union of links if links exist 17: Recompute embedding for m
+> 18: else
+> 19: S ← S ∪ { (u, v )}
+> 20: end if
+> 21: end while
+> 22: return M′
+
+LLM-Guided Action. The selected pair (u, v ) is then passed to an LLM judge: d ← Judge (u, v ),which returns a structured decision d containing an action d. action ∈ { DELETE , MERGE , PRESERVE },an optional deletion target, and (when the action is MERGE ) a merge instruction specifying which facts should be retained. The judge is prompted to reason about the factual content of u and v, so that lexically similar entries with distinct facts are not collapsed, and lexically dissimilar entries that nonetheless encode the same fact are recognized as redundant (See Appendix A.1 for the full prompt). 
+
+Store Update. Given the returned action, M EM -REFINE triggers a corresponding update to M ′:• DELETE : the judge-selected target is removed from M ′, and dangling edges incident to it are 4pruned if the memory framework contains links; • MERGE : a separate merge LLM, conditioned on the judge instruction, synthesizes a single entry 
+
+m ← Merge (u, v, d. instruction) that replaces both u and v in M ′, inheriting the union of their links (excluding duplicates and self-loops) along with a freshly recomputed embedding so that subsequent proposals reflect the merged content; • PRESERVE : both entries remain in M ′ un-changed, and (u, v ) is added to S.
+
+Termination. The loop continues until either the budget size( M ′) ≤ B is met or no unjudged candi-date pair remains. This early-exit behavior reflects the design principle that factual preservation takes precedence over budget compliance: when all suf-ficiently similar pairs have already been judged 
+
+> PRESERVE
+
+, further compression would necessar-ily remove facts not redundantly stored elsewhere, violating the inner minimization in Equation 1. 
+
+Practical Implications. It is worth noting that the proposed M EM REFINE is designed as an of-fline, post-construction module that sits between memory construction and retrieval: all judge and merge calls are issued during memory maintenance rather than at query time, so compression reduces the persistent footprint of the store without inflat-ing per-query retrieval or generation latency. It is also agnostic to the host memory representation, maintaining the link structure (pruning dangling edges on DELETE , inheriting the union of links on MERGE ) for graph-structured frameworks (Xu et al., 2025) and operating directly on entries and their embeddings for non-graph stores (Chhikara et al., 2025); in both cases, the host construction and retrieval pipelines remain untouched. 
+
+4 Experimental Setup 
+
+Our evaluation tests whether an already constructed long-term memory store can be compressed under an explicit storage budget while preserving down-stream utility. To stress this claim, we vary three factors that directly govern how much of the store can be removed without degrading downstream util-ity: the host memory framework, the compression budget, and the length of the interaction history. 
+
+Datasets. We evaluate our M EM REFINE on long-term conversational memory benchmarks, whose questions require recalling evidence dispersed across extended, multi-session dialogue histories. Our primary benchmark is LoCoMo (Maharana et al., 2024), for which we use 10 samples com-prising 1,986 questions spanning five categories, namely single-hop factual recall, multi-hop reason-ing, temporal reasoning, open-ended, and counter-factual questions, which together probe whether compression preserves both localized facts and evi-dence spread across the store. To further stress-test compression under longer and more redun-dant histories, we construct scaled LoCoMo-style 
+
+datasets with roughly 3x and 10x longer conversa-tions, which amplify topic recurrence and redun-dancy while also raising the risk that rare but useful facts are removed under aggressive compression (full construction and quality statistics are reported in Appendix J). Finally, to verify that our findings are not specific to LoCoMo-style evaluation, we ad-ditionally evaluate on LongMemEval S (Wu et al., 2025), using 60 questions balanced across its ques-tion types with 10 questions per type. 
+
+Memory frameworks. To examine whether post-construction compression generalizes across differ-ent memory representations, we apply M EM RE- 
+
+> FINE
+
+to two representative frameworks that store memory in markedly different forms. In particular, 
+
+A-MEM (Xu et al., 2025) maintains a graph of linked structured notes; following its design, we adopt an A-MEM-style factual graph representa-tion that retains the memory content, embeddings, and links while excluding the auxiliary context and tag fields, which isolates compression over fac-tual graph memory (a supporting field analysis is provided in Appendix A). Mem0 (Chhikara et al., 2025), in contrast, constructs entries through an ingestion-and-update pipeline that transforms raw dialogue into processed memory rather than pre-serving it as raw dialogue nodes. In both settings, MEM REFINE is inserted after memory construction and before retrieval, leaving the host construction and retrieval pipelines unchanged. 
+
+Compression budgets and baselines. For each framework, we apply M EM REFINE under a range of storage budgets, namely 70%, 60%, 50%, 40%, and 30% of the uncompressed store, which lets us trace the full storage-utility trade-off from mild to aggressive compression. The primary point of com-parison is the corresponding uncompressed Base Memory , against which we measure how much downstream utility is retained at each budget. To isolate the contribution of the LLM judge at the core of our method, we further compare against two rule-based baselines on A-MEM-style graph 5Storage Budget (%) Framework Metric Base 70 60 50 40 30                                                                                             
+
+> LoCoMo
+> A-MEM graph F1 0.4013 0.4014 0.3977 0.3902 0.3844 0.3628 EM 0.1712 0.1690 0.1715 0.1628 0.1615 0.1474 Mem0 F1 0.2827 0.2888 0.2773 0.2761 0.2685 0.2510 EM 0.1098 0.1177 0.1095 0.1132 0.1102 0.0994
+> 3x LoCoMo
+> A-MEM graph F1 0.2344 0.2307 0.2324 0.2163 0.2079 0.1900 EM 0.0890 0.0893 0.0923 0.0879 0.0779 0.0702 Mem0 F1 0.2204 0.2152 0.2065 0.2085 0.2013 0.1900 EM 0.0588 0.0643 0.0621 0.0651 0.0599 0.0559
+> 10x LoCoMo
+> A-MEM graph F1 0.2053 0.2033 0.2006 0.1916 0.1776 0.1660 EM 0.0786 0.0795 0.0798 0.0723 0.0659 0.0574 Mem0 F1 0.2039 0.1986 0.1955 0.1899 0.1858 0.1800 EM 0.0634 0.0617 0.0603 0.0600 0.0581 0.0564
+> LongMemEval S
+> A-MEM graph Acc. 0.5833 0.6000 0.6000 0.6167 0.5833 0.5500 Mem0 Acc. 0.5167 0.4833 0.5167 0.4833 0.4500 0.4000
+
+Table 1: Main storage-performance results across benchmarks, scaled conversation histories, and memory frame-works. Bold marks the strongest compressed result. Per-category results, LongMemEval S type-level results, and full scaled results with node counts and storage sizes are reported in Appendix F, H, and I, respectively. 
+
+memory that reuse the same candidate-pair selec-tion loop but replace factual judgment with fixed heuristics: R ULE SIM , which decides each action from a fixed embedding-similarity threshold, and RULE PR, which leverages an additional graph rep-resentation through PageRank-style preservation. These baselines directly test whether surface sim-ilarity or graph centrality alone is sufficient to de-cide which facts should be deleted, merged, or pre-served. We restrict this rule-based comparison to graph memory because both baselines depend on graph structure; further details are in Appendix C. 
+
+Evaluation. On LoCoMo, we report token-level F1 and exact match (EM) following the LoCoMo evaluation protocol (Maharana et al., 2024), and additionally break F1 down by question category to examine how compression affects different reason-ing types. On LongMemEval S , we report accuracy, with GPT-4o-mini serving as the automatic judge. Alongside downstream utility, we track the realized storage ratio of each compressed store to confirm that it meets the target budget. 
+
+Implementation details. For candidate-pair se-lection, we embed each entry in the memory with a all-MiniLM-L6-v2 model and rank pairs by co-sine similarity, while the downstream QA uses the default retriever of each host framework with top-
+
+k = 10 . Unless otherwise noted, both the judge and merge models are gpt-5-mini ; for the compres-sion model analysis, we also evaluate Qwen3-8B 
+
+as the judge and merge model while keeping the retrieval and QA pipeline fixed. Additional imple-mentation details are provided in Appendix B, rule-based baseline details in Appendix C, threshold selection in Appendix D, prompts in Appendix A.1, and full model-family results in Appendix G. 
+
+5 Experimental Results and Analysis 
+
+We structure our evaluation around three questions: whether an already constructed memory store can be compressed without sacrificing downstream util-ity, whether LLM-guided factual judgment is nec-essary or similarity and graph structure already suffice, and whether the storage-utility trade-off remains favorable as conversations grow longer. 
+
+Overall Results. Table 1 reports how the storage budget affects downstream performance across the standard LoCoMo, scaled LoCoMo-style setups, and LongMemEval S . The central observation is that M EM REFINE substantially reduces memory size while preserving downstream utility, exposing a controllable storage-utility trade-off that holds across all settings. On standard LoCoMo, both A-MEM-style graph memory and Mem0 retain perfor-mance comparable to the uncompressed store under moderate compression, with F1 holding essentially 670% 60% 50% 40% 30% 
+
+Storage Budget                     
+
+> Single
+> Multi
+> Temporal
+> Open
+> Counter
+> Question Category  +0.027 +0.047 +0.029 +0.038 +0.034
+> +0.011 -0.005 -0.028 -0.053 -0.039
+> +0.074 +0.093 +0.055 +0.072 +0.072
+> -0.001 -0.006 -0.000 -0.005 -0.034
+> -0.037 -0.047 -0.052 -0.063 -0.108
+
+A-MEM Graph     
+
+> 70% 60% 50% 40% 30%
+
+Storage Budget                     
+
+> +0.010 +0.022 +0.013 +0.002 -0.002
+> -0.005 -0.019 -0.025 -0.034 -0.034
+> +0.002 +0.014 +0.013 -0.005 +0.017
+> +0.001 -0.023 -0.037 -0.045 -0.081
+> +0.026 +0.022 +0.049 +0.051 +0.037
+
+Mem0 
+
+> −0.10
+> −0.05
+> 0.00
+> 0.05
+> 0.10
+> F1 Change from Base
+
+Figure 3: Category-wise F1 change under M EM REFINE compression on LoCoMo, measured against the uncom-pressed Base Memory. Positive values indicate improvement. 100 70 60 50 40 30 
+
+Storage Budget (%) 
+
+> 0.32
+> 0.34
+> 0.36
+> 0.38
+> 0.40
+> F1
+
+Graph-Memory Baselines 
+
+> MemRefine
+> RuleSim
+> RulePR
+
+Figure 4: Comparison of M EM REFINE with rule-based baselines (R ULE SIM and R ULE PR) on A-MEM-style graph memory across storage budgets. 
+
+flat even as a large share of entries is removed, suggesting that constructed memory stores carry re-dundant or fragmented entries that can be removed or consolidated without losing answer-bearing con-tent. The scaled LoCoMo-style settings provide a harder test, since longer conversations introduce more redundancy while also raising the chance of touching rare but useful facts; even here, M EM -REFINE preserves utility smoothly across budgets, indicating that it remains effective as interaction histories grow. On LongMemEval S , A-MEM-style graph memory again benefits from moderate com-pression and even reaches its best accuracy at an intermediate budget, while Mem0 preserves utility across a narrower band of budgets. The remov-able headroom thus depends on the host representa-tion, larger for A-MEM-style graph memory than for the already-consolidated Mem0, yet M EM RE- 
+
+> FINE
+
+compresses both unchanged as a general post-construction layer rather than framework-specific. 
+
+Category-Wise Effects. The benchmark-level re-sults show that moderate compression preserves overall performance, but they do not reveal how this effect is distributed across question types. To examine this, Figure 3 reports category-wise F1 changes on LoCoMo relative to the uncompressed Base Memory of each framework (with full numer-ical results in Appendix F). As shown in Figure 3, the effect of compression varies across categories. In A-MEM-style graph memory, localized cate-gories such as single-hop and temporal questions tend to improve after compression, consistent with the intuition behind post-construction refinement: removing or consolidating repeated facts makes retrieval less noisy when the answer depends on a small, localized piece of evidence. Open-ended and counterfactual questions benefit less and are more sensitive to tighter budgets, since their evi-dence is spread across a wider portion of the store. Mem0 exhibits a related but distinct category pro-file, reflecting that its ingestion-and-update pipeline already transforms raw interactions into processed entries before M EM REFINE is applied. Together, these results show that the effect of compression is controlled jointly by the question type and memory representation produced by the host framework. 
+
+Comparison with Rule-based Graph-Memory. 
+
+To isolate the role of the LLM judge, we compare MEM REFINE against rule-based baselines that re-tain the same candidate-pair selection but replace factual judgment with fixed heuristics, directly test-ing our central design choice that similarity is use-ful for proposing candidate pairs yet insufficient for deciding the compression action. Figure 4 shows that rule-based methods remain competitive when 7100 70 60 50 40 30 
+
+> Storage Budget (%)
+> 0.34
+> 0.36
+> 0.38
+> 0.40
+> F1
+
+A-MEM Graph      
+
+> GPT-5-mini
+> Qwen3-8B
+> 100 70 60 50 40 30
+> Storage Budget (%)
+> 0.20
+> 0.22
+> 0.24
+> 0.26
+> 0.28
+
+Mem0 
+
+> GPT-5-mini
+> Qwen3-8B
+
+Figure 5: Effect of the compression model: M EM REFINE with GPT-5-mini versus the open Qwen3-8B as judge and merge model across storage budgets. 
+
+the budget is loose, where most decisions involve obvious near-duplicates, but they fall off far more sharply as the budget tightens. This is expected: un-der aggressive compression the difficult cases are no longer near-duplicate nodes but semantically re-lated memories whose factual relationship should be interpreted, and a fixed similarity threshold can-not separate redundant paraphrases from comple-mentary facts, while graph centrality does not indi-cate whether a memory holds evidence needed for future questions. The widening advantage of M EM -REFINE under tighter budgets therefore supports the need for LLM-guided factual action selection. 
+
+Effect of Compression Model. Since M EM RE- 
+
+> FINE
+
+depends on an LLM judge and merge model, we next ask whether its behavior is tied to a single model family. Figure 5 compares GPT-5-mini with the open Qwen3-8B while holding the downstream retrieval and QA pipeline (with full numerical re-sults in Appendix G). The two models behave sim-ilarly under moderate compression, indicating that MEM REFINE does not rely on a single proprietary judge; the gap widens under tighter budgets, where compression requires finer distinctions between redundant, complementary, and distinct memories. Stronger judge models therefore become more valu-able as the storage constraint grows severe. 
+
+Scaling to Longer Conversations. Finally, we ask whether compression remains well-behaved once histories grow much longer. Figure 6 plots the storage-utility curve on the scaled LoCoMo-style datasets, and the trade-off stays smooth and progressive across both the 3x and 10x settings. This smooth, predictable behavior (rather than an abrupt failure point) suggests that M EM REFINE 
+
+can serve as a practical maintenance mechanism for long-running agents whose stores keep growing. 100 70 60 50 40 30 
+
+Storage Budget (%) 
+
+> −20
+> −15
+> −10
+> −5
+> 0
+> Relative F1 Change (%)
+
+Scaled LoCoMo-style 
+
+> A-MEM 3x
+> A-MEM 10x
+> Mem0 3x
+> Mem0 10x
+
+Figure 6: Storage-utility trade-off of M EM REFINE on the scaled LoCoMo-style datasets, with 3x and 10x longer conversations than standard LoCoMo. 
+
+6 Conclusion 
+
+In this paper, we proposed M EM REFINE , a post-construction memory compression framework de-signed to keep an already constructed long-term agent memory store within a fixed storage bud-get while preserving information useful for future interactions. Through a pairwise refinement proce-dure that uses similarity only to surface candidate pairs and defers the delete, merge, and preserve decision to an LLM judge grounded in factual con-tent, M EM REFINE can be inserted between mem-ory construction and retrieval without modifying the host memory construction pipeline. Empiri-cal evaluations across A-MEM-style graph mem-ory, Mem0, scaled LoCoMo-style settings, and LongMemEval S demonstrate that moderate com-pression preserves downstream utility while tighter budgets expose a gradual storage-utility trade-off, with the gap over rule-based baselines widening precisely as the budget tightens. Also, our analyses highlight that the amount of safely removable con-tent is shaped not only by the compressor but also 8by the host memory representation, with A-MEM-style graph memory exposing more removable re-dundancy and Mem0, having already filtered and consolidated entries during ingestion, leaving less room before utility is affected. We believe these findings establish post-construction compression as a practical maintenance layer for storage-budgeted long-term agent memory, suggesting that compres-sion and construction should be considered jointly rather than as independent stages. 
+
+Limitations 
+
+The proposed M EM REFINE is designed as a post-construction module that compresses an already constructed long-term memory store to a target storage budget while preserving information useful for downstream tasks. It is worth noting that our evaluation centers on two representative memory frameworks (an A-MEM-style graph memory of linked structured notes and the Mem0 ingestion-and-update pipeline) and on long-term conver-sational benchmarks, which together cover both graph-structured and processed memory stores but do not exhaust the space of agent memory systems; extending post-construction compression to addi-tional memory architectures and deployed multi-agent or tool-use settings would be a valuable di-rection for future work. Also, our scaled LoCoMo-style benchmarks serve as controlled stress tests for studying how compression behaves as conversation length and redundancy grow, and evaluating M EM -REFINE on real longitudinal memory logs collected over extended deployments would be an exciting next step for its practical applicability. 
+
+Ethical Considerations 
+
+The proposed M EM REFINE edits an already con-structed long-term memory store through DELETE 
+
+and MERGE operations, which persistently remove or consolidate past interactions and, in deployed systems, may involve sensitive user information. While our experiments use public research bench-marks and synthetically generated scaled LoCoMo-style datasets without collecting or releasing any real user data, in practice, compression should be applied under appropriate privacy safeguards, ac-cess control, and data-retention policies, and we fur-ther recommend pairing it with mechanisms such as soft deletion or audit logs of applied edits so that maintenance decisions remain reviewable. 
+
+References 
+
+Sanghwan Bae, Dong-Hyun Kwak, Soyoung Kang, Min Young Lee, Sungdong Kim, Yuin Jeong, Hyeri Kim, Sang-Woo Lee, Woo-Myoung Park, and Nako Sung. 2022. Keep me updated! memory manage-ment in long-term conversations. In Findings of the Association for Computational Linguistics: EMNLP 2022 , pages 3769–3787, Abu Dhabi, United Arab Emirates. Association for Computational Linguistics. Sergey Brin and Lawrence Page. 1998. The anatomy of a large-scale hypertextual web search engine. Com-puter Networks and ISDN Systems , 30(1–7):107–117. Nuo Chen, Hongguang Li, Jianhui Chang, Juhua Huang, Baoyuan Wang, and Jia Li. 2025. Compress to impress: Unleashing the potential of compressive memory in real-world long-term conversations. In 
+
+Proceedings of the 31st International Conference on Computational Linguistics , pages 755–773, Abu Dhabi, UAE. Association for Computational Linguis-tics. Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. 2025. Mem0: Building production-ready AI agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 .Jizhan Fang, Xinle Deng, Haoming Xu, Ziyan Jiang, Yuqi Tang, Ziwen Xu, Shumin Deng, Yunzhi Yao, Mengru Wang, Shuofei Qiao, Huajun Chen, and Ningyu Zhang. 2025. LightMem: Lightweight and efficient memory-augmented generation. arXiv preprint arXiv:2510.18866 .Jihyoung Jang, Minseong Boo, and Hyounghun Kim. 2023. Conversation chronicles: Towards diverse tem-poral and relational dynamics in multi-session con-versations. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Process-ing , pages 13584–13606, Singapore. Association for Computational Linguistics. Huiqiang Jiang, Qianhui Wu, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2023. LLMLingua: Compressing prompts for accelerated inference of large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Process-ing , pages 13358–13376, Singapore. Association for Computational Linguistics. Huiqiang Jiang, Qianhui Wu, Xufang Luo, Dong-sheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2024. LongLLMLingua: Accelerating and enhanc-ing LLMs in long context scenarios via prompt com-pression. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 1658–1677, Bangkok, Thailand. Association for Computational Linguistics. Jiaqi Liu, Yaofeng Su, Peng Xia, Siwei Han, Zeyu Zheng, Cihang Xie, Mingyu Ding, and Huaxiu Yao. 2026. SimpleMem: Efficient lifelong memory for LLM agents. arXiv preprint arXiv:2601.02553 .
+
+9Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang. 2024. Evaluating very long-term conversational memory of LLM agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 13851– 13870, Bangkok, Thailand. Association for Compu-tational Linguistics. Ali Modarressi, Ayyoob Imani, Mohsen Fayyaz, and Hinrich Schütze. 2023. RET-LLM: Towards a gen-eral read-write memory for large language models. 
+
+arXiv preprint arXiv:2305.14322 .Charles Packer, Vivian Fang, Shishir G. Patil, Kevin Lin, Sarah Wooders, and Joseph E. Gonzalez. 2023. MemGPT: Towards LLMs as operating systems. 
+
+arXiv preprint arXiv:2310.08560 .Junxi Wang, Te Sun, Jiayi Zhu, Junxian Li, Haowen Xu, Zichen Wen, Xuming Hu, Zhiyu Li, and Lin-feng Zhang. 2026. StreamMeCo: Long-term agent memory compression for efficient streaming video understanding. arXiv preprint arXiv:2604.09000 .Qingyue Wang, Yanhe Fu, Yanan Cao, Shuai Wang, Zhiliang Tian, and Liang Ding. 2025. Recur-sively summarizing enables long-term dialogue mem-ory in large language models. Neurocomputing ,639:130193. Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. 2025. LongMemEval: Benchmarking chat assistants on long-term interac-tive memory. In The Thirteenth International Confer-ence on Learning Representations . OpenReview.net. Fangyuan Xu, Weijia Shi, and Eunsol Choi. 2024. RE-COMP: Improving retrieval-augmented LMs with context compression and selective augmentation. In 
+
+The Twelfth International Conference on Learning Representations .Jing Xu, Arthur Szlam, and Jason Weston. 2022. Be-yond goldfish memory: Long-term open-domain con-versation. In Proceedings of the 60th Annual Meet-ing of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 5180–5197, Dublin, Ireland. Association for Computational Linguistics. Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. 2025. A-MEM: Agentic memory for LLM agents. In Advances in Neural Information Processing Systems 38 .Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. 2024. MemoryBank: Enhancing large language models with long-term memory. In Pro-ceedings of the Thirty-Eighth AAAI Conference on Artificial Intelligence , pages 19724–19731. AAAI Press. 
+
+10 Memory Representation Size F1 EM Original A-MEM 0.5430 0.3718 0.1385 Base Memory 0.2692 0.4013 0.1712 
+
+Table 2: Representative field-analysis result on Lo-CoMo. Base Memory retains memory content, em-beddings, and links while excluding auxiliary context and tag fields. Size is reported in MB. 
+
+A A-MEM Input Representation 
+
+A-MEM represents each memory as a structured note with multiple fields, including content, contex-tual descriptions, keywords, tags, embeddings, and links. For the graph-based memory setting, we use a simplified A-MEM-style representation that re-tains memory content, embeddings, and links while excluding auxiliary context and tag fields. This de-sign focuses the experiment on compressing factual memory entries and their graph structure, rather than evaluating A-MEM’s memory evolution fields. All A-MEM-based compression methods therefore start from the same Base Memory representation. This field analysis suggests that the auxiliary context and tag fields do not provide useful ev-idence for the downstream retrieval setting used in our experiments, and may introduce additional retrieval noise. We therefore use the simplified factual graph representation consistently across all A-MEM-style experiments. 
+
+A.1 Prompt Details 
+
+MEM REFINE uses two LLM calls during compres-sion: a judge LLM and a merge LLM. For both calls, each memory content field is truncated to the first 2,000 characters before being inserted into the prompt. The judge returns one of delete , merge ,or nothing ; the implementation maps nothing to the P RESERVE action described in the main paper. 
+
+A.1.1 Judge Prompt 
+
+You are a memory compression assistant. Your goal is to reduce memory size while preserving information that is useful for answering future questions about the conversation. 
+
+> ,→
+> ,→
+> ,→
+
+Two memory nodes have cosine similarity {similarity}. [Node A] {content_a} [Node B] {content_b} IMPORTANT -- Judge by FACTUAL INFORMATION VALUE, not by surface wording: ,→
+
+- Facts worth preserving: names, dates, events, locations, preferences, plans, opinions, personal experiences, relationships 
+
+> ,→
+> ,→
+
+- Low-value content: greetings ("Hey!", "Good to talk"), generic thanks ("Thanks!", "Appreciate it"), small talk, emotional filler without specific facts 
+
+> ,→
+> ,→
+
+- Two nodes that only differ in wording but carry the same facts -> delete one ,→
+
+- If both nodes are low-value (e.g. both are just greetings or generic thanks) -> delete one, don 't merge ,→
+
+Choose one action: 1. "delete" -- One node is redundant OR both carry the same facts (even if worded differently). Delete the less informative one. 
+
+> ,→
+> ,→
+
+-> Specify which to delete ("a" or "b"). Keep the one with more specific facts. ,→
+
+2. "merge" -- Both contain DISTINCT FACTS that would be lost if either were deleted. Combine into one. ,→
+
+-> Write a merge instruction specifying which FACTS (not phrasings) from each node must be preserved. ,→
+
+3. "nothing" -- Both contain clearly distinct, important factual information. Keep both. ,→
+
+Bias toward "delete" when nodes only differ in wording. Only choose "merge" when there are genuinely different facts in each node. 
+
+> ,→
+> ,→
+
+Return JSON: - action: "delete", "merge", or "nothing" - target: "a" or "b" (which to delete; set "a" if not deleting) ,→
+
+- merge_instruction: instruction for merge LLM (set "" if not merging) ,→
+
+- reason: brief explanation 
+
+A.1.2 Merge Prompt 
+
+You are merging two memory nodes into one. Follow the instruction below. ,→
+
+[Merge Instruction] {instruction} [Node A] {content_a} [Node B] {content_b} Rules: - Preserve all FACTS (names, dates, events, locations, preferences, plans, experiences) from both nodes ,→
+
+- Drop generic phrases, greetings, and emotional filler that don 't carry factual content ,→
+
+- Keep it concise -- shorter is better as long as no facts are lost ,→
+
+- Maintain speaker attribution (who said what) when it matters for the fact ,→
+
+Return JSON: - content: the merged memory content - keywords: list of keywords for the merged memory 
+
+B Implementation Details 
+
+Memory construction and retrieval. Unless otherwise stated, we follow the original A-Mem memory construction pipeline and represent each memory as a graph node with its content and meta-data. For candidate pair selection, we embed each memory entry using all-MiniLM-L6-v2 and com-pute pairwise cosine similarities over the resulting embeddings. For question answering, we use the default retriever of the memory framework with top-k = 10 retrieved memories. To control the context length and cost of LLM-based decisions, we truncate each memory content field to the first 2,000 characters before passing it to the judge and merge models. 
+
+Memory size accounting. We measure memory size by serializing the stored memory entries into 11 JSON with ensure_ascii=False . For our com-pressed variants, memory size is computed over the 8 fields used by our implementation. The origi-nal A-Mem output additionally contains context ,
+
+category , tags , and retrieval_count , resulting in 12 serialized fields. For ratio-based compression, the target memory budget for each sample is set to 
+
+r times the corresponding no-compression memory size, where r ∈ { 0.3, 0.4, 0.5, 0.6, 0.7}.
+
+Rule-based compression. For the rule-based delete-then-merge compressor, we first identify redundant memory pairs whose cosine similar-ity is at least a threshold τ . We evaluate τ ∈{0.70 , 0.80 , 0.90 } for ratio-based budgets and addi-tionally use τ ∈ { 0.75 , 0.85 } for absolute-budget experiments. In the PR-based setting, PageR-ank is computed on the memory graph and the higher-PageRank memory is preferentially pre-served within redundant clusters. We use PR pro-tection percentile 0.9 unless otherwise specified, which protects the top 10% PageRank nodes from being selected as merge anchors. If deletion alone does not satisfy the target memory budget, we fall back to the A-Mem-style merge operation, where low-PageRank anchor nodes and their neighbors are summarized into a single memory node. All compression operations preserve the original times-tamps associated with the affected memories. 
+
+LLM-judged compression. For the LLM-judged compressor, we remove the fixed similarity threshold and instead sort candidate memory pairs by cosine similarity in descending order. For each pair, the judge model decides one of three actions: 
+
+delete , merge , or nothing . For delete , the judge also selects which memory should be removed. For 
+
+merge , the judge produces a merge instruction, and a separate merge model generates the merged mem-ory following that instruction. For nothing , the pair is skipped and is not queried again. Com-pression stops when the target memory budget is reached or when no remaining pair receives a com-pressive action. Unless otherwise noted, both the judge and merge models are gpt-5-mini .
+
+Datasets. For LoCoMo, we evaluate on 10 samples, containing 1,986 questions across five categories: single-hop, multi-hop, temporal, open-ended, and counterfactual questions. For LongMemEval S , we evaluate on 60 questions across six types: single-user, single-assistant, single-preference, multi-session, temporal, and knowledge-update questions. To stress-test longer histories, we construct scaled LoCoMo-style datasets at two scales (3x and 10x): the 3x setting comprises 5 long-dialogue samples (80 sessions and 1,600 user-assistant turns each, 2,720 QA pairs in total), and the 10x setting comprises 5 samples (270 sessions and 5,400 turns each, 9,180 QA pairs in total); full statistics are reported in Appendix J. For both scales, personas and events are generated with gpt-5-mini , while dialogues are generated with gpt-4o-mini .
+
+Evaluation. For LoCoMo and the scaled LoCoMo-style datasets, we report token-level F1 and exact match (EM) following the LoCoMo eval-uation protocol (Maharana et al., 2024). We also report category-wise F1 for the five LoCoMo ques-tion categories. For LongMemEval S , we report accuracy. Unless otherwise noted, answer evalua-tion for the LLM-judged compression experiments uses gpt-5-mini . For compression-model analy-sis, we use Qwen3-8B . All reported results are from a single compression and evaluation run for each setting due to the cost of API-based judge, merge, and evaluation calls; therefore, we do not report confidence intervals or error bars. 
+
+C Rule-based Graph-memory Baselines 
+
+We evaluate two rule-based baselines on A-MEM-style graph memory. These baselines are used only in the graph-memory setting because they rely on graph structure or fixed similarity rules over graph nodes. 
+
+C.1 RULE SIM 
+
+RULE SIM uses the same pair-selection loop as MEM REFINE but replaces the LLM judge with a fixed similarity rule. At each step, it selects the most similar unresolved memory pair (u, v ) with cosine similarity s(u, v ). The compression action is determined as follows: 
+
+(
+
+> DELETE
+
+, s(u, v ) ≥ τdelete ,
+
+> MERGE
+
+, s(u, v ) < τ delete .
+
+If the selected action is DELETE , one node is re-moved according to a deterministic deletion rule. If the selected action is MERGE , the same merge LLM used by M EM REFINE generates the merged memory. Thus, R ULE SIM isolates the effect of replacing the LLM judge with a fixed similarity decision rule. 12 Method Storage Nodes Size F1 Base 100% 588.2 0.2692 0.4013 MEM REFINE 70% 386.4 0.1888 0.4014 60% 318.9 0.1618 0.3977 50% 257.8 0.1349 0.3902 40% 197.5 0.1079 0.3844 30% 141.3 0.0811 0.3628 RULE SIM 70% – – 0.4015 60% – – 0.3952 50% – – 0.3989 40% – – 0.3795 30% – – 0.3482 RULE PR 70% 347.4 0.1882 0.4016 60% 268.1 0.1604 0.3929 50% 200.0 0.1340 0.3850 40% 135.9 0.1069 0.3718 30% 80.6 0.0793 0.3306 
+
+Table 3: Full graph-memory baseline comparison on LoCoMo. Size is reported in MB when available.                      
+
+> Storage τ= 0 .90 τ= 0 .80 τ= 0 .70
+> 70% 0.3880 0.4016 0.3763 60% 0.3687 0.3929 0.3740 50% 0.3634 0.3850 0.3828 40% 0.3484 0.3718 0.3633 30% 0.3347 0.3306 0.3330
+
+Table 4: Threshold sensitivity for the PageRank-based rule baseline on A-MEM-style graph memory. We re-port F1 under each storage budget. 
+
+C.2 RULE PR 
+
+RULE PR combines similarity-threshold deletion with PageRank-guided preservation and merge fall-back. It first identifies near-duplicate memory nodes whose cosine similarity exceeds a thresh-old. Within each redundant group, PageRank is used as a graph-centrality proxy to decide which node should be preserved. If deletion alone is in-sufficient to satisfy the storage budget, R ULE PR applies a merge fallback guided by the graph struc-ture. This baseline tests whether graph centrality is a useful substitute for LLM-guided factual com-pression decisions. Unlike M EM REFINE , R ULE PR does not reason over factual redundancy or comple-mentarity with an LLM judge. 
+
+D Threshold Selection for Rule-based Baselines 
+
+For rule-based graph-memory baselines, we use 
+
+τ = 0 .8 in the main experiments. This value is selected based on threshold sweeps over the ratio-based graph-memory compression setting. Table 4                             
+
+> Retention Storage Nodes Size F1 PageRank 70% 417.5 0.1857 0.3111 Random 70% 411.4 0.1814 0.3085 PageRank 50% 294.5 0.1314 0.2673 Random 50% 293.7 0.1302 0.2848 PageRank 30% 176.8 0.0785 0.2098 Random 30% 175.9 0.0778 0.2374
+
+Table 5: Retention-only baselines on A-MEM-style graph memory. PageRank centrality is not a reliable cri-terion for selecting useful memories, and both retention-only baselines underperform compression-based meth-ods. Size is reported in MB. 
+
+shows that τ = 0 .8 performs best at 70%, 60%, 50%, and 40% storage, while also providing a stable choice across storage budgets. Although 
+
+τ = 0 .9 is slightly better at 30% storage, we use 
+
+τ = 0 .8 as the main setting because it is the most consistently strong threshold across budgets. 
+
+E Retention-only Baselines 
+
+We also compare retention-only baselines that keep a fixed percentage of existing graph nodes with-out performing delete–merge compression. The PageRank retention baseline keeps the top-ranked nodes according to graph centrality, while the ran-dom retention baseline keeps a random subset of nodes. Table 5 shows that PageRank retention does not provide a reliable advantage over random reten-tion. Both retention-only baselines are substantially worse than compression-based methods, indicating that memory compression is not simply a node-selection problem. 
+
+F Category-wise LoCoMo Results 
+
+The main paper visualizes category-wise F1 changes under compression on LoCoMo. Here, Table 6 reports the full numerical values for each question category and storage budget. 
+
+G Compression Model Analysis 
+
+The main paper visualizes the effect of changing the judge and merge model. Here, Table 7 reports the full numerical results comparing GPT-5-mini with Qwen3-8B while keeping the downstream re-trieval and QA pipeline fixed. The results show that smaller open models can match the main compres-sion pattern under moderate budgets, but stronger judge models are more robust when the storage budget becomes tight. 13 H LongMemEval S Full Results 
+
+The main paper summarizes LongMemEval S ac-curacy across storage budgets. Table 8 reports the full type-level results across all budgets. LongMemEval S contains 60 questions, with 10 questions per type. Accuracy is judged using GPT-4o-mini. 
+
+I Full Scaled LoCoMo-style Results 
+
+The main paper reports scaled LoCoMo-style re-sults as a storage–performance curve. Table 9 pro-vides the full numerical values for the 3x and 10x settings. 
+
+J Scaled LoCoMo-style Dataset Details 
+
+We construct scaled LoCoMo-style datasets to eval-uate memory compression under longer conversa-tional histories. Because the scaled datasets are synthetically generated, we verify that they pre-serve the broad structure of the original benchmark while increasing conversation length and redun-dancy. Table 10 summarizes their basic statistics, text-level diversity indicators, and QA category dis-tributions. The 3x setting is a relatively faithful scaled version of LoCoMo, while the 10x setting serves as a stronger stress test with longer and more repetitive interaction histories. 
+
+K Artifact Licenses and Use 
+
+We use publicly available research artifacts only for research and evaluation. LoCoMo is released under a Creative Commons Attribution-NonCommercial license. LongMemEval is distributed as a public research benchmark through its official repository and dataset release. For memory frameworks, the A-MEM implementation is released under the MIT License, and Mem0 is released under the Apache License 2.0. Our use of these artifacts is limited to benchmark evaluation and method comparison, and we do not redistribute the original benchmark data or framework code as part of this paper. The scaled LoCoMo-style datasets are synthetic stress-test variants constructed for analysis of longer con-versational histories. 14 Framework Storage Cat1 Cat2 Cat3 Cat4 Cat5 A-MEM graph 100% 0.2961 0.4776 0.1754 0.4612 0.3310 A-MEM graph 70% 0.3235 0.4882 0.2498 0.4607 0.2938 A-MEM graph 60% 0.3434 0.4727 0.2687 0.4550 0.2842 A-MEM graph 50% 0.3251 0.4492 0.2303 0.4611 0.2789 A-MEM graph 40% 0.3345 0.4251 0.2477 0.4560 0.2681 A-MEM graph 30% 0.3300 0.4383 0.2470 0.4269 0.2226 Mem0 100% 0.2686 0.1246 0.1180 0.4266 0.1703 Mem0 70% 0.2785 0.1194 0.1196 0.4276 0.1964 Mem0 60% 0.2908 0.1060 0.1316 0.4036 0.1927 Mem0 50% 0.2818 0.0996 0.1311 0.3897 0.2194 Mem0 40% 0.2707 0.0904 0.1125 0.3812 0.2217 Mem0 30% 0.2670 0.0908 0.1354 0.3456 0.2077 
+
+Table 6: Category-wise F1 results on LoCoMo. Cat1–Cat5 correspond to the LoCoMo question categories: single-hop, multi-hop, temporal, open-ended, and counterfactual questions. 
+
+Framework Model 100% 70% 60% 50% 40% 30% A-MEM graph GPT-5-mini 0.4013 0.4014 0.3977 0.3902 0.3844 0.3628 A-MEM graph Qwen3-8B 0.4013 0.4006 0.3893 0.3796 0.3529 0.3430 Mem0 GPT-5-mini 0.2827 0.2888 0.2773 0.2761 0.2685 0.2510 Mem0 Qwen3-8B 0.2827 0.2880 0.2718 0.2623 0.2390 0.2076 
+
+Table 7: Full compression-model comparison. Values indicate F1 under each storage budget. 
+
+System Storage Acc. N s-user s-asst s-pref multi temporal k-update A-MEM graph Base 0.5833 60 9/10 10/10 3/10 4/10 3/10 6/10 A-MEM graph + M EM REFINE 70% 0.6000 60 9/10 9/10 5/10 4/10 3/10 6/10 A-MEM graph + M EM REFINE 60% 0.6000 60 10/10 9/10 5/10 5/10 1/10 6/10 A-MEM graph + M EM REFINE 50% 0.6167 60 10/10 8/10 5/10 6/10 2/10 6/10 A-MEM graph + M EM REFINE 40% 0.5833 60 10/10 10/10 5/10 4/10 1/10 5/10 A-MEM graph + M EM REFINE 30% 0.5500 60 8/10 7/10 3/10 6/10 3/10 6/10 Mem0 Base 0.5167 60 8/10 4/10 6/10 5/10 4/10 4/10 Mem0 + M EM REFINE 70% 0.4833 60 7/10 3/10 5/10 5/10 4/10 5/10 Mem0 + M EM REFINE 60% 0.5167 60 8/10 3/10 6/10 6/10 3/10 5/10 Mem0 + M EM REFINE 50% 0.4833 60 8/10 3/10 6/10 5/10 4/10 3/10 Mem0 + M EM REFINE 40% 0.4500 60 8/10 3/10 5/10 4/10 3/10 4/10 Mem0 + M EM REFINE 30% 0.4000 60 7/10 4/10 4/10 3/10 3/10 3/10 
+
+Table 8: Full LongMemEval S results. The benchmark contains 60 questions, with 10 questions per type. Accuracy is judged using GPT-4o-mini. 
+
+15 Framework Dataset Storage Nodes/Entries F1 EM Rel. F1 Change A-MEM graph 3x 100% 1600.0 0.2344 0.0890 –70% 1038.2 0.2307 0.0893 -1.6% 60% 856.0 0.2324 0.0923 -0.9% 50% 701.6 0.2163 0.0879 -7.7% 40% 552.4 0.2079 0.0779 -11.3% 30% 398.6 0.1900 0.0702 -18.9% A-MEM graph 10x 100% 5400.0 0.2053 0.0786 –70% 3492.0 0.2033 0.0795 -1.0% 60% 2908.0 0.2006 0.0798 -2.3% 50% 2372.0 0.1916 0.0723 -6.7% 40% 1878.0 0.1776 0.0659 -13.5% 30% 1386.0 0.1660 0.0574 -19.1% Mem0 3x 100% 1241.6 0.2204 0.0588 –70% 868.6 0.2152 0.0643 -2.4% 60% 744.4 0.2065 0.0621 -6.3% 50% 620.6 0.2085 0.0651 -5.4% 40% 496.2 0.2013 0.0599 -8.7% 30% 372.0 0.1900 0.0559 -13.8% Mem0 10x 100% 3531.0 0.2039 0.0634 –70% 2471.4 0.1986 0.0617 -2.6% 60% 2118.2 0.1955 0.0603 -4.1% 50% 1765.2 0.1899 0.0600 -6.9% 40% 1412.0 0.1858 0.0581 -8.9% 30% 1058.6 0.1800 0.0564 -11.7% 
+
+Table 9: Full M EM REFINE results on scaled LoCoMo-style datasets. The 3x and 10x settings contain approximately three and ten times longer conversations than standard LoCoMo, respectively. Node or entry counts are reported as the average number of stored memory units after compression. 
+
+(a) Basic statistics 
+
+Dataset Samples Sessions Turns QAs Avg. Turns/Sess. LoCoMo 10 272 5,882 1,986 21.6 3x 5 400 8,000 2,720 20.0 10x 5 1,350 27,000 9,180 20.0 
+
+(b) QA category distribution 
+
+Category LoCoMo 3x 10x Cat1 single-hop 14.2% 14.0% 14.0% Cat2 multi-hop 16.2% 16.0% 16.0% Cat3 temporal 4.8% 5.0% 5.0% Cat4 open-ended 42.3% 43.2% 43.1% Cat5 counterfactual 22.5% 21.9% 21.9% 
+
+(c) Text and topic diversity indicators 
+
+Dataset Turn Len. Word TTR Session Sim. Adjacent Sim. 3-gram Repeat QA TTR Ref. Len. LoCoMo 124 0.0386 0.3460 0.4537 0.316 0.1004 23 3x 137 0.0304 0.2931 0.4253 0.319 0.0558 83 10x 136 0.0128 0.3300 0.4496 0.451 0.0248 82 
+
+Table 10: Quality analysis of the scaled LoCoMo-style datasets. Panel (a) reports basic dataset statistics, panel (b) shows that the QA category distribution is preserved across the original and scaled datasets, and panel (c) reports text-level and topic-level diversity indicators. Turn length and reference length are measured in characters. Word TTR and QA TTR denote type-token ratios for dialogue turns and questions, respectively. 
+
+16
