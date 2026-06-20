@@ -1,0 +1,1135 @@
+Title: LLMZero: Discovering Adaptive Training Strategies for RL Post-Training via LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.18388v1
+
+Published Time: Thu, 18 Jun 2026 00:09:26 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+## LLMZ ERO : Discovering Adaptive Training Strategies for RL Post-Training via LLM Agents 
+
+Haoyang Fang †, Wei Zhu †, Boran Han †, Alex Zhang, Zhenyu Pan ∗, Shuo Yang ∗, Shuai Zhang , Jiading Gai , Peng Tang ,
+
+Cuixiong Hu ∗, Xuan Zhu ∗, Huzefa Rangwala ∗, George Karypis ∗, Bernie Wang †
+
+Amazon 
+
+{haoyfang, weizhuq, boranhan, yuyawang}@amazon.com 
+
+Abstract 
+
+RL post-training strategies are dataset-dependent and reveal a recurring empirical pattern: capacity parameters accumulate mono-tonically across stages, while regularization parameters predominantly oscillate in response to shifting training dynamics. This distinction matters because fixed schedules commit all parameters to fixed trajectories and therefore cannot express the non-stationary exploration-exploitation tradeoffs that regularization must track; the principle provides actionable design rules for multi-stage training. We discover this through LLMZ ERO , a system where LLM agents search over training trajectories via tree search, diagnosing pathologies at each checkpoint and proposing coordinated multi-parameter transitions. Across 4 diverse GRPO tasks, LLMZ ERO discovers strategies that improve over the base model by 9% to 140% relative and over grid search by 6% to 15% relative, consistently outperforming random search and the skill-based agent. The structural principle transfers across tasks, providing an explanation for why discovered strategies take qualitatively different forms yet share similar parameter dynamics. 
+
+1 Introduction 
+
+Fixed training schedules are suboptimal for RL post-training (Lv et al., 2025; Wang et al., 2025a). In most recent works, the community has con-verged on a narrow set of progressive schedul-ing techniques with all other hyperparameters held constant, applied identically regardless of 
+
+> †LLMZero Project Core Team.
+> ∗Work done at Amazon. This is a preprint. Code will be open-sourced shortly. The experiments in this paper were conducted using an internal variation of VeRL that cannot be publicly distributed; we are actively migrating the codebase to ensure full compatibility with the latest public release of VeRL.
+
+dataset, model size, or emergent training dynam-ics. The dominant approach is gradually increasing response length (Luo et al., 2025b; Chen et al., 2025a; He et al., 2025; Hao et al., 2025; Xiaomi et al., 2025; Luo et al., 2025a; Chen et al., 2025b; Luo et al., 2026; Ji et al., 2025). Others gradually increase rollouts (Luo et al., 2025b; Chen et al., 2025a; Song et al., 2025; Luo et al., 2026), stage training data by progressive difficulty (Chen et al., 2025a; Song et al., 2025; He et al., 2025; Lai and Nissim, 2026; Wan et al., 2025; Luo et al., 2026; Ji et al., 2025), or adopt an oscillating response length schedule (Song et al., 2025). This prac-tice is motivated by training base models to pro-duce increasingly long chains of thought, but is less well-justified for continued training on models that already generate extended reasoning. These guidebook-driven schedules do not systematically specify when to trigger a transition, how much to adjust, or which parameters to change for a given task. When training dynamics deviate from ex-pectations (KL divergence spikes, model collapse, stagnating validation), no systematic mechanism responds (§4.3). The strategies our system discovers reveal a re-curring structural asymmetry: capacity parame-ters (response length, rollouts) accumulate mono-tonically across all four tasks, while regulariza-tion parameters (learning rate, KL coefficient, tem-perature) predominantly oscillate . Capacity pa-rameters are information-constructive: reducing response length or rollouts discards what prior stages built. Regularization parameters track a non-stationary tradeoff where the optimal exploration-exploitation balance shifts continuously during training, making monotonic decay a poor fit in practice. This principle manifests differently per task (ChemCoTBench (Li et al., 2026) uses 5-stage progressive stabilization with reactive KL spikes, SSMR-Bench (Wang et al., 2025b) benefits from LR/KL oscillation with monotonic capacity expan-1
+
+> arXiv:2606.18388v1 [cs.LG] 16 Jun 2026
+
+sion, and PaperSearchQA (Burgess et al., 2026) uses a “tighten then loosen” pattern to escape con-vergence plateaus), but the underlying asymmetry between parameter classes is consistent. Why use LLM agents for this search? Simple adaptive controllers (e.g., proportional KL adjust-ment (Schulman et al., 2017)) tune one parameter based on one signal. The strategies we discover require coordinated multi-dimensional transitions, such as simultaneously raising learning rate to es-cape a plateau while increasing KL penalty to pre-vent larger steps from causing divergence. All four best strategies include transitions that change 3+ parameters simultaneously in coordinated combi-nations. These coordinated interventions require understanding the causal relationships between pa-rameters and training dynamics, which is what LLM reasoning provides. We introduce LLMZ ERO , a system that discov-ers adaptive training strategies for RL post-training. LLMZ ERO builds a tree of training trajectories where LLM agents analyze training dynamics, through textual metrics and visual plots, and then propose targeted hyperparameter transitions condi-tioned on the observed training state. An agentic early stopper terminates unpromising branches in real time, focusing the search budget. UCT (Up-per Confidence bounds applied to Trees) search balances deepening promising branches against ex-ploring alternatives, while checkpoint-based com-position enables multi-stage strategies (§3.2). Across ChemCoTBench (Li et al., 2026), Pa-perSearchQA (Burgess et al., 2026), SSMR-Bench (Wang et al., 2025b), and WildSci (Liu et al., 2026), LLMZ ERO discovers adaptive strategies that improve over the base model by 9% to 140% relative and over grid search by 6% to 15% rela-tive, consistently outperforming random search and skill-based LLM agents under the same iterations of refinement (§4). Notably, LLMZ ERO finds its best strategy within the first 12 iterations on 3 of 4 tasks, demonstrating high iteration efficiency. The discovered strategies exhibit consistent structural patterns that provide actionable design principles for the community (§4.3). Beyond the system itself, our findings demon-strate that optimal strategies are dataset-dependent, consistently exhibit non-monotonic regulariza-tion trajectories, and cannot be prescribed by fixed guidebooks (§4.3.2). Adaptive training via LLMZ ERO consistently improves over base con-figurations from 0.6B to 8B parameters, suggesting that dynamics-aware strategy search generalizes across model scales (§4.4). 
+
+2 Preliminary 
+
+2.1 Training Strategy Formalization 
+
+We formalize three paradigms of increasing com-plexity for RL post-training. Let M0 denote the base model, Θ the hyperparameter space, Ht =
+
+{(s1, r 1), . . . , (st, r t)} the training history up to step t, and μ a validation metric. 
+
+Definition 1 (Single-Stage Training) . A single-stage strategy selects one fixed configuration and trains to completion: 
+
+σstatic = ⟨(θ, 0) ⟩, θ∗ = arg max  
+
+> θ∈Θ
+
+μ(T (M0, θ )) .
+
+(1) 
+
+HPO methods (grid, random, Bayesian) search over Θ by running multiple independent static tri-als. 
+
+Definition 2 (Multi-Stage Training) . A multi-stage strategy is a guidebook-driven sequence of L > 1
+
+phases: 
+
+σmulti = ⟨(θ1, k 1), (θ2, k 2), . . . , (θL, k L)⟩,θℓ ∈ Θ, k ℓ ∈ N, (2) 
+
+where phase ℓ trains with configuration θℓ starting from step kℓ. The schedule structure is specified before training begins and does not systematically depend on training history Ht.
+
+Definition 3 (Adaptive Training) . An adaptive strategy selects both the configuration and the checkpoint to resume from based on observations from prior phases. A transition policy π selects: 
+
+(θℓ, k ℓ, j ℓ) = π({(θi, k i, j i, Hi)}i<ℓ ) , (3) 
+
+where jℓ ∈ { 1, . . . , ℓ −1} identifies which prior phase to resume from. The policy can backtrack to any earlier checkpoint, enabling branching. Nei-ther the number of phases, configurations, transi-tion points, nor resumption targets are determined before training begins. 
+
+RL training is inherently non-stationary: the pace at which exploration must yield to exploita-tion depends on the dataset, model size, and reward structure, all of which are difficult to predict before training begins. An adaptive strategy can respond in real time, but the space of possible transition policies is vast, motivating automated search. 2Figure 1: Overview of LLMZ ERO . The system builds a tree of training trajectories where each node stores a full hyperparameter configuration and resumes from a parent checkpoint, composing multi-stage adaptive strategies via backtracking. At each iteration, the proposer agent analyzes training dynamics (rewards, KL divergence, validation scores, gradient norms) through both text summaries and visual plots, then proposes a new configuration with a checkpoint to resume from. During training, the early stopper periodically overlays the current run’s trajectory against the best completed strategy and terminates dominated runs. 
+
+3 LLMZ ERO 
+
+LLMZ ERO (Figure 1) builds a tree of training tra-jectories where each branch point represents a hy-perparameter transition chosen based on observed training dynamics. This section describes how the system discovers adaptive strategies. 
+
+3.1 Problem Formulation 
+
+Given a dataset D = {(xi, m i)}Ni=1 , a base model 
+
+M0, a training procedure T , and a validation metric 
+
+μ : Y × M → [0 , 1] , we seek an adaptive strategy 
+
+σ∗ maximizing held-out performance: 
+
+σ∗ = arg max 
+
+> σ
+
+E(x,m )∼D val 
+
+μ T (M0, σ )( x), m  ,
+
+s.t. #iterations ≤ B, (4) where σ = ⟨(θ1, k 1), . . . , (θL, k L)⟩ is constructed online (§2.1) under a small budget B (typically 4– 16 iterations, each requiring hours of GPU time). We model the search as a tree problem. Each node represents one training phase. The root uses a default configuration. Children are created by resuming from a parent checkpoint with modified hyperparameters ( evolving ), by fixing failed runs (debugging ), or by starting fresh to maintain diver-sity. Each scratch-to-leaf path forms a candidate multi-stage strategy, and siblings reuse the same parent checkpoint for compute sharing. 
+
+3.2 Tree Search and Subtree Pruning 
+
+LLMZ ERO performs Monte Carlo Tree Search (MCTS) over training trajectories. Each iteration selects a node via UCT, expands it by proposing a hyperparameter transition (or debugging a failure), executes the training phase, and backpropagates the validation score. We adopt a UCT variant with scale-invariant scoring and virtual child competi-tion from prior work; details are reproduced in Appendix D for completeness. 
+
+Subtree pruning. A node is marked terminal 
+
+when it can no longer produce children, and ter-minal subtrees are excluded from selection. When a failed run is debugged successfully, the success-fully fixed descendant is reparented as a sibling of the oldest ancestor in the debug chain, and the entire debug subtree below is pruned. Terminality propagates upward: a node becomes terminal when fully expanded with all children terminal. 
+
+The search loop. Algorithm 1 (Appendix D) gives the full procedure. The key mechanisms are: (1) a proposer agent that performs multimodal analysis of training dynamics (§3.4), (2) an agen-tic early stopper that terminates unpromising runs in real time (§3.5), and (3) forced from-scratch injection to maintain diversity (§3.3). 33.3 Checkpoint-Based Strategy Composition 
+
+When an evolve node is created, it loads its par-ent’s model weights at step k and continues training with modified hyperparameters. Successive transi-tions compose into a multi-stage strategy along the scratch-to-leaf path. We resume only the model weights , reinitializ-ing optimizer state and dataloader position. This allows arbitrary configuration changes at each tran-sition (batch size, learning rate, optimizer type) while avoiding inheritance of suboptimal momen-tum accumulators. Because each checkpoint must persist on disk for potential future resumption, stor-age cost grows linearly with tree depth and training steps. We use LoRA throughout and save only the adapter weights at each checkpoint. This de-sign choice means the LoRA rank is fixed across all phases of a strategy and cannot be modified at transitions. 
+
+Forced from-scratch injection. To prevent the search from exclusively exploiting a potentially suboptimal initial configuration, we enforce a min-imum from-scratch ratio ρmin = 0.2. When 
+
+nscratch /n evolve < ρ min , we select the best-scoring node n∗, create a from-scratch child that does not count against n∗’s branching limit, and withhold checkpoint information from the proposer to ensure a fresh strategy. This is the primary mechanism by which LLMZ ERO escapes a poor default configu-ration. Otherwise, a bad initial run would anchor all subsequent evolve nodes to a weak checkpoint. 
+
+3.4 Dynamics-Aware Transition Proposal 
+
+The proposer agent is the core adaptive compo-nent. It receives the parent node’s training con-figuration, text summaries of step-level metrics, and the best validation score. It also performs vi-sual reasoning over per-metric training curve plots, enabling pattern recognition such as trend inflec-tions, divergence onset, and plateau detection that textual summaries alone may miss. Its reasoning proceeds in four stages: (1) diagnose the parent run’s training health from primary metrics and di-agnostic signals; (2) propose coordinated hyper-parameter changes that address the diagnosed is-sue, reasoning about causal dependencies between parameters (e.g., raising LR to escape a plateau while increasing KL penalty to prevent divergence); (3) make a checkpoint decision (resume from a specific step or train from scratch); and (4) com-pute the epoch budget based on the chosen batch size and checkpoint step. Because even the latest LLMs frequently misinterpret domain-specific GR-PO/PPO metrics and hyperparameters, we inject human-written descriptions to ground the agent’s reasoning without restricting which parameters it can modify (Appendix F). The full prompt template is in Appendix G.1. 
+
+3.5 Agentic Early Stopping 
+
+Every 900 seconds during training, the early stop-per samples current metrics and generates overlay plots comparing the current run’s trajectory (blue) against the best completed strategy (green). It out-puts CONTINUE or STOP with explicit reasoning about whether the current trajectory can realisti-cally overtake the incumbent (full prompt in Ap-pendix G.2). Across all 4 tasks, the early stopper terminated 62.1% of nodes before completion, re-ducing total GPU consumption by an estimated 40–60% relative to running all nodes to comple-tion. 
+
+3.6 Automated Pipeline 
+
+LLMZ ERO includes an automated pipeline that handles data preparation, reward function imple-mentation, training code generation, and job execu-tion. In our evaluation, data processing and reward functions are fixed across all methods to ensure a fair comparison. The adaptive strategy search fol-lows a fixed workflow; the essential LLM-based components are the proposer agent (§3.4) and the 
+
+agentic early stopper (§3.5). Pipeline details are in Appendix B. 
+
+4 Experiments 
+
+We evaluate LLMZ ERO across 4 diverse GRPO tasks to answer: (RQ1) Can adaptive strategies outperform static configurations? (RQ2) Are dis-covered patterns dataset-dependent? (RQ3) How does performance scale with model size? (RQ4) 
+
+How do individual components contribute? (RQ5) 
+
+Do strategies transfer across tasks? 
+
+4.1 Setup Tasks. We evaluate on ChemCoTBench (Li et al., 2026), PaperSearchQA (Burgess et al., 2026), SSMR-Bench (Wang et al., 2025b), and Wild-Sci (Liu et al., 2026). Each dataset is uniformly subsampled to 5,000 train, 500 validation, and 500 test examples to keep per-iteration training time tractable for search. All tasks use GRPO via VeRL (Sheng et al., 2024) (Appendix B.1). 4Table 1: Main results: test score (%) at the best validation node within 16 iterations on Qwen3-4B. Bold : best per column (aggregate only). Underline : second best. Subscripts show gain over the base model. ChemCoT reports category-averaged test accuracy across 3 task families (mol. optimization, 6 subtasks at 0% for all methods, is omitted). SSMR shows per-subtask test scores (Scl=scale, Bea=beat, Cho=chord, Int=interval). WildSci practitioner config scores below Qwen3-4B on weighted test aggregate due to domain-level trade-offs (see §4.3.1). 
+
+ChemCoT (Chem) PaperSearchQA SSMR (Music) WildSci Type Und Edit Rxn Avg Bio Scl Bea Cho Int Avg Sci 
+
+Qwen3-4B – 40.5 8.0 2.3 16.9 31.6 60.0 44.8 50.4 50.4 51.4 53.6 Practitioner Static 61.1 (+20.6) 23.0 (+15.0) 14.9 (+12.6) 33.0 (+16.1) 39.0 (+7.4) 76.8 (+16.8) 60.0 (+15.2) 65.6 (+15.2) 60.8 (+10.4) 65.8 (+14.4) 53.2 (−0.4) 
+
+Random search Static 66.4 (+25.9) 23.0 (+15.0) 28.7 (+26.4) 39.4 (+22.5) 37.6 (+6.0) 90.4 (+30.4) 77.6 (+32.8) 68.8 (+18.4) 60.8 (+10.4) 74.4 (+23.0) 55.8 (+2.2) 
+
+Grid search Static 61.2 (+20.7) 23.4 (+15.4) 20.9 (+18.6) 35.2 (+18.3) 39.0 (+7.4) 87.2 (+27.2) 84.0 (+39.2) 69.6 (+19.2) 69.6 (+19.2) 77.6 (+26.2) 53.0 (−0.6) 
+
+Skill-based LLM agent Adaptive 61.8 (+21.3) 21.4 (+13.4) 27.7 (+25.4) 37.0 (+20.1) 40.2 (+8.6) 96.0 (+36.0) 88.0 (+43.2) 74.4 (+24.0) 61.6 (+11.2) 80.0 (+28.6) 56.6 (+3.0) 
+
+LLMZ ERO Adaptive 69.8 (+29.3) 33.3 (+25.3) 18.5 (+16.2) 40.5 (+23.6) 42.6 (+11.0) 94.4 (+34.4) 81.6 (+36.8) 77.6 (+27.2) 75.2 (+24.8) 82.2 (+30.8) 58.5 (+4.9) 
+
+Models. Primary evaluation uses Qwen3-4B 
+
+(LoRA, rank=64). Scaling analysis spans Qwen3-0.6B through 8B . Base model evaluation: greedy decoding, max response length=8192. Infrastruc-ture: Ray clusters on EKS, 32–64 A100 40G GPUs. 
+
+Baselines. We compare against: (1) a practi-tioner baseline (fixed GRPO recipe tuned on sepa-rate tasks), (2) random search (8 trials from broad HP ranges), (3) grid search (8 trials over LR ×
+
+LoRA rank, selected as the most efficient range based on internal experience), and (4) a skill-based LLM agent built on Claude Code as the orches-tration backend with Claude Opus 4.6 at high rea-soning effort, which autonomously plans iterations and can stop/resume from any checkpoint without tree search or visual reasoning. Because its au-tonomous orchestration maintains full conversation context, each task costs 44–144 × more in API than LLMZ ERO with its fixed workflow, limiting it to 6–9 iterations in practice. Full baseline configura-tions are in Appendix B; budget fairness details are in Appendix B.3. 
+
+4.2 Main Results (RQ1) 
+
+Table 1 presents the test score at the best vali-dation step for each method. The comparison isolates two questions. First, does adaptive beat static (LLMZ ERO vs. practitioner/random/grid search)? Second, does the fixed workflow with tree search outperform a general-purpose LLM agent (LLMZ ERO vs. skill-based LLM agent)? LLMZ ERO outperforms all static baselines on ev-ery task. Notably, the WildSci practitioner config scores below the base model (53.2% vs. 53.6%), yet LLMZ ERO recovers to 58.5%. 
+
+Compute efficiency. Figure 2 plots best-so-far test score against cumulative GPU-hours for each method. LLMZ ERO reaches the highest final test 0 2500 5000 7500 10000 12500 15000 17500                    
+
+> Cumulative GPU-hours (A100)
+> 50
+> 55
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> Test Score (%)
+> SSMR-Bench (Music)
+> Random search
+> Grid search
+> Skill-based LLM agent
+> LLMZero
+> 02000 4000 6000 8000 10000
+> Cumulative GPU-hours (A100)
+> 22.5
+> 25.0
+> 27.5
+> 30.0
+> 32.5
+> 35.0
+> 37.5
+> 40.0
+> Test Score (%)
+> ChemCoT (Chemistry)
+> 01000 2000 3000 4000 5000 6000
+> Cumulative GPU-hours (A100)
+> 36
+> 37
+> 38
+> 39
+> 40
+> 41
+> 42
+> Test Score (%)
+> PaperSearchQA (Biomedical)
+> 01000 2000 3000 4000 5000 6000 7000 8000
+> Cumulative GPU-hours (A100)
+> 53
+> 54
+> 55
+> 56
+> 57
+> 58
+> 59
+> 60
+> Test Score (%)
+> WildSci (Multi-Discipline)
+
+Figure 2: Test score at the best-validation run so far vs. cumulative GPU-hours. Dots show per-run/node test scores; step curves track the test score of whichever run has the highest validation so far. LLMZ ERO (red) achieves the highest final test score on all 4 tasks under comparable total compute. 
+
+score on all 4 tasks under comparable total GPU compute (4,159–10,013 GPU-hours for LLMZ ERO 
+
+vs. 4,543–16,846 for HPO baselines). Early stop-ping terminates 56–70% of nodes before comple-tion. The forced from-scratch injection mechanism (§3.3), which starts new trajectories from scratch at a given ratio to maintain diversity, explains why LLMZ ERO uses more total training time than the skill-based agent. 
+
+API cost. LLMZ ERO ’s fixed workflow con-sumes 44–144 × less API cost than the skill-based agent ($48 vs. $3,545 total; Table 5 in Ap-pendix B.4). 
+
+4.3 Analysis of Discovered Strategies (RQ2) 
+
+We examine whether the adaptive strategies LLMZ ERO discovers are dataset-dependent and what structural patterns emerge. Figure 3 visual-izes the best strategy for each task. 5Node 0   
+
+> Steps 0 59
+> Node 2
+> Steps 60 79
+> Node 3
+> Steps 80 116
+> Node 5
+> Steps 117 119
+> Node 11
+> Steps 120 180
+> 25.0
+> 27.5
+> 30.0
+> 32.5
+> 35.0
+> 37.5
+> 40.0
+> Validation Score (%)
+> 29.2%
+> 31.0%
+> 33.2%
+> 32.8%
+> 35.6%
+> Under-
+> exploring
+> KL spike +
+> len inflation
+> Response
+> truncation
+> Low grad
+> norms
+> Best node
+> ChemCoT (Chemistry)
+> Test
+> Val Node 0
+> Steps 0 99
+> Node 1
+> Steps 100 119
+> Node 2
+> Steps 120 139
+> Node 5
+> Steps 140 312
+> 36
+> 38
+> 40
+> 42
+> 44
+> Validation Score (%)
+> 38.8%
+> 40.8%
+> 40.8%
+> 42.0%
+> High reward
+> variance
+> Noisy
+> updates
+> Val plateau,
+> low clip ratio
+> Best node
+> PaperSearchQA (Biomedical QA)
+> Test
+> Val Node 0
+> Steps 0 19
+> Node 1
+> Steps 20 39
+> Node 4
+> Steps 40 139
+> Node 5
+> Steps 140 200
+> 60
+> 65
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> Validation Score (%)
+> 70.0%
+> 67.2%
+> 83.0%
+> 87.0%
+> Fast
+> convergence
+> Val regressed
+> 70 67%
+> Needs
+> stabilization
+> Best node
+> SSMR-Bench (Music Theory)
+> Test
+> Val Node 0
+> Steps 0 99
+> Node 5
+> Steps 100 119
+> Node 13
+> Steps 120 139
+> Node 15
+> Steps 140 195
+> 54
+> 56
+> 58
+> 60
+> 62
+> 64
+> 66
+> Validation Score (%)
+> 60.8%
+> 62.0% 62.2%
+> 64.0%
+> Weak
+> signal
+> Rising KL,
+> no val gain
+> Low entropy
+> (~0.2)
+> Best node
+> WildSci (Multi-Discipline Science)
+> Test
+> Val
+
+Figure 3: Best adaptive strategies across all four tasks. Green solid: validation score. Blue dashed: test score. Each point is one phase with annotations summarizing observed training dynamics. 
+
+4.3.1 Per-Dataset Strategies ChemCoT (Chemistry). The best strategy is a 5-phase chain (Figure 3). After initial training (val=29.2%), the system widens the clip range and enables advantage normalization while lowering temperature (Phase 2, val=31.0%), then observes a 16 × KL loss spike coinciding with response length inflation (1630 →2278 tokens) without validation improvement, responding with a 5 × KL penalty increase (Phase 3, val=33.2%). This KL diver-gence spike preceded validation degradation by 1– 2 phases, suggesting KL as a leading indicator that practitioners should monitor proactively. Phase 4 expands response capacity (6144 →7168 tokens) with a transient regression (val=32.8%), before Phase 5 addresses low gradient norms ( <0.001) and flat validation by raising LR and rollouts while reducing batch size (val=35.6%). 
+
+Failure case: molecular optimization. Nine subtasks (all mol_opt_* , rxn_retro ,
+
+rxn_nepp , rxn_mechanism ) score 0% across all methods including LLMZ ERO . Molecular opti-mization requires valid SMILES string generation, which is a learned structural capability rather than a reasoning capability. No training strategy can elicit a skill the base model fundamentally lacks at 4B scale. This demonstrates the boundary of adaptive scheduling: it optimizes how to train but cannot compensate for missing model capacity. 
+
+PaperSearchQA (Biomedical QA). The best strategy is a 4-phase chain (Figure 3, test=42.6%, +11.0 pp over the base model). LR and tempera-ture are progressively tightened through Phases 2–3 (val stabilizes at 40.8%), then the proposer diag-noses stagnation (near-zero clip ratio, low gradi-ent norms) and reverses course at Phase 4: LR doubles, temperature increases, and batch size de-creases to break the plateau (val=42.0%). The KL coefficient increases monotonically through-out ( 0.001 → 0.01 ), unlike the non-monotonic trajectories on other tasks. 
+
+SSMR-Bench (Music Theory). The best strat-egy is a 4-phase chain (Figure 3). From Phase 1 (val=70.0%), Phase 2 applies multiple conserva-tive changes simultaneously: reducing LR to 3e-5, doubling KL to 0.002, reducing gradient clip-ping to 0.5, enabling advantage normalization, and raising temperature to 1.1. This over-constrains learning and causes regression to 67.2%. Phase 3 reverses the core constraints (restoring LR to 5e-5, relaxing KL to 0.001, widening clip to 0.30) while retaining the higher temperature, driving a +15.8 pp recovery (val=83.0%). Phase 4 re-tightens for convergence (LR=3e-5, KL=0.002, T=1.0) with expanded response length (6144 →7168 tokens), reaching val=87.0% (test=82.2%). LR and KL os-cillate across phases while epochs and response capacity accumulate monotonically. The agentic early stopper terminated 7 of 10 explored nodes. 6WildSci (Multi-Discipline Science). The best strategy is a 4-phase chain (Figure 3, test=58.5%). After aggressive LR scaling in Phase 2 triggers a KL divergence spike, the system tightens con-straints in Phase 3. This intervention causes an entropy collapse. During this collapse, the vali-dation score increases slightly, but the hidden test score drops. To recover entropy, Phase 4 relaxes the KL penalty, lowers the LR, and raises both the temperature and the clip ratio. This successfully re-covers the hidden test performance, though it does not fully surpass the Phase 2 peak due to the nega-tive effects of Phase 3. Noticeably, the validation score continued to rise even as test performance de-graded during the entropy collapse, which suggests that monitoring comprehensive training dynamics is more robust than optimizing solely for the vali-dation score. 
+
+4.3.2 Cross-Task Structural Patterns 
+
+Three empirical observations emerge from compar-ing strategies across tasks: 
+
+Dataset-specific dynamics determine strategy structure. Each task is characterized by a dif-ferent observable pattern. ChemCoT exhibits KL divergence spikes with response length inflation, PaperSearchQA shows stagnating validation with near-zero clip ratios, SSMR-Bench shows valida-tion regression under conservative hyperparame-ters, and WildSci shows model collapse after ag-gressive LR scaling. These patterns emerge un-predictably during training (ChemCoT’s KL spike appears only after 2 phases) and require interven-tions calibrated to their severity. The KL coefficient trajectories directly reflect these differences: reac-tive spikes for KL divergence, monotonic increase for progressive stabilization, symmetric oscillation for validation regression, and tighten-then-relax for model collapse. No fixed schedule can anticipate which pattern will dominate or when it will mani-fest. 
+
+Multi-dimensional transitions are effective. In all 4 tasks, the highest-gain transition changes 3+ hyperparameters simultaneously in coordinated combinations. For example, ChemCoT Phase 5 simultaneously raises LR and increases KL penalty, a combination the proposer reasoned would escape the plateau without causing divergence. These coor-dinated interventions are unlikely to be discovered by sampling or tuning parameters independently. Notably, the KL coefficient is the most fre-quently adjusted parameter across all best strategies (changed in 12 of 13 transitions), yet it is held con-stant in all surveyed multi-stage works (§1). Its non-monotonic trajectory appears load-bearing: on 3 of 4 tasks, the best strategies tighten KL reac-tively and relax it proactively (PaperSearchQA is the exception, where KL increases monotonically while LR and temperature oscillate instead), sug-gesting that a fixed KL schedule would miss these dynamics on most tasks. 
+
+Capacity parameters accumulate while regular-ization parameters oscillate. Across all 4 best strategies, response length and rollout count ex-hibit zero direction reversals. Learning rate and temperature exhibit 1–2 reversals on every task; the KL coefficient reverses on 3 of 4 tasks but in-creases monotonically on PaperSearchQA, where it serves as a progressively tightening constraint to stabilize noisy updates. This provides a candidate design principle: capacity parameters should accu-mulate monotonically while regularization param-eters should be free to oscillate in response to shift-ing training dynamics. The asymmetry reflects that capacity parameters are information-constructive (reducing them truncates reasoning chains or in-creases gradient variance), while regularization pa-rameters control an exploration-exploitation trade-off whose optimal balance shifts continuously dur-ing training. 
+
+Diagnosis quality. We human-verified all stated observations in the proposer’s diagnoses against metric traces (Tables 8–11): all are correct. Of 13 non-initial transitions across the 4 best strategies, 11 result in improved validation scores. On 3 of 4 tasks, test scores increase monotonically along the best path (Figure 3); on WildSci, one transition regresses but the subsequent phase recovers. 
+
+4.4 Scaling Analysis (RQ3) 
+
+Figure 4 reports average accuracy on SSMR-Bench across model sizes. LLMZ ERO consistently out-performs baselines from 0.6B to 8B, with gains of +30.8 pp to +40.0 pp over the base model. The practitioner config failed with OOM on 8B, while LLMZ ERO autonomously discovered a working configuration (83.6%). This illustrates a practi-cal advantage of dynamics-aware search: it can navigate infrastructure failures that would require manual intervention in fixed-schedule approaches, effectively expanding the feasible configuration 70.6B 1.7B 4B 8B 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> 32 .4
+> 31 .6
+> 51 .4
+> 52 .6
+> 53.0
+> 52.2
+> 65.8
+> OOM
+> 72 .4
+> 62 .4
+> 82 .2
+> 83 .6
+
+Model Size 
+
+> Average Accuracy (%)
+
+Qwen3 (base) Practitioner LLMZ ERO 
+
+Figure 4: Model scaling on SSMR-Bench (average across 4 subtasks). LLMZ ERO consistently outper-forms baselines across all sizes. Practitioner config failed (OOM) on 8B; LLMZ ERO autonomously found a working configuration. Per-subtask breakdown in Ta-ble 7 (Appendix C.3). 
+
+space at larger scales. Per-subtask results are in Table 7 (Appendix C.3). 
+
+4.5 Ablation Studies (RQ4) 
+
+Table 2 ablates key components on SSMR-Bench to distinguish which drive accuracy gains versus compute efficiency. Removing multi-stage compo-sition drops accuracy by 9.4 pp (82.2% →72.8%), confirming that the ability to compose adaptive multi-stage strategies is the primary driver of im-provement; without it, the system reduces to select-ing the best single-phase configuration from the same search budget. Removing visual reasoning or early stopping yields on-par accuracy (82.4% and 82.8%), but at substantially worse compute ef-ficiency (0.6 × and 0.29 × respectively). Visual rea-soning enables the early stopper to reliably judge trajectory dominance from overlay plots, while early stopping itself focuses compute on promising branches. Together they reduce wall-clock time without sacrificing strategy quality. 
+
+4.6 Strategy Transfer (RQ5) 
+
+We test whether multi-stage structure alone drives improvement by executing two fixed schedules on three held-out tasks (Table 3): the discovered SSMR-Bench 4-phase strategy, and a Capacity Guidebook that progressively increases only re-sponse length and rollout count following the dom-inant community practice (Luo et al., 2025b; Chen et al., 2025a) (Table 13), with stage durations es-timated from our successful trajectories. Both fixed schedules improve over the base model on all 
+
+Table 2: Ablation on SSMR-Bench: test accuracy (%) at best validation node. Speed is relative compute effi-ciency normalized to the full system.                                
+
+> Variant Scl Bea Cho Int Avg Speed
+> LLMZ ERO (full) 94.4 81.6 77.6 75.2 82.2 1.0 ×
+> w/o visual reasoning 93.6 85.6 80.0 70.4 82.4 0.6 ×
+> w/o multi-stage 88.8 78.4 62.4 61.6 72.8 0.22 ×
+> w/o early stopping 93.6 90.4 75.2 72.0 82.8 0.29 ×
+
+Table 3: Strategy transfer: test scores (%) for fixed multi-stage schedules on held-out tasks. SSMR trans-fer applies the discovered 4-phase strategy. Capacity Guidebook applies only progressive capacity scaling.                          
+
+> Dataset Practitioner Random SSMR transfer Cap. Guidebook LLMZ ERO
+> PaperSearchQA 39.0 37.6 36.2 37.8 42.6
+> WildSci 53.2 55.8 58.3 58.4 58.5
+> ChemCoT 33.0 39.4 41.3 36.6 40.5 Average 41.7 44.3 45.3 44.3 47.2
+
+tasks (+4.6 to +24.4 pp for SSMR transfer, +4.8 to +19.7 pp for the Guidebook), confirming that multi-stage training is broadly beneficial. However, their gains are inconsistent: the SSMR transfer nearly matches adaptive search on WildSci (58.3% vs. 58.5%) but underperforms by 6.4 pp on Pa-perSearchQA, while the Guidebook lags the SSMR transfer by 4.7 pp on ChemCoT. These inconsis-tencies demonstrate that fixed schedules cannot al-ways reliably generalize across tasks without adapt-ing to observed training dynamics. Notably, the strong transfer performance on some tasks may ben-efit from identical dataset sizes and the same base model, which produce similar training dynamics; adaptive search remains necessary for robustness when dataset scale or model family varies (More analysis in Appendix C.5). 
+
+5 Conclusion 
+
+We have identified a recurring structural asymme-try in the optimal multi-stage reinforcement learn-ing paradigm for LLMs: capacity parameters (re-sponse length, rollouts, etc.) accumulate mono-tonically while regularization parameters (learning rate, KL coefficient, temperature, etc.) predom-inantly oscillate in response to shifting training dynamics. We discovered this through LLMZ ERO ,a system where LLM agents reason about train-ing dynamics at each checkpoint, proposing co-ordinated multi-parameter transitions that address diagnosed pathologies. Across 4 diverse GRPO tasks, adaptive strategies embodying this principle improve over the base model by 9% to 140% rel-ative and over grid search by 6% to 15% relative, 8outperforming all baselines. These findings sug-gest that the multi-stage training paradigm’s current focus on staging one or two capacity parameters leaves substantial performance on the table, and that dynamics-aware, multi-dimensional adaptation is needed to realize its full potential. 
+
+Limitations 
+
+Our system expands one node at a time; a hybrid with population-based training (Jaderberg et al., 2017) that maintains multiple trajectories with LLM-guided transitions would combine broad ex-ploration with intelligent proposals and is a natural next step. The search uses 500 validation examples for checkpoint selection and early stopping to main-tain reasonable per-step evaluation time, with strict separation from test data; a larger validation set would yield more robust checkpoint selection at the cost of longer evaluation cycles. All experiments use the Qwen3 family; while scaling from 0.6B to 8B shows robustness within this family, gen-eralization to larger models or other architectures remains unverified. All datasets are subsampled to 5,000 training examples to keep per-iteration search tractable; validating that discovered strate-gies and structural patterns hold at production data scales requires substantially more compute and is left to future work. 
+
+References 
+
+James Bergstra and Yoshua Bengio. 2012. Random search for hyper-parameter optimization. Journal of Machine Learning Research , 13(10):281–305. James Burgess, Jan N. Hansen, Duo Peng, Yuhui Zhang, Alejandro Lozano, Min Woo Sun, Emma Lund-berg, and Serena Yeung-Levy. 2026. Papersearchqa: Learning to search and reason over scientific papers with rlvr. Preprint , arXiv:2601.18207. Yang Chen, Zhuolin Yang, Zihan Liu, Chankyu Lee, Peng Xu, Mohammad Shoeybi, Bryan Catanzaro, and Wei Ping. 2025a. Acereason-nemotron: Advanc-ing math and code reasoning through reinforcement learning. Preprint , arXiv:2505.16400. Zhipeng Chen, Yingqian Min, Beichen Zhang, Jie Chen, Jinhao Jiang, Daixuan Cheng, Wayne Xin Zhao, Zheng Liu, Xu Miao, Yang Lu, Lei Fang, Zhongyuan Wang, and Ji-Rong Wen. 2025b. An empirical study on eliciting and improving r1-like reasoning models. 
+
+Preprint , arXiv:2503.04548. Yizhou Chi, Yizhang Lin, Sirui Hong, Duyi Pan, Yay-ing Fei, Guanghao Mei, Bangbang Liu, Tianqi Pang, Jacky Kwok, Ceyao Zhang, Bang Liu, and Chenglin Wu. 2024. Sela: Tree-search enhanced llm agents for automated machine learning. Preprint ,arXiv:2410.17238. Yaxin Du, Xiyuan Yang, Zhifan Zhou, Wanxu Liu, Zixing Lei, Zimeng Chen, Fenyi Liu, Haotian Wu, Yuzhu Cai, Zexi Liu, and 1 others. 2026. Datamaster: Towards autonomous data engineering for machine learning. arXiv preprint arXiv:2605.10906 .Haoyang Fang, Boran Han, Nick Erickson, Xiyuan Zhang, Su Zhou, Anirudh Dagar, Jiani Zhang, Ali Caner Turkmen, Cuixiong Hu, Huzefa Rang-wala, Ying Nian Wu, Bernie Wang, and George Karypis. 2025. Mlzero: A multi-agent system for end-to-end machine learning automation. Preprint ,arXiv:2505.13941. Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhu-oshu Li, Ziyi Gao, Aixin Liu, and 175 others. 2025. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature , 645(8081):633–638. Shibo Hao, Yi Gu, Haodi Ma, Joshua Jiahua Hong, Zhen Wang, Daisy Zhe Wang, and Zhiting Hu. 2023. Reasoning with language model is planning with world model. Preprint , arXiv:2305.14992. Yifan Hao, Fangning Chao, Yaqian Hao, Zhaojun Cui, Huan Bai, Haiyu Zhang, Yankai Liu, Chao Deng, and Junlan Feng. 2025. Jt-math: A multi-stage frame-work for advanced mathematical reasoning in large language models. Preprint , arXiv:2507.19748. Jujie He, Jiacai Liu, Chris Yuhao Liu, Rui Yan, Chaojie Wang, Peng Cheng, Xiaoyu Zhang, Fuxiang Zhang, Jiacheng Xu, Wei Shen, Siyuan Li, Liang Zeng, Tian-wen Wei, Cheng Cheng, Bo An, Yang Liu, and Yahui Zhou. 2025. Skywork open reasoner 1 technical re-port. Preprint , arXiv:2505.22312. Max Jaderberg, Valentin Dalibard, Simon Osindero, Wo-jciech M. Czarnecki, Jeff Donahue, Ali Razavi, Oriol Vinyals, Tim Green, Iain Dunning, Karen Simonyan, Chrisantha Fernando, and Koray Kavukcuoglu. 2017. Population based training of neural networks. 
+
+Preprint , arXiv:1711.09846. Yunjie Ji, Sitong Zhao, Xiaoyu Tian, Haotian Wang, Shuaiting Chen, Yiping Peng, Han Zhao, and Xian-gang Li. 2025. How difficulty-aware staged rein-forcement learning enhances llms’ reasoning capa-bilities: A preliminary experimental study. Preprint ,arXiv:2504.00829. Zhengyao Jiang, Dominik Schmidt, Dhruv Srikanth, Dixing Xu, Ian Kaplan, Deniss Jacenko, and Yuxiang Wu. 2025. Aide: Ai-driven exploration in the space of code. Preprint , arXiv:2502.13138. Feiyang Kang, Hanze Li, Adam Nguyen, Mahavir Dabas, Jiaqi W Ma, Frederic Sala, Dawn Song, and Ruoxi Jia. 2026. Can generalist agents automate data curation? arXiv preprint arXiv:2606.04261 .
+
+9Huiyuan Lai and Malvina Nissim. 2026. Tacler: Tai-lored curriculum reinforcement learning for efficient reasoning. Preprint , arXiv:2601.21711. Hao Li, He Cao, Bin Feng, Yanjun Shao, Xiangru Tang, Zhiyuan Yan, Li Yuan, Yonghong Tian, and Yu Li. 2026. Beyond chemical qa: Evaluating llm’s chem-ical reasoning with modular chemical operations. 
+
+Preprint , arXiv:2505.21318. Lisha Li, Kevin Jamieson, Giulia DeSalvo, Afshin Ros-tamizadeh, and Ameet Talwalkar. 2018. Hyperband: A novel bandit-based approach to hyperparameter optimization. Preprint , arXiv:1603.06560. Tengxiao Liu, Deepak Nathani, Zekun Li, Kevin Yang, and William Yang Wang. 2026. Wildsci: Advanc-ing scientific reasoning from in-the-wild literature. 
+
+Preprint , arXiv:2601.05567. Michael Luo, Sijun Tan, Roy Huang, Ameen Patel, Al-pay Ariyak, Qingyang Wu, Xiaoxiang Shi, Rachel Xin, Colin Cai, Maurice Weber, Ce Zhang, Li Erran Li, Raluca Ada Popa, and Ion Stoica. 2025a. Deep-coder: A fully open-source 14b coder at o3-mini level. Notion Blog. Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi, William Y. Tang, Manan Roongta, Colin Cai, Jeffrey Luo, Li Erran Li, Raluca Ada Popa, and Ion Stoica. 2025b. Deepscaler: Surpassing o1-preview with a 1.5b model by scaling rl. Notion Blog. Yun Luo, Futing Wang, Qianjia Cheng, Fangchen Yu, Haodi Lei, Jianhao Yan, Chenxi Li, Jiacheng Chen, Yufeng Zhao, Haiyuan Wan, Yuchen Zhang, Shenghe Zheng, Junchi Yao, Qingyang Zhang, Haonan He, Wenxuan Zeng, Li Sheng, Chengxing Xie, Yuxin Zuo, and 12 others. 2026. P1-vl: Bridging visual per-ception and scientific reasoning in physics olympiads. 
+
+Preprint , arXiv:2602.09443. Xingtai Lv, Yuxin Zuo, Youbang Sun, Hongyi Liu, Yun-tian Wei, Zhekai Chen, Xuekai Zhu, Kaiyan Zhang, Bingning Wang, Ning Ding, and 1 others. 2025. To-wards a unified view of large language model post-training. arXiv preprint arXiv:2509.04419 .Alexander Novikov, Ngân V ˜u, Marvin Eisenberger, Em-ilien Dupont, Po-Sen Huang, Adam Zsolt Wagner, Sergey Shirobokov, Borislav Kozlovskii, Francisco J. R. Ruiz, Abbas Mehrabian, M. Pawan Kumar, Abi-gail See, Swarat Chaudhuri, George Holland, Alex Davies, Sebastian Nowozin, Pushmeet Kohli, and Matej Balog. 2025. Alphaevolve: A coding agent for scientific and algorithmic discovery. Preprint ,arXiv:2506.13131. Rafael Rafailov, Archit Sharma, Eric Mitchell, Stefano Ermon, Christopher D. Manning, and Chelsea Finn. 2024. Direct preference optimization: Your lan-guage model is secretly a reward model. Preprint ,arXiv:2305.18290. Ben Rank, Hardik Bhatnagar, Ameya Prabhu, Shira Eisenberg, Karina Nguyen, Matthias Bethge, and Maksym Andriushchenko. 2026. Posttrainbench: Can llm agents automate llm post-training? arXiv preprint arXiv:2603.08640 .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. Deepseekmath: Pushing the limits of mathemati-cal reasoning in open language models. Preprint ,arXiv:2402.03300. Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2024. Hybridflow: A flexible and efficient rlhf framework. arXiv preprint arXiv: 2409.19256 .Jasper Snoek, Hugo Larochelle, and Ryan P. Adams. 2012. Practical bayesian optimization of machine learning algorithms. Preprint , arXiv:1206.2944. Mingyang Song, Mao Zheng, Zheng Li, Wenjie Yang, Xuan Luo, Yue Pan, and Feng Zhang. 2025. Fastcurl: Curriculum reinforcement learning with stage-wise context scaling for efficient training r1-like reasoning models. Preprint , arXiv:2503.17287. Fanqi Wan, Weizhou Shen, Shengyi Liao, Yingcheng Shi, Chenliang Li, Ziyi Yang, Ji Zhang, Fei Huang, Jingren Zhou, and Ming Yan. 2025. Qwenlong-l1: Towards long-context large reasoning models with reinforcement learning. Preprint , arXiv:2505.17667. Zhenting Wang, Guofeng Cui, Yu-Jhe Li, Kun Wan, and Wentian Zhao. 2025a. Dump: Automated distribution-level curriculum learning for rl-based llm post-training. arXiv preprint arXiv:2504.09710 .Zhilin Wang, Zhe Yang, Yun Luo, Yafu Li, Xiaoye Qu, Ziqian Qiao, Haoran Zhang, Runzhe Zhan, Derek F. Wong, Jizhe Zhou, and Yu Cheng. 2025b. Towards an ai musician: Synthesizing sheet music problems for musical reasoning. Preprint , arXiv:2509.04059. Haoming Wen, Yushi Bai, Juanzi Li, and Jie Tang. 2025. Siri: Scaling iterative reinforcement learning with in-terleaved compression. Preprint , arXiv:2509.25176. LLM-Core Xiaomi, :, Bingquan Xia, Bowen Shen, Cici, Dawei Zhu, Di Zhang, Gang Wang, Hailin Zhang, Huaqiu Liu, Jiebao Xiao, Jinhao Dong, Liang Zhao, Peidian Li, Peng Wang, Shihua Yu, Shimao Chen, Weikun Wang, Wenhan Ma, and 46 others. 2025. Mimo: Unlocking the reasoning potential of language model – from pretraining to posttraining. 
+
+Preprint , arXiv:2505.07608. Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and Karthik Narasimhan. 2023. Tree of thoughts: Deliber-ate problem solving with large language models. 
+
+Preprint , arXiv:2305.10601. 
+
+10 Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, and 1 others. 2025. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 .
+
+Contents 
+
+1 Introduction 12 Preliminary 2
+
+2.1 Training Strategy Formalization . 2
+
+3 LLMZ ERO 3
+
+3.1 Problem Formulation . . . . . . . 33.2 Tree Search and Subtree Pruning . 33.3 Checkpoint-Based Strategy Com-position . . . . . . . . . . . . . . 43.4 Dynamics-Aware Transition Proposal 43.5 Agentic Early Stopping . . . . . . 43.6 Automated Pipeline . . . . . . . . 4
+
+4 Experiments 4
+
+4.1 Setup . . . . . . . . . . . . . . . 44.2 Main Results (RQ1) . . . . . . . . 54.3 Analysis of Discovered Strategies (RQ2) . . . . . . . . . . . . . . . 54.3.1 Per-Dataset Strategies . . 64.3.2 Cross-Task Structural Pat-terns . . . . . . . . . . . . 74.4 Scaling Analysis (RQ3) . . . . . . 74.5 Ablation Studies (RQ4) . . . . . . 84.6 Strategy Transfer (RQ5) . . . . . 8
+
+5 Conclusion 8A Related Work 12 B Experimental Setup Details 13 
+
+B.1 Task Details . . . . . . . . . . . . 13 B.2 Baseline Configurations . . . . . . 13 B.3 Compute Budget Fairness . . . . . 14 B.4 API Cost . . . . . . . . . . . . . . 14 B.5 Model and Infrastructure . . . . . 14 B.6 LLMZ ERO Configuration . . . . . 14 B.7 Skill-Based LLM Agent . . . . . 14 
+
+C Additional Results and Analysis 15 
+
+C.1 Search Convergence . . . . . . . . 15 C.2 ChemCoT Per-Subtask Breakdown 15 C.3 Model Scaling Detailed Results . . 15 C.4 Best Discovered Strategy Configu-rations . . . . . . . . . . . . . . . 15 C.5 Capacity Guidebook Analysis . . 15 
+
+D Search Algorithm Details 16 
+
+D.1 Search Loop Pseudocode . . . . . 17 D.2 UCT Computation . . . . . . . . 17 D.3 Virtual New Child Competition . . 18 11 E Detailed Per-Run Results 19 
+
+E.1 HPO Baseline Configurations . . . 19 E.2 Per-Run Results: Random Search 19 E.3 Per-Run Results: Grid Search . . . 19 E.4 Per-Iteration Results: Skill-Based LLM Agent . . . . . . . . . . . . 19 E.5 Per-Node Results: LLMZ ERO . . 19 
+
+F Human Knowledge Injection 19 
+
+F.1 Metric Descriptions . . . . . . . . 19 F.2 Hyperparameter Descriptions . . . 19 
+
+G Agent Prompts 20 
+
+G.1 Proposer Agent Prompt . . . . . . 20 G.2 Early Stopper Agent Prompt . . . 20 
+
+H Ethics and Artifact Documentation 20 I Use of AI 24 
+
+A Related Work 
+
+Multi-stage RL post-training. Progressive re-sponse length extension is the dominant pattern: DeepScaleR (Luo et al., 2025b) introduced 3-stage length scaling (8K →16K →24K), replicated by AceReason-Nemotron (Chen et al., 2025a) (4 stages to 32K), DeepCoder (Luo et al., 2025a) (code, 16K →32K), MiMo (Xiaomi et al., 2025) (32K →48K), and others (He et al., 2025; Hao et al., 2025; Chen et al., 2025b; Wan et al., 2025; Guo et al., 2025). Data difficulty staging (Chen et al., 2025a; Lai and Nissim, 2026; Song et al., 2025; Ji et al., 2025) and compression-extension cycles (Song et al., 2025; Wen et al., 2025) pro-vide complementary patterns, while most of them hold learning rate, KL coefficient, temperature, and batch size constant across stages, leaving most of the hyperparameter space unexplored at transitions. 
+
+Adaptive training and HPO. Population-based training (PBT) (Jaderberg et al., 2017) is the closest methodological ancestor: it also discovers hyper-parameter schedules during training by evolving a population of configurations. The key differences are: (1) PBT transitions via scalar fitness rank-ing and random perturbation, while LLMZ ERO 
+
+diagnoses specific pathologies and proposes co-ordinated interventions; (2) PBT requires a pop-ulation (typically 10–80 parallel workers), while LLMZ ERO operates sequentially with checkpoint reuse under severe budget constraints; (3) PBT’s output is an opaque schedule, while LLMZ ERO ’s diagnostic analysis produces transferable design principles (validated by our cross-task transfer re-sults). PBT excels in GPU-rich regimes where broad parallel exploration is cheap; even a minimal population of 8 workers would require 256 concur-rent A100 GPUs (8 ×32 GPUs per training run), placing it beyond our compute budget. Random search (Bergstra and Bengio, 2012), Bayesian opti-mization (Snoek et al., 2012), and Hyperband (Li et al., 2018) search over static configurations with-out adapting within a training run. LLMZ ERO 
+
+searches over configuration sequences conditioned on training dynamics, staging parameters the liter-ature holds constant with non-monotonic trajecto-ries. 
+
+Agentic ML automation. Several concurrent systems apply LLM agents with tree-structured exploration to ML automation. SELA (Chi et al., 2024) uses MCTS for ML pipeline configuration; 12 AIDE (Jiang et al., 2025) applies tree search to data science competitions; MLZero (Fang et al., 2025) provides end-to-end automation across modalities; and AlphaEvolve (Novikov et al., 2025) applies evolutionary search to code. LLMZ ERO targets a fundamentally different search space: RL post-training trajectories where (1) each evaluation costs much more GPU time, imposing severe budget constraints; (2) nodes are not independent solu-tions but training phases that compose via check-point resumption into multi-stage strategies; (3) the search must reason about non-stationary training dynamics (KL divergence spikes, model collapse, reward stagnation, etc.) rather than static metrics; and (4) the proposer must make coordinated multi-dimensional hyperparameter changes conditioned on the observed training state. These challenges motivate our dynamics-aware proposal mechanism and agentic early stopping. Our contributions to the search process are: re-defining nodes as training phases with checkpoint composition (§3.3), dynamics-aware multimodal proposals (§3.4), agentic early stopping (§3.5), and forced from-scratch injection (§3.3). The UCT value function with virtual child competition is adopted from prior work. Tree-of-Thought (Yao et al., 2023) and RAP (Hao et al., 2023) apply tree search at inference time where simulations are cheap; LLMZ ERO applies it at training time where each node requires hours of GPU compute. While our approach focuses on optimizing RL training trajectories, a concurrent line of work shifts the focus of agentic ML automation toward autonomous data collection and curation. For in-stance, PostTrainBench (Rank et al., 2026) evalu-ates agents on their ability to autonomously gather and curate external data to optimize the post-training phase of base LLMs. Similarly, the Data-Master (Du et al., 2026) framework isolates the data engineering process, using tree-structured search and cumulative memory to let agents discover, clean, and compose datasets without altering the un-derlying learning algorithm. Exploring a related au-tomated curation loop, Curation-Bench (Kang et al., 2026) demonstrates that properly scaffolded agents can autonomously compose highly efficient data-selection policies that outperform standard base-lines. These data-centric approaches complement our dynamics-aware search by targeting dataset optimization rather than training trajectory search. 
+
+LLM post-training methods. Current LLM pipelines utilize a variety of optimization algo-rithms for RL training, including PPO (Schul-man et al., 2017), DPO (Rafailov et al., 2024), GRPO (Shao et al., 2024), GSPO (Zheng et al., 2025), etc. LLMZ ERO does not introduce a new alignment objective; instead, it automates the train-ing strategy required to effectively deploy them. We demonstrate the efficacy of our approach specif-ically using GRPO, leaving its application to other algorithms for future work. 
+
+B Experimental Setup Details 
+
+B.1 Task Details 
+
+Table 4 summarizes the four evaluation tasks. All datasets are uniformly subsampled to 5,000 train, 500 validation, and 500 test examples. The dy-namic orchestration workflow automatically de-signs a task-specific reward function for each dataset. All datasets use fixed, deterministic splits with subsampled train ( ≤5,000), validation ( ≤500), and test ( ≤500) sets. Base model performance (0.6B and 4B columns) is measured via greedy decoding (pass@1, temperature=0) with extended thinking and max response length=8192 on 2 nodes × 8A100 40G GPUs. 
+
+B.2 Baseline Configurations Practitioner baseline. A carefully tuned general-purpose GRPO recipe for Qwen3 (on 8x A100 40G GPUs), developed through internal iteration on separate tasks (e.g., math reasoning) and applied without task-specific modification. Single static configuration ( L = 1 ). 
+
+Random search. 8 trials with configurations sampled from: learning rate ∼ LogUniform(1e-5, 1e-4), KL coefficient ∼ LogUniform(1e-5, 1e-3), temperature ∼ Uniform(0.6, 1.2), clip ratio ∼
+
+Uniform(0.15, 0.35), batch size ∈ { 64, 128, 256 },LoRA rank ∈ { 16, 32, 64, 128 }, rollout count 
+
+∈ { 6, 8, 12 }, epochs ∈ { 3, 5 }. Each trial runs to completion without early stopping. 
+
+Skill-based LLM agent. An autonomous LLM agent (Claude Opus 4.6) built on the same training infrastructure to LLMZ ERO (VeRL, reward func-tions, hyperparameter space). Unlike LLMZ ERO ’s fixed workflow where each stage has a determinis-tic prompt template, the iterative agent uses a skill-based general workflow: the LLM autonomously plans and orchestrates each iteration, invoking 13 Table 4: Evaluation tasks. All tasks train with GRPO via VeRL. For ChemCoT we report the average over subtasks in this table.                               
+
+> Dataset Domain Answer format Metric Train 0.6B 4B
+> ChemCoT Chemistry (19 subtasks) Mixed (SMILES, MCQ) Task-specific 5,000 15.4 14.6 PaperSearchQA Biomedical QA Short text Exact match 5,000 11.6 31.6 SSMR-Bench Music theory MCQ (A to D) EM accuracy 5,000 32.4 51.4 WildSci Multi-discipline science MCQ (A to J) EM accuracy 5,000 29.4 53.6
+
+skills for dataset preparation, reward design, job submission, metric diagnosis, and checkpoint re-sume. This generality makes it more flexible but less token-efficient (44–144 × higher API cost) since the LLM must maintain full context across all decisions. It can stop training at any time and resume from any previous checkpoint, without ex-plicit tree search or visual reasoning. 
+
+B.3 Compute Budget Fairness 
+
+Random and grid search each run 8 full-length training runs to completion and achieve similar to-tal GPU-hours to LLMZ ERO . Both LLMZ ERO 
+
+and the skill-based LLM agent have a maximum of 16 iterations, but the skill-based agent is limited to less than 700 GPU-hours of total runtime due to its significant API cost (Table 5). This budget is sufficient for convergence: the agent does not force restarts from scratch, and its validation scores begin to plateau or decrease near the end of its time limit (Table 17, Figure 2). Notably, LLMZ ERO ’s best discovered strategy on all four tasks originates from the root node (the practitioner default con-figuration), indicating that the default is a strong starting point and that forced from-scratch injec-tion, while necessary for robustness, was not the source of the best strategies in these experiments. 
+
+B.4 API Cost 
+
+Table 5 compares API costs between LLMZ ERO 
+
+and the skill-based LLM agent. The fixed work-flow with structured prompts at each stage con-sumes 73 × less total API cost than the agent’s autonomous orchestration, which must maintain full conversation context across all decisions. 
+
+B.5 Model and Infrastructure 
+
+All experiments use Qwen3-4B as the base model with LoRA. Training uses a modified version of VeRL (for better LoRA support, etc.) on Ray clus-ters deployed on AWS EKS with 4 to 8 ×A100 40G nodes. The scaling experiment (Table 7) addition-ally evaluates Qwen3-0.6B, 1.7B, and 8B. 
+
+Table 5: LLM API cost comparison (ratios from un-rounded costs). LLMZ ERO ’s structured pipeline uses 44–144 × less API cost than the skill-based LLM agent.                    
+
+> Dataset LLMZ ERO ($) LLM Agent ($) Ratio
+> ChemCoT 14 639 44 ×
+> PaperSearchQA 11 635 58 ×
+> WildSci 15 1,125 74 ×
+> SSMR-Bench 81,146 144 ×
+> Total 48 3,545 73 ×
+
+B.6 LLMZ ERO Configuration 
+
+C = 1 .414 , T = 0 .3, wf = 0 .5, we = 0 .3, of =2, max evolve children = 2, max debug children = 3, max debug depth = 5, ρmin = 0 .2, early stopping interval = 900s. LLM backbone: Claude 4.6 Sonnet for all agents. 
+
+B.7 Skill-Based LLM Agent 
+
+The skill-based LLM agent uses Claude Opus 4.6 as an autonomous orchestrator with unrestricted tool access. Rather than a fixed pipeline, the agent is equipped with 8 skills , which are natural lan-guage instruction sets that the LLM invokes as needed: 1. prepare-dataset : Download and con-vert data to VeRL parquet format 2. define-reward : Analyze dataset and write a compute_score() reward func-tion 3. validate-run : Pre-flight evaluation on a sample 4. generate-config : Write a full VeRL sweep configuration 5. download-model : Download the base model 6. submit-training : Generate and submit SLURM jobs 7. check-training : Monitor metrics, diag-nose training health, recommend action 14 8. gather-results : Parse outputs and write a report The agent’s optimization loop proceeds as: (1) submit a training job, (2) poll metrics at 5– 30 minute intervals, (3) perform a 14-parameter diagnostic analysis producing a per-parameter ver-dict (KEEP/INCREASE/DECREASE) based on observed KL divergence, gradient norms, clip ra-tios, and validation trends, (4) decide whether to continue, early-stop, tune-and-resume from the best checkpoint, or restart from scratch. The agent can also be coupled with LLMZ ERO 
+
+to form an end-to-end training experience with static workflow as search backend. 
+
+Key differences from LLMZ ERO . The agent maintains full conversation context across all de-cisions (leading to long token histories), plans its own workflow (may skip or reorder stages), and tends to always resume from the single best check-point in a linear chain. It analyzes only numerical metrics (no visual training curves). These design choices make it more flexible than LLMZ ERO ’s fixed harness but 44–144 × less token-efficient. 
+
+Budget limitation. Due to high API cost ($635– 1,146 per task), the agent was limited to 6–9 train-ing iterations (488–709 GPU-hours) rather than the full 16-iteration budget allocated to LLMZ ERO .This limitation is inherent to the agent’s de-sign: autonomous orchestration requires maintain-ing full conversation context, making each itera-tion 44–144 × more expensive in API cost than LLMZ ERO ’s fixed prompts. A budget-matched comparison at equal GPU-hours would require ei-ther reducing the agent to 1–2 iterations or spend-ing $10K+ per task, neither of which yields a mean-ingful evaluation. Despite this handicap, it achieves competitive results (Table 1), confirming that LLM reasoning about training dynamics is broadly effec-tive. The advantage of LLMZ ERO comes from its tree structure and fixed harness rather than from a fundamentally different reasoning capability. 
+
+C Additional Results and Analysis 
+
+C.1 Search Convergence 
+
+Figure 5 shows best-so-far validation score vs. search iteration for all 4 tasks. LLMZ ERO sur-passes the practitioner baseline early in the search and continues improving throughout the budget. 0 2 4 6 8 10 12 14                   
+
+> Search Iteration
+> 38
+> 39
+> 40
+> 41
+> 42
+> Validation Score (%)
+> Expert
+> 42.0%
+> PaperSearchQA (Biomedical QA) 02468
+> Search Iteration
+> 50
+> 60
+> 70
+> 80
+> 90
+> Best Validation Score (%)
+> Zero-shot
+> Expert
+> 87.0%
+> 70.0%
+> SSMR-Bench (Music Theory) 0246810 12 14
+> Search Iteration
+> 22
+> 24
+> 26
+> 28
+> 30
+> 32
+> 34
+> 36
+> Validation Score (%)
+> Expert
+> 35.6%
+> ChemCoT (Chemistry) 0246810 12 14
+> Search Iteration
+> 52
+> 54
+> 56
+> 58
+> 60
+> 62
+> 64
+> Best Validation Score (%)
+> Zero-shot
+> Expert
+> 64.0%
+> 60.8%
+> WildSci (Multi-Discipline Science)
+
+Figure 5: Best-so-far validation score vs. search iter-ation. LLMZ ERO surpasses the practitioner baseline early in the search and continues improving throughout the budget. 
+
+C.2 ChemCoT Per-Subtask Breakdown 
+
+Table 6 reports per-subtask test accuracy for Chem-CoT. 
+
+C.3 Model Scaling Detailed Results 
+
+Table 7 reports per-subtask results for the scaling analysis on SSMR-Bench. 
+
+C.4 Best Discovered Strategy Configurations 
+
+Tables 8–11 detail the full hyperparameter configu-ration at each phase of the best discovered strategy for each task. For each phase, we report the node ID in the search tree, the training step range, the proposer’s diagnosis that triggered the transition, and the complete configuration. 
+
+C.5 Capacity Guidebook Analysis 
+
+Comparing the Capacity Guidebook to the full SSMR transfer (Table 3) isolates the contribution of regularization oscillation versus pure capacity expansion. 
+
+WildSci. Both schedules converge to near-identical performance (58.3% vs. 58.4% vs. LLMZ ERO ’s 58.5%), confirming that expanded reasoning capacity, rather than hyperparameter os-cillation, drives improvement on this task. 
+
+ChemCoT. The SSMR transfer (41.3%) sub-stantially outperforms the Capacity Guidebook (36.6%), indicating that LR/KL oscillation pro-vides +4.7 pp beyond pure capacity scaling, con-sistent with the KL divergence spike diagnosis in §4.3.1. 15 Table 6: ChemCoT per-subtask test accuracy (%) for Qwen3-4B (pass@1, rl=8192), the first training run (Node 0), and the best discovered strategy (Node 11, 5-phase adaptive). Subtasks sorted by Node 11 accuracy. Nine subtasks scoring 0% across all conditions are omitted (all mol_opt_* , rxn_retro , rxn_nepp , rxn_mechanism ). 
+
+Note that the average number here refers to average over subtasks which is different from the average over domains in main table. 
+
+Category Subtask Base Node 0 Node 11 
+
+Mol. Understanding fg_count 75.9 82.8 (+6.9) 96.6 (+20.7) 
+
+ring_count 16.1 80.6 (+64.5) 93.5 (+77.4) 
+
+ring_system 70.0 83.3 (+13.3) 86.7 (+16.7) 
+
+equivalence 37.0 55.6 (+18.6) 55.6 (+18.6) 
+
+murcko 3.3 3.3 (+0.0) 16.7 (+13.4) 
+
+Mol. Editing substitution 0.0 31.0 (+31.0) 58.6 (+58.6) 
+
+deletion 20.7 37.9 (+17.2) 34.5 (+13.8) 
+
+addition 3.4 0.0 6.9 (+3.5) 
+
+Reaction reagent/catalyst 11.5 72.1 (+60.6) 90.2 (+78.7) 
+
+forward synth. byproduct 0.0 2.6 (+2.6) 2.6 (+2.6) 
+
+Macro-avg (all 19 subtasks) 12.5 23.6 (+11.1) 28.5 (+16.0) 
+
+Table 7: Model scaling analysis on SSMR-Bench: per-subtask test accuracy (%) at the best validation node. Subscripts show gain over the base model. Bold : best per subtask per model. 
+
+Model Method Scl Bea Cho Int Avg 
+
+Qwen3-0.6B Qwen3 33.6 30.4 39.2 26.4 32.4 Practitioner 53.6 75.2 37.6 45.6 53.0 
+
+LLMZ ERO 95.2 (+61.6) 82.4 (+52.0) 60.0 (+20.8) 52.0 (+25.6) 72.4 (+40.0) 
+
+Qwen3-1.7B Qwen3 27.2 31.2 36.0 32.0 31.6 Practitioner 56.8 50.4 50.4 51.2 52.2 
+
+LLMZ ERO 77.6 (+50.4) 69.6 (+38.4) 55.2 (+19.2) 47.2 (+15.2) 62.4 (+30.8) 
+
+Qwen3-4B Qwen3 60.0 44.8 50.4 50.4 51.4 Practitioner 76.8 60.0 65.6 60.8 65.8 
+
+LLMZ ERO 94.4 (+34.4) 81.6 (+36.8) 77.6 (+27.2) 75.2 (+24.8) 82.2 (+30.8) 
+
+Qwen3-8B Qwen3 59.2 56.0 48.8 46.4 52.6 Practitioner failed (OOM) 
+
+LLMZ ERO 96.8 (+37.6) 88.0 (+32.0) 79.2 (+30.4) 70.4 (+24.0) 83.6 (+31.0) 
+
+PaperSearchQA. Both fixed schedules under-perform the static practitioner (37.8% and 36.2% vs. 39.0%), confirming that this task’s progressive-tightening dynamic cannot be captured by any fixed multi-stage recipe. These results validate the structural principle: capacity parameters should accumulate monotoni-cally, but the task-specific LR and KL trajectories that LLMZ ERO discovers are essential for realizing the full benefit of multi-stage training. 
+
+Transfer caveats. Both the SSMR transfer and the Capacity Guidebook benefit from all tasks shar-ing the same subsampled dataset size (5,000 train-ing examples), which produces similar steps-per-epoch and possibly comparable training dynamics timelines. Transferring fixed schedules between datasets of substantially different sizes may require recalibrating transition points, as the step at which the model saturates its current response budget de-pends on dataset complexity and size. This is an additional advantage of adaptive methods: they dis-cover appropriate transition points from observed dynamics regardless of dataset scale. 
+
+D Search Algorithm Details 
+
+While the UCT computation and virtual child com-petition mechanisms are adopted from prior work (reproduced here for completeness), we introduce the failure subtree pruning (§3.2) to improve search efficiency and forced from-scratch injection mech-16 Table 8: Best discovered strategy for ChemCoT (5-phase, Node path: 0 →2→3→5→11). Node 2 resumes from Node 1’s checkpoint (Node 1 failed but produced a valid checkpoint). Final val=35.6%, test=28.5% (macro-avg 19 subtasks). 
+
+Phase Node / Steps Proposer Diagnosis Configuration 
+
+1 Node 0, steps 0–59 (Initial run) LR=5e-5, KL=0.001, T=1.0, clip=0.28, batch=128, roll-out=8, resp=6144, epochs=1 2 Node 2, steps 60–79 Under-exploring: low re-ward variance under de-fault constraints LR=5e-5, KL=0.001, T=0.85, clip=0.3, adv_norm=true 3 Node 3, steps 80–116 KL divergence spike: 16 × KL loss spike, response length inflating (1630 →2278 tokens) without val improvement LR=2.5e-5, KL=0.005 (5 × increase), T=0.7, clip=0.25 4 Node 5, steps 117–119 Response truncation: clip ratio rising (3% →8%) in-dicating output capacity exhaustion LR=2e-5, KL=0.003, resp=7168 (+1024), clip=0.28 5 Node 11, steps 120–180 Low gradient signal: gra-dient norms <0.001, vali-dation flat at 32.8% LR=3e-5 (↑), KL=0.005, T=0.8, rollout=12 (↑), batch=96 ( ↓), clip=0.25 
+
+Table 9: Best discovered strategy for PaperSearchQA (4-phase, Node path: 0 →1→2→5). Final val=42.0%, test=42.6%. 
+
+Phase Node / Steps Proposer Diagnosis Configuration 
+
+1 Node 0, steps 0–99 (Initial run) LR=5e-5, KL=0.001, T=1.0, clip=0.28, batch=128, epochs=3 2 Node 1, steps 100–119 Noisy updates: high vari-ance in reward signal, LR too aggressive for task dif-ficulty LR=2.5e-5, KL=0.002, T=0.9, clip=0.28, algo_kl=0.002, epochs=5 3 Node 2, steps 120–139 Continued noise: val im-provement slowing, fur-ther constraint needed LR=1e-5 ( ↓), KL=0.005 ( ↑), T=0.7 ( ↓), clip=0.25, algo_kl=0.005, epochs=6 4 Node 5, steps 140–312 Validation plateau: val flat at 40.8%, near-zero clip ratio, low gradient norms LR=2e-5 ( ↑), KL=0.01 ( ↑), T=0.8 ( ↑), clip=0.3 ( ↑), batch=96 ( ↓), algo_kl=0.01 
+
+anism (§3.3) to maintain exploration diversity. As search optimization is not the primary focus of this paper, we leave the design of more sophisticated search algorithms, particularly those tailored for budget constraints or asynchronous execution, to future work. 
+
+D.1 Search Loop Pseudocode 
+
+Algorithm 1 summarizes the main loop. At each iteration, UCT selection traverses the tree to choose a parent node for expansion. If the selected par-ent failed, an error analyzer diagnoses the failure and proposes a fix; otherwise, the proposer agent analyzes the parent’s training dynamics and pro-poses a new configuration with a checkpoint to resume from. The resulting child node is executed as a training job, monitored by the agentic early stopper at fixed intervals. Upon completion (or early termination), the best validation score is back-propagated up the tree and terminal subtrees are pruned. The final output is the scratch-to-leaf path with the highest validation score, interpreted as a multi-stage adaptive strategy. 
+
+D.2 UCT Computation 
+
+We integrate expansion into selection via a virtual new child that competes against existing children at every internal node. At node p with existing 17 Table 10: Best discovered strategy for SSMR-Bench (4-phase, Node path: 0 →1→4→5). Final val=87.0%, test=82.2%. 
+
+Phase Node / Steps Proposer Diagnosis Configuration 
+
+1 Node 0, steps 0–19 (Initial run) LR=5e-5, KL=0.001, clip=0.28, T=1.0, resp=6144, epochs=1 2 Node 1, steps 20–39 Fast initial convergence: model learning MCQ pat-tern quickly, apply conser-vative tuning LR=3e-5 ( ↓), KL=0.002 ( ↑), clip=0.25, grad_clip=0.5, adv_norm=true, T=1.1, epochs=2 3 Node 4, steps 40–139 Validation regression: val regressed 70.0% →67.2% under conservative hyper-parameters LR=5e-5 (restored), KL=0.001 (relaxed), clip=0.30, T=1.1, epochs=4 4 Node 5, steps 140–200 Convergence stabiliza-tion: val jumped to 83.0%, now fine-tune with expanded capacity LR=3e-5 ( ↓), KL=0.002 ( ↑), resp=7168 (+1024), T=1.0, clip=0.25, epochs=6 
+
+Table 11: Best discovered strategy for WildSci (4-phase, Node path: 0 →5→13 →15). Final val=64.0%, test=58.5%. 
+
+Phase Node / Steps Proposer Diagnosis Configuration 
+
+1 Node 0, steps 0–99 (Initial run) LR=5e-5, KL=0.001, T=1.0, clip=0.28, resp=6144 2 Node 5, steps 100–119 Slow progress: multi-domain task needs stronger signal, try aggressive exploration LR=1e-4 (↑ 2×), KL=0.002, T=0.9, clip=0.25, adv_norm=true 3 Node 13, steps 120–139 KL divergence rising: KL loss rising without val improvement, model col-lapse from aggressive LR LR=5e-5, KL=0.005 (↑), T=0.85, clip=0.22, algo_kl=0.002 4 Node 15, steps 140–195 Model collapse: entropy at ∼0.2 (vs. ∼0.7–0.8 healthy), policy distri-bution narrowed prema-turely LR=3e-5, KL=0.002 ( ↓), T=0.95 ( ↑), clip=0.28 ( ↑), clip_low=0.15 
+
+children {c1, . . . , c k}:UCT (ci) = Q(ci) + C
+
+s
+
+ln N (p)
+
+N (ci) , (5) UCT (new ) = Qprior (p) + C
+
+s
+
+ln N (p)
+
+Nfair 
+
+, (6) where Qprior (p) is the parent’s own normalized score (encoding the prior belief that a new child will perform similarly to its parent) and Nfair =
+
+N (p)/(k + 1) gives the virtual child a fair share of the parent’s visit budget. The exploitation term Q(c) uses min-max nor-malization followed by exponential shaping for scale invariance: 
+
+ˆs = s − smin 
+
+smax − smin 
+
+, fT (ˆ s) = eˆs/T − 1
+
+e1/T − 1 , (7) where T is a temperature parameter (default 0.3). The full exploitation term combines three signals: 
+
+Q(c) = vval 
+
+vtotal 
+
+· fT (¯ sc)
+
+− wf · max(0 , v fail − of )
+
+vtotal 
+
+− we · vearly 
+
+vtotal 
+
+,
+
+(8) where vval , vfail , vearly , vtotal are validated, failed, early-stopped, and total visit counts; ¯sc is the av-erage normalized score of validated descendants; 
+
+wf = 0 .5 and we = 0 .3 are penalty weights; and 
+
+of (default 2) forgives the first of failures before penalizing. 
+
+D.3 Virtual New Child Competition 
+
+At each internal node p during selection traversal: 1. Compute UCT for all existing non-terminal children {c1, . . . , c k} (Eq. 5). 18 2. Compute UCT for the virtual new child (Eq. 6) with Qprior = fT (ˆ sp) and Nfair = N (p)/(k +1) .3. If UCT (new ) > max i UCT (ci) and k <kmax : expand (create new child at p). 4. Otherwise: descend into arg max i UCT (ci)
+
+and repeat. This mechanism naturally adapts breadth vs. depth: when children underperform their parent, the virtual child’s prior wins, triggering exploration of a new transition from the same checkpoint. 
+
+E Detailed Per-Run Results 
+
+This section reports the full hyperparameter con-figuration and performance for every run across all methods and tasks. 
+
+E.1 HPO Baseline Configurations Practitioner baseline. Table 12 reports the prac-titioner configuration, a carefully tuned general-purpose GRPO recipe applied identically to all tasks.              
+
+> Table 12: Practitioner baseline configuration (applied to all tasks without modification).
+> Parameter Value
+> Learning rate 5e-5 KL coefficient 0.001 Temperature 1.0 Clip ratio (high) 0.28 Train batch size 128 LoRA rank / alpha 64 / 64 Rollout count ( n)8Epochs 1Response length 6144 Gradient clip 1.0 Weight decay 0.01 Advantage normalization false
+
+Capacity Guidebook. Table 13 reports the 3-phase capacity-scaling schedule. All hyperparam-eters not listed remain at practitioner defaults (Ta-ble 12). Phase durations are inspired by transition points observed in LLMZ ERO ’s discovered strate-gies. 
+
+Grid search. All grid runs use the practitioner defaults except for two swept parameters: LR ∈{1e-5, 3e-5, 5e-5, 1e-4 } × LoRA rank ∈ { 64, 128 }
+
+(8 configurations per task). Grid runs additionally use epochs=5 and response length=8192 .             
+
+> Table 13: Capacity Guidebook configuration. Progres-sive capacity scaling with all other hyperparameters fixed to practitioner defaults (Table 12).
+> Phase Steps Response Length Rollout n
+> 10–60 4096 6260–120 6144 83120–180 8192 12
+
+Random search. Each run samples all hyperpa-rameters independently. Table 14 reports the sam-pled configurations. 
+
+E.2 Per-Run Results: Random Search 
+
+Table 15 reports results for each random search trial. 
+
+E.3 Per-Run Results: Grid Search 
+
+Table 16 reports results for each grid search trial. 
+
+E.4 Per-Iteration Results: Skill-Based LLM Agent 
+
+Table 17 reports per-iteration results for the skill-based LLM agent. 
+
+E.5 Per-Node Results: LLMZ ERO 
+
+Tables 18–21 report per-node results for LLMZ ERO on all four tasks. 
+
+F Human Knowledge Injection 
+
+Even the latest LLMs frequently misinterpret domain-specific training metrics and hyperparam-eters in GRPO/PPO. For example, models consis-tently confuse PPO policy clipping with response length clipping. To ground the LLM’s reasoning, we inject structured human-written descriptions for metrics and hyperparameters into the prompt. Importantly, these descriptions do not restrict the LLM to only modifying listed parameters; the agent can change any hyperparameter in the train-ing configuration, including those not covered by the guide. 
+
+F.1 Metric Descriptions 
+
+Figure 6 lists the 12 metric descriptions injected into both the proposer and early stopper prompts. These address common LLM misinterpretations. 
+
+F.2 Hyperparameter Descriptions 
+
+Figure 7 provides the hyperparameter reference guide injected into the proposer prompt. Param-eters are organized by functional category. The 19 Table 14: Random search hyperparameter configurations for all tasks. LR=learning rate, KL=KL coefficient, T=temperature, Cl=clip ratio, BS=batch size, Rk=LoRA rank, Ro=rollouts, Ep=epochs, RL=response length.                                                                                                                                                                                                                                                                                                           
+
+> Task Run LR KL TCl BS Rk Ro Ep RL
+> PaperSearchQA  00 2.65e-5 5.1e-5 0.98 0.17 64 64 638192 01 5.68e-5 2.6e-4 0.61 0.26 128 128 634096 02 1.69e-5 1.5e-4 0.65 0.30 256 16 12 38192 03 1.07e-5 1.9e-5 0.96 0.22 64 128 658192 04 5.32e-5 2.4e-4 0.70 0.24 64 32 858192 05 8.99e-5 2.7e-4 0.66 0.32 64 128 858192 06 1.06e-5 7.1e-4 0.85 0.21 64 32 658192 07 6.00e-5 5.0e-4 0.83 0.26 256 64 12 38192 WildSci 00 2.33e-5 3.0e-4 0.71 0.26 64 64 638192 01 1.02e-5 2.0e-5 1.02 0.19 128 32 834096 02 7.11e-5 1.1e-4 0.64 0.28 64 64 854096 03 2.12e-5 5.4e-4 1.06 0.28 128 32 658192 04 2.44e-5 5.8e-5 0.84 0.24 128 128 854096 05 1.40e-5 5.8e-4 0.78 0.24 64 16 634096 06 6.63e-5 2.2e-4 0.88 0.27 256 128 658192 07 4.19e-5 8.1e-4 1.08 0.18 256 32 12 58192 SSMR-Bench  00 6.07e-5 1.1e-4 0.80 0.16 128 32 858192 01 4.25e-5 2.0e-5 0.95 0.26 64 128 838192 02 6.04e-5 1.2e-5 0.84 0.34 64 64 638192 03 2.85e-5 1.8e-4 0.92 0.22 128 64 858192 04 3.18e-5 4.3e-5 0.85 0.17 128 128 12 54096 05 5.13e-5 2.4e-4 0.94 0.33 256 16 12 34096 06 1.97e-5 2.9e-5 0.68 0.17 64 64 858192 07 1.18e-5 2.1e-4 0.76 0.31 256 64 838192 ChemCoT 00 1.83e-5 3.3e-5 0.84 0.30 64 32 634096 01 4.71e-5 4.9e-5 0.77 0.16 128 32 654096 02 1.26e-5 9.4e-4 1.09 0.22 256 128 838192 03 1.78e-5 6.3e-4 1.09 0.32 64 64 658192 04 5.40e-5 8.6e-5 0.91 0.18 256 64 638192 05 1.43e-5 6.9e-5 1.03 0.23 64 16 654096 06 7.83e-5 1.7e-4 1.10 0.19 64 16 654096 07 1.31e-5 4.1e-5 1.12 0.20 128 16 12 54096
+
+LLM is not restricted to modifying only these pa-rameters; it can change any value in the training configuration. 
+
+G Agent Prompts 
+
+We provide the full proposer and early stopper prompts below. These prompts were minimally tuned: we deliberately avoided hardcoding any nu-meric thresholds or task-specific values, relying instead on the LLM’s reasoning to interpret metrics in context. This design leaves substantial room for improvement through prompt engineering, and we expect that more carefully crafted prompts could further improve search efficiency. 
+
+G.1 Proposer Agent Prompt 
+
+The proposer receives the previous training config-uration (as YAML), step-level metric summaries (text and/or plots), and produces a diagnosis with hyperparameter suggestions. The template (Fig-ure 8) is instantiated with run-specific data at each iteration; placeholders in {braces} are filled dy-namically. 
+
+G.2 Early Stopper Agent Prompt 
+
+The early stopper receives comparison plots (cur-rent run in blue vs. best run in green) and decides whether to continue or stop. The prompt template is shown in Figure 9. 
+
+H Ethics and Artifact Documentation 
+
+Potential risks. LLMZ ERO automates hyperpa-rameter search for RL post-training, which could lower the barrier to fine-tuning language models for harmful purposes. However, the system re-quires substantial compute, limiting misuse to well-resourced actors who already have access to equiv-alent capabilities. 
+
+Artifact licenses. All artifacts are used under their respective open-source licenses. 
+
+Artifact License 
+
+Qwen3 (0.6B–8B) Apache 2.0 ChemCoTBench CC BY 4.0 PaperSearchQA MIT SSMR-Bench MIT WildSci CC BY 4.0 VeRL Apache 2.0 Ray Apache 2.0 
+
+Intended use consistency. All datasets are used for their intended purpose of evaluating language model capabilities on domain-specific reasoning tasks. VeRL and Ray are used for distributed RL training, consistent with their documented use cases. 
+
+Artifact documentation. We use 4 evaluation datasets (5,000 train / 500 val / 500 test each), Qwen3 models (0.6B–8B) with LoRA fine-tuning, a modified version of VeRL for GRPO training, and 20 Metric Descriptions (injected into both proposer and early stopper prompts) 
+
+actor/entropy Policy entropy measuring exploration. Healthy: dropping with rising rewards. Problem: both dropping (losing generality without gains). 
+
+actor/kl_loss KL divergence loss measuring policy divergence from old policy. Should remain small and stable. 
+
+actor/ppo_kl PPO KL divergence. Critical: if ppo_kl spikes AND rewards drop afterward, training has collapsed. 
+
+actor/pg_loss Policy gradient loss (primary training signal). Should generally decrease as policy improves. 
+
+actor/pg_clipfrac PPO policy clipping fraction (upper). Ratio of updates hitting clip_ratio_high. High ( >0.3) = many updates being prevented. Unrelated to response_length/clip_ratio. 
+
+actor/pg_clipfrac_lower PPO policy clipping fraction (lower). Shows how often PPO constrains updates. Unrelated to re-sponse_length/clip_ratio. 
+
+actor/grad_norm Gradient norm magnitude. Very high = instability; very low = vanishing gradients. 
+
+critic/rewards/mean Mean predicted rewards. Key indicator of training progress. Should generally increase. 
+
+response_length/mean Average response length in tokens. Bounded by max_response_length. Interpret alongside rewards. 
+
+response_length/clip_ratio Response truncation ratio (responses hitting max length). NOT related to PPO clip_ratio. High = responses being cut off. 
+
+timing_s/step Time per step. Sudden increases may indicate memory issues or inefficient batch sizes. 
+
+perf/max_memory_reserved_gb Max GPU memory reserved. Monitors OOM risk. Helps optimize batch sizes. 
+
+Figure 6: Human-written metric descriptions injected into agent prompts to ground LLM reasoning about training dynamics. 
+
+Hyperparameter Reference Guide (injected into proposer prompt; LLM not restricted to this list) 
+
+Learning Rates & Optimization 
+
+weight_decay L2 regularization. Increase if large train/val gap; decrease if underfitting. 
+
+grad_clip Max gradient norm. Decrease if NaN losses or collapse; increase if gradients consistently small. 
+
+Batch Sizes 
+
+ppo_micro_batch_size_per_gpu Micro-batch for gradient accumulation. Critical: ppo_mini_batch_size must be divisible by this. 
+
+PPO/GRPO Clipping 
+
+clip_ratio_low PPO lower bound. Keep at default; increasing may collapse sampling space. 
+
+clip_ratio_high PPO upper bound. Higher values enhance entropy and diversity. 
+
+KL Divergence & Regularization 
+
+kl_loss_coef KL loss weight constraining policy changes. Only increase if KL spikes coincide with reward collapse. 
+
+entropy_coeff Entropy bonus weight. Critical: must remain 0 for GRPO. 
+
+norm_adv_by_std_in_grpo Normalize advantages by std. Generally keep True for stability. 
+
+Rollout & Sampling 
+
+rollout.n Samples per prompt. Higher improves advantage estimates, increases compute linearly. 
+
+temperature Sampling temperature. Higher increases exploration and diversity. 
+
+Sequence & Memory Management 
+
+max_response_length Max response tokens. Increase if response_length/clip_ratio is high. 
+
+max_num_seqs Max concurrent vLLM sequences. Decrease if OOM; increase for GPU utilization. 
+
+tensor_model_parallel_size GPUs for model sharding. Use minimum that fits in memory. 
+
+Training Configuration 
+
+total_epochs Passes through data. Increase if validation still improving at final epoch. 
+
+Figure 7: Human-written hyperparameter descriptions injected into the proposer prompt, organized by functional category. 
+
+21 Proposer Agent Prompt Template 
+
+You are a hyperparameter optimization expert. Your goal is to maximize the validation score by proposing hyperparameter changes for the next training run. {previous_training_config} {early_stop_notice} ### Training Step Metrics Summary The training ran for {training_steps} steps: {step_metrics_summary} {metric_descriptions} {hyperparameter_guide} ### Metric Interpretation **PRIMARY:** Rewards (critic/rewards/mean) and validation scores measure overall performance. Judge success by these metrics. **DIAGNOSTIC:** actor/entropy, actor/kl_loss, actor/grad_norm, etc. Only relevant when primary metrics degrade. Rising KL with stable rewards is acceptable. ### Your Task Follow these steps **in order**. Do NOT suggest ‘total_epochs‘ until Step 4. **Step 1 - Diagnosis:** Summarize the training health. What are the key trends in primary metrics? Is the run healthy, plateauing, or collapsing? Note any inflection points or anomalies. **Step 2 - Hyperparameter suggestions:** Based on your diagnosis, propose specific hyperparameter changes for the next run. Do NOT include ‘total_epochs‘ here (computed in Step 4). {suggestion_count_guidance} **Step 3 - Checkpoint decision:** {checkpoint_info} **Step 4 - Epoch computation:** Now that you have decided all hyperparameters (including ‘train_batch_size‘) and the checkpoint strategy, compute ‘total_epochs‘: - If resuming: old_steps_per_epoch = total_training_steps / old_total_epochs, new_steps_per_epoch = old_steps_per_epoch * old_batch_size / new_batch_size, total_epochs = ceil((resume_step + ADDITIONAL_TRAINING_STEPS) / new_steps_per_epoch) - If training from scratch: choose ‘total_epochs‘ based on target training steps and new batch size. Show the math explicitly. 
+
+Figure 8: Proposer agent prompt template. Placeholders are filled with run-specific data at each search iteration. 
+
+22 Early Stopper Agent Prompt Template 
+
+You are an expert at analyzing RL for LLM post training using visual plots. Your task is to decide if a run should continue or stop early. ### Objective Your ONLY goal is to maximize the validation score. CONTINUE if the current run’s validation score trajectory has potential to exceed the best validation score seen so far. STOP only when there is no realistic chance of beating it. ### Best Run Information {best_run_summary} ### Current Run Progress (at checkpoint) {current_run_summary} ### Visual Comparison The plots show training metrics over time. Blue = current run, green dashed = best run, both may start from an intermediate checkpoint. Focus on the **validation score plot**. Ask: can the blue curve’s peak eventually exceed the green curve’s peak? {metric_descriptions} ### Decision Rules **Default action is CONTINUE.** When uncertain, CONTINUE. Only STOP if ALL of these are true: 1. Current step >= 10 (too early to judge before that) 2. The validation score trajectory has no realistic chance of exceeding the best validation score seen so far, considering the improvement rate, not just the current value. A run behind the best can still win if its trajectory is steeper; a run ahead can still lose if it is plateauing. **Only the validation score determines STOP/CONTINUE.** All other metrics (rewards, entropy, KL, gradient norms, clip_ratio, etc.) provide context but NEVER justify stopping on their own. **Response Format:** REASON: [1-2 sentences on whether the validation score trajectory can beat the best validation score seen so far] DECISION: [CONTINUE or STOP] 
+
+Figure 9: Early stopper agent prompt template. Invoked every 900 seconds during training. 
+
+23 Table 15: Random search per-run results. GPU-hrs on 32 ×A100. Best Val = best validation score achieved. Test reported at best validation step. Bold : best per task. 
+
+Task Run GPU-hrs Best Val Best Step Test 
+
+PaperSearchQA 00 470.6 0.370 234 0.360 01 171.1 0.392 93 0.376 02 198.5 0.370 36 0.366 03 1740.6 0.384 84 0.358 04 837.8 0.386 198 0.356 05 1081.9 0.384 165 0.354 06 510.8 0.384 198 0.364 07 191.7 0.390 45 0.384 
+
+WildSci 00 602.3 0.604 147 0.565 01 240.8 0.600 72 0.555 02 577.7 0.612 72 0.559 03 580.1 0.628 138 0.580 
+
+04 1137.4 0.630 177 0.558 05 295.6 0.610 132 0.544 06 451.0 0.630 66 0.578 07 806.7 0.602 27 0.540 SSMR-Bench 00 2193.9 0.708 186 0.682 01 779.5 0.696 120 0.614 02 575.1 0.754 213 0.696 03 1536.0 — — —04 551.3 0.758 189 0.738 05 279.8 0.778 57 0.744 
+
+06 483.1 0.550 36 0.516 07 431.6 0.688 57 0.660 ChemCoT 00 324.1 0.288 189 0.334 01 1095.5 0.288 165 0.330 02 356.9 0.270 30 0.297 03 1015.2 0.304 255 0.316 04 258.0 0.272 27 0.280 05 504.4 0.282 228 0.324 06 461.5 0.320 354 0.394 
+
+07 527.1 0.290 174 0.313 
+
+Ray for distributed orchestration on EKS clusters with A100 GPUs. All datasets are publicly avail-able. We do not release trained model weights; we release discovered strategy configurations to enable reproduction. 
+
+I Use of AI 
+
+We used AI-based tools to assist with grammar and writing clarity of the paper. 24 Table 16: Grid search per-run results. Grid varies LR ∈ { 1e-5, 3e-5, 5e-5, 1e-4 } × LoRA rank ∈ { 64, 128 }, while SSMR-Bench uses LR ∈ { 1e-5, 3e-5, 5e-5, 1e-4 } × LoRA rank ∈ { 16, 32, 64, 128 } to explore broader search space; all other HPs at default. Bold : best per task. 
+
+Task Run LR Rank GPU-hrs Best Val Test 
+
+PaperSearchQA 08 1e-5 64 372.6 0.398 0.390 09 3e-5 64 383.5 0.384 0.390 10 5e-5 64 387.8 0.394 0.388 11 1e-4 64 397.8 0.396 0.396 
+
+12 1e-5 128 424.4 0.392 0.384 13 3e-5 128 1230.5 0.388 0.372 14 5e-5 128 411.4 0.386 0.380 15 1e-4 128 1299.3 0.408 0.372 WildSci 08 1e-5 64 711.2 0.616 0.551 09 3e-5 64 2112.0 0.622 0.568 10 5e-5 64 714.0 0.626 0.572 11 1e-4 64 715.1 0.650 0.530 12 1e-5 128 763.9 0.620 0.575 13 3e-5 128 762.5 0.632 0.580 
+
+14 5e-5 128 1545.3 0.626 0.558 15 1e-4 128 770.5 0.632 0.576 ChemCoT 08 1e-5 64 684.5 0.296 0.327 09 3e-5 64 703.2 0.308 0.350 10 5e-5 64 725.5 0.304 0.351 11 1e-4 64 1491.0 0.302 0.377 12 1e-5 128 759.4 0.302 0.314 13 3e-5 128 2038.7 0.318 0.381 
+
+14 5e-5 128 766.4 0.322 0.350 15 1e-4 128 2062.4 0.320 0.363 
+
+Table 17: Skill-based LLM agent per-iteration results. GPU-hrs reported per iteration. Budget-limited due to API cost ($635–1,146 per task). Best Val = best validation score at any step within the iteration. 
+
+Task Iter GPU-hrs State Best Val Best Step Test 
+
+PaperSearchQA 1 4.7 Failed — — —2 3.8 Failed — — —3 165.7 Cancelled 0.384 50 0.384 4 137.1 Cancelled 0.392 80 0.366 5 167.9 Completed 0.392 120 0.394 6 8.6 Failed 0.374 200 0.386 7 161.5 Completed 0.396 260 0.402 
+
+8 6.0 Failed — — —9 53.0 Cancelled 0.376 160 0.394 WildSci 1 136.8 Cancelled 0.591 20 0.561 2 71.7 Cancelled 0.593 25 0.571 3 110.8 Cancelled 0.619 45 0.538 4 111.8 Cancelled 0.621 55 0.566 5 17.1 Completed 0.597 75 0.570 6 39.8 Cancelled 0.611 75 0.603 
+
+SSMR-Bench 1 328.8 Cancelled 0.828 90 0.820 2 21.2 Completed 0.816 81 0.788 3 48.1 Cancelled 0.846 85 0.800 4 64.2 Completed 0.824 101 0.820 5 65.4 Completed 0.814 105 0.796 6 72.2 Cancelled 0.814 105 0.804 ChemCoT 1 399.7 Cancelled 0.281 125 0.376 2 23.8 Failed 0.253 120 0.371 3 55.4 Cancelled 0.271 125 0.334 4 96.6 Cancelled 0.299 130 0.380 
+
+5 46.8 Cancelled 0.291 140 0.380 6 47.3 Cancelled 0.295 140 0.377 7 39.2 Cancelled 0.259 125 0.356 
+
+25 Table 18: LLMZ ERO per-node results on SSMR-Bench (10 nodes, 64 ×A100). Val = aggregate validation score. Test = average of 4 subtask test scores at best validation step. ES = early-stopped. 
+
+Node Wall-hrs GPU-hrs Status Best Val Best Step Test (avg) 
+
+0 4.5 291 Completed 0.700 30 0.658 1 2.5 162 ES 0.672 33 0.658 2 2.5 162 ES 0.682 36 0.682 3 7.0 451 ES 0.732 66 0.706 4 13.2 846 Completed 0.830 153 0.822 
+
+5 7.3 467 ES 0.870 180 0.822 
+
+6 12.8 821 ES 0.764 99 0.738 7 5.8 371 ES 0.558 48 0.526 8 2.5 162 ES 0.858 195 0.838 9 6.7 428 Crashed 0.856 192 0.818 
+
+Total 4,159 
+
+Table 19: LLMZ ERO per-node results on ChemCoT (16 nodes, 64 ×A100). Test = avg(und_avg, edit_avg, rxn_avg) at best validation step. 
+
+Node Wall-hrs GPU-hrs Status Best Val Best Step Test (avg) 
+
+0 7.3 469 Completed 0.292 36 0.330 1 4.6 294 Fix needed 0.312 72 0.359 2 2.6 164 ES 0.310 78 0.336 3 4.4 284 Completed 0.332 117 0.374 4 2.6 163 ES 0.326 120 0.368 5 2.8 180 ES 0.328 132 0.386 6 7.6 484 ES 0.264 36 0.313 7 5.6 356 ES 0.230 27 0.224 8 6.6 422 ES 0.246 30 0.264 9 7.2 460 Fix needed 0.266 18 0.302 10 13.9 889 ES 0.324 60 0.384 
+
+11 15.5 992 Fix needed 0.356 180 0.406 
+
+12 40.1 2,566 Debug 0.322 96 0.356 13 8.1 516 ES 0.322 78 0.380 14 2.6 164 ES 0.330 126 0.377 15 25.2 1,610 ES 0.330 120 0.374 
+
+Total 10,013 
+
+Table 20: LLMZ ERO per-node results on PaperSearchQA (16 nodes, 32 ×A100). Test = single-metric test score at best validation step. 
+
+Node Wall-hrs GPU-hrs Status Best Val Best Step Test 
+
+0 19.1 611 Completed 0.388 114 0.390 1 15.7 501 Completed 0.408 123 0.410 2 18.8 601 Completed 0.408 141 0.422 3 4.0 129 ES 0.396 144 0.400 4 3.5 113 ES 0.390 123 0.400 
+
+5 22.3 714 Completed 0.420 303 0.426 
+
+6 40.0 1,281 Completed 0.390 246 0.378 7 5.5 177 ES 0.402 165 0.398 8 6.0 193 ES 0.414 306 0.424 9 10.0 321 ES 0.400 141 0.396 10 6.3 201 ES 0.402 162 0.398 11 40.0 1,281 Completed 0.380 300 0.372 12 4.0 129 ES 0.398 147 0.400 13 3.5 113 ES 0.396 162 0.402 14 4.0 129 ES 0.392 165 0.400 15 4.8 153 ES 0.404 171 0.406 
+
+Total 6,646 
+
+26 Table 21: LLMZ ERO per-node results on WildSci (16 nodes, 32 ×A100). Test = average of 9 domain test scores at best validation step. 
+
+Node Wall-hrs GPU-hrs Status Best Val Best Step Test (avg) 
+
+0 7.3 234 Completed 0.608 36 0.548 1 10.3 329 ES 0.626 51 0.548 2 16.8 537 Completed 0.624 105 0.551 3 9.3 297 ES 0.618 54 0.565 4 14.6 466 ES 0.632 159 0.574 5 14.5 464 Completed 0.620 96 0.593 6 30.0 960 Completed 0.636 189 0.586 7 17.5 560 Completed 0.628 186 0.573 8 7.8 249 ES 0.636 210 0.589 9 7.0 225 ES 0.636 216 0.573 10 14.1 450 ES 0.630 216 0.569 11 40.0 1,281 Completed 0.622 120 0.560 12 4.0 129 ES 0.620 195 0.588 13 9.8 313 ES 0.622 153 0.563 14 13.8 442 ES 0.620 129 0.586 
+
+15 13.6 436 Completed 0.640 174 0.585 Total 7,370 
+
+27 Algorithm 1 LLMZ ERO adaptive strategy discov-ery loop 
+
+Require: Dataset D, base model M0, budget B 
+
+> 1:
+
+Initialize root node n0 with default configura-tion θ0 
+
+> 2:
+
+Run initialization agents (data perception, task descriptor, tool selector)  
+
+> 3:
+
+for t = 1 to B do  
+
+> 4:
+
+nparent ← SELECT NODE (tree) {UCT selec-tion (Appendix D.2)}  
+
+> 5:
+
+if nparent failed then  
+
+> 6:
+
+(θnew , fix ) ← ERROR ANALYZER (nparent ){Diagnose and propose fix}  
+
+> 7:
+
+else  
+
+> 8:
+
+(θnew , k ) ← PROPOSER (nparent . metrics ,
+
+nparent .plots) {Multimodal analysis}  
+
+> 9:
+
+end if  
+
+> 10:
+
+nnew ← CREATE CHILD (nparent , θnew ,checkpoint step k) 
+
+> 11:
+
+Generate and submit training code via multi-agent pipeline (§3.6)  
+
+> 12:
+
+while training in progress do  
+
+> 13:
+
+Sample metrics and generate comparison plots at intervals  
+
+> 14:
+
+if EARLY STOPPER (current metrics, best strategy plots) = STOP then  
+
+> 15:
+
+Terminate training early  
+
+> 16:
+
+end if  
+
+> 17:
+
+end while  
+
+> 18:
+
+s ← best validation score observed during run  
+
+> 19:
+
+BACKPROPAGATE (nnew , s); P RUNE TERMI -
+
+> NAL
+
+(nnew ) 
+
+> 20:
+
+end for  
+
+> 21:
+
+return Strategy (scratch-to-leaf path) with highest validation score 28
