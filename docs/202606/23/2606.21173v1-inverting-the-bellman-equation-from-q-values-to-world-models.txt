@@ -1,0 +1,3609 @@
+Title: Inverting the Bellman Equation: From Q-Values to World Models
+
+URL Source: https://arxiv.org/pdf/2606.21173v1
+
+Published Time: Tue, 23 Jun 2026 00:48:49 GMT
+
+Number of Pages: 48
+
+Markdown Content:
+# Inverting the Bellman Equation: From Q-Values to World Models 
+
+Alistair Letcher α Mattie Fellows α Alexander D. Goldie α
+
+Jonathan Richens β Jakob N. Foerster α Oliver Richardson γα FLAIR, University of Oxford β Google DeepMind γ Mila, University of Montreal 
+
+# Abstract 
+
+Model-based and model-free reinforcement learning are traditionally viewed as separate paradigms: instead of learning a model of the transition kernel P , model-free agents typically estimate value functions tied to a specific policy and reward. In this paper, we challenge this dichotomy by proving that value-based agents trained on a sufficiently rich set of reward functions, e.g. using goal-conditioned RL, implicitly encode a unique and accurate world model. To extract this model in practice, we introduce P -learning , an inverse analogue to Q-learning that samples from an agent’s Q-values, policies and rewards to decode its internal model of the environment. We then provide sufficient conditions on the type and number of goals for which agents encode the true kernel P , covering both stochastic and deterministic MDPs over finite or continuous state spaces. Even when our assumptions are violated, we empirically demonstrate that agents trained on a handful of reward functions encode accurate dynamics in Reacher , MountainCar 
+
+and stochastic variants of FourRooms . Surprisingly, we find that policies trained exclusively on a Reacher agent’s implicit world model are quasi-optimal on out-of-distribution, velocity-based goals despite position-only training – suggesting that agents contain hidden generalisation capabilities and providing a new lens into the connection between model-based, model-free, and goal-conditioned RL. 
+
+Figure 1: Illustration of P -learning: extracting the world model contained in an agent’s Q-values. Code available at github.com/aletcher/inverting-bellman .
+
+> Preprint.
+> arXiv:2606.21173v1 [cs.LG] 19 Jun 2026
+
+# 1 Introduction 
+
+The model-free paradigm of reinforcement learning (RL) has proven effective in training highly capable agents across a variety of domains [ 1, 2, 3 ], sidestepping the challenges associated with modelling complex world dynamics [ 4, 5]. However, the policies or value functions learnt by such agents are tied to reward functions, making it difficult to repurpose them for new tasks without additional data, or interpret what they understand of the world – as opposed to what they value .In general, distinct world models (transition kernels) can give rise to identical value functions and optimal policies, an obstacle formalised as the value equivalence problem [6, 7]. For example, in a deterministic maze with a binary-reward goal, the optimal value of a state is γd,where γ is the discount factor and d is the minimal distance to the goal (measured by path-length). In particular, Q-values encode whether an action moves the agent closer to the goal, but do not pin down the state that an action leads to, i.e. the transition kernel, if there are equidistant states. This underdeterminacy implies that model-free agents do not uniquely encode the environment they inhabit, suggesting a fundamental divide between model-free and model-based RL. However, agents are increasingly trained on a variety of goals – e.g. via successor features [ 8 , 9], forward-backward learning [ 10 ] or goal-conditioned RL (GCRL) [ 11 ] – which may provide additional constraints on the underlying dynamics. This raises the core question motivating this paper: 
+
+When do model-free agents implicitly encode an accurate model of their environment? 
+
+We hypothesise that value-based agents trained on a sufficiently rich set of goals implicitly learn a 
+
+unique model of the world dynamics, even in stochastic and continuous MDPs, and that this model is 
+
+accurate insofar as Q-values are accurate. Taking GCRL as the broader framework for agents trained on goals parameterised by arbitrary reward functions, our work makes three contributions to test this hypothesis bridging model-free, model-based and goal-conditioned RL. 
+
+Methodologically , we introduce P -learning (Section 3), an analogue to Q-learning illustrated in Figure 1. Instead of iteratively updating value estimates for a fixed environment, P -learning updates a candidate world model (WM) to be progressively more consistent with fixed value functions, effectively inverting the Bellman equation. We make this precise by proving that tabular P -learning converges to a solution involving the Moore-Penrose pseudo-inverse (Theorem 1). Our algorithm enables the efficient extraction of an implicit WM from a collection (Qg , π g , r g )g∈G of Q-functions, policies and reward functions – noting that policies are usually induced by Q-functions via argmax or softmax, so (Q, π, r ) is often equivalent to (Q, r ) in practice. 
+
+Theoretically , we prove sufficient conditions on the goals and reward functions for which P is uniquely identifiable from Q-values (Section 4), breaking value equivalence. Four regimes emerge: in deterministic finite MDPs, a single generic goal suffices (Theorem 2); in stochastic finite MDPs, goals must span the state space (Theorem 3), with tight error bounds in both regimes when Q-values are ϵ-approximate. In the deterministic continuous case, a finite number of goals is, surprisingly, sometimes sufficient (Theorems 8 and 9). In stochastic continuous MDPs, identifiability is driven by coverage instead of count: a goal set with non-empty interior for Gaussian rewards (Theorem 6), or covering the state space for indicator rewards (Theorem 7). Taken together, our results show that methods like GCRL can bridge model-free and model-based RL, with the collection (Qg , π g , r g )g∈G 
+
+becoming informationally equivalent to the kernel P when G is sufficiently rich. 
+
+Empirically , we show that P -learning is highly effective in extracting accurate world models from agents, even with very few goals (Section 5). We validate our finite-MDP theory across three increasingly stochastic variants of FourRooms (deterministic, windy and teleporting), with |G| = 1 ,
+
+|G| = 4 and |G| = 20 goals respectively sufficient for quasi-perfect recovery. In Reacher , with only |G| = 4 goals despite a continuous state space, we find that implicit WMs are even accurate over variables that rewards never directly depend on. Surprisingly, this accuracy transfers to near-optimal planning inside the WM for a range of out-of-distribution goals, including reaching specific angular velocities, despite position-only training. We study these “implicit generalisation capabilities” in MountainCar and show that inverting the setup, by training on velocity-based goals, yields a near-identical WM – revealing that agents with widely different objectives can secretly encode similar models. Finally, we identify a strong correlation (Spearman ρ = 0 .98 ) between an agent’s performance and the accuracy of its internalised WM, suggesting that GCRL is an implicitly hybrid method linking model-free and model-based RL. Discussion of related work is deferred to Section 6. 22 Background 
+
+Goal-Conditioned RL (GCRL). We consider goal-augmented MDPs M = ( S, A, G, P, μ, r, γ )
+
+with finite or continuous state space S, arbitrary action space A and goal set G, Markov transition kernel P : S × A → ∆( S), initial state distribution μ ∈ ∆( S), discount factor γ ∈ [0 , 1) ,and goal-conditioned reward function r : S × G → R. As in early GCRL literature [ 11 ], goals 
+
+g ∈ G are specified by arbitrary functions of the state, as opposed to exclusively indicator goals defined by r(s, g ) = δgs , also called goal states [12 , 13 ]. Denoting the return of a trajectory 
+
+τ = ( st, a t)t≥0 with respect to g by R(τ, g ) := P 
+
+> t≥0
+
+γtr(st+1 , g ), the objective of GCRL is to learn a goal-conditioned policy π : S × G → ∆( A) such that each πg := π(·, g ) maximises the objective Jg (π) := Eτ ∼πg [R(τ, g )] , where τ ∼ πg is shorthand for independently sampling s0 ∼ μ,
+
+at ∼ π(st, g ), st+1 ∼ P (st, a t) for all t. The value and action-value functions are defined by 
+
+V π (s, g ) := Eτ ∼πg
+
+R(τ, g ) | s0 = s and Qπ (s, a, g ) := Eτ ∼πg
+
+R(τ, g ) | s0 = s, a 0 = a .
+
+Our finite-MDP results extend to goals with arbitrary termination indicators [14 ], while some of our continuous-MDP results include explicit termination conditions; see Appendix D.1 for details. 
+
+Q-Iteration. For a fixed goal-augmented MDP, we define Q := {Q : S × A × G → R} as the space of action-value functions, and the goal-conditioned Bellman operators T π , T ⋆ : Q → Q as 
+
+T π (Q)( s, a, g ) := Es′∼P (s,a ),a ′∼π(s′,g )
+
+r(s′, g ) + γQ (s′, a ′, g ) ,
+
+T ⋆(Q)( s, a, g ) := Es′∼P (s,a )
+
+r(s′, g ) + γ sup a′∈A Q(s′, a ′, g ) ,
+
+with the corresponding Bellman and Bellman optimality equations T π (Qπ ) = Qπ , T ⋆(Q⋆) = Q⋆.The aim of value-based methods is to approximate a solution to the Bellman optimality equation. A classical approach, known as Q-iteration [1, 15 ], starts with an initial guess Q0 and iteratively applies the Bellman operator Qn+1 := T ⋆(Qn) to get a sequence (Qn)n∈N converging to a fixed-point. In practice, with a parametric family θ 7 → Qθ ∈ Q , we fix a reference distribution d ∈ ∆( S × A × G ),e.g. induced by an exploration policy, and measure fixed-point violation via the Bellman residual 
+
+L(θ, θ n) := ∥T ⋆(Qθn ) − Qθ ∥2 
+
+> d
+
+, where ∥X∥2 
+
+> d
+
+:= 12 Ed[X2]. One can then update θn by minimising 
+
+L(θ, θ n) with respect to θ. Writing δθ,θ n := T ⋆(Qθn ) − Qθ for the temporal difference error, the residual is usually minimised using gradient-based methods, with parameter updates driven by 
+
+∇θ L(θ, θ n) = −E(s,a,g )∼d
+
+δθ,θ n (s, a, g )∇θ Qθ (s, a, g ) .
+
+Notably, this does not correspond to gradient descent on a fixed objective; the target T ⋆(Qθn )
+
+depends on current parameters, so L(θ, θ n) shifts with each iteration. Estimating this expectation using environment samples yields a family of temporal difference (TD) algorithms [ 16 ] including 
+
+Q-learning [ 17 , 18 ], DQN [ 2, 19 ] and PQN [ 20 ], adapted here with goal-conditioning. These differ in the iterative optimization method, choice of sampling distribution d, number of steps performed on 
+
+L(θ, θ n) before updating θn, parametric family, and resulting convergence guarantees. 
+
+# 3 P -Learning 
+
+While Q-iteration treats the kernel P as fixed and searches for a function Q∗ that satisfies T ∗(Q∗) = 
+
+Q∗, we consider the inverse problem of extracting an “internal” model P ⋆ of the environment from a fixed agent with goal-conditioned Q-values, policy π, and known reward function r. Formally, let P := {S × A → ∆( S)} be the set of transition kernels, and consider a parametric family 
+
+φ 7 → Pφ ∈ P . We write T πφ = T πPφ for the corresponding Bellman operator, making explicit the dependence on WM parameters φ. Our guiding observation is that for an agent ( Q, π ), a model Pφ
+
+satisfying the Bellman equation T πφ (Q) = Q is compatible with the agent’s behavior, and may thus be viewed as (one possible) subjective belief of the agent about the environment. A natural objective is therefore to minimise the Bellman residual L(φ) = ∥T πφ (Q) − Q∥2 
+
+> d
+
+=: ∥δφ∥2 
+
+> d
+
+,this time with respect to φ. We call this P -learning . If Pφ is differentiable, we can minimise this loss with gradient-based methods, where the direction of parameter updates is driven by 
+
+∇φL(φ) = E(g,s,a )∼d
+
+δφ(s, a, g )∇φT πφ (Q)( s, a, g ) .
+
+3Unpacking this, we define the TD estimate ˆδφ(s, a, g, s ′, a ′) := r(s′, g ) + γQ (s′, a ′, g ) − Q(s, a, g ),and prove in Appendix A that under standard regularity assumptions, 
+
+∇φL(φ) = Eg,s,a,s ′,a ′
+
+δφ ˆδφ∇φ log Pφ(s′|s, a ) ,
+
+where (s, a, g ) ∼ d and s′ ∼ Pφ(s, a ), a ′ ∼ π(s′, g ). For large or continuous state spaces, the gradient can instead be estimated via the reparameterisation trick [ 21 , 22 ]. Intuitively, while Q-learning finds a Q-function Qθ⋆ that is most consistent with the MDP (best satisfies the Bellman equation T ⋆[Qθ⋆ ] = Qθ⋆ ), P -learning finds a model Pφ⋆ that is most consistent with a Q-function (best satisfies the Bellman equation T πφ⋆ [Q] = Q). See Algorithm 1 for pseudocode. 
+
+What does P -learning converge to? Unlike Q-learning [ 23 ], P -learning solves a supervised learning problem using a stationary objective L(φ), inheriting the standard convergence guarantees of SGD algorithms. 1 But what does the solution look like? Fixing the policy π and omitting the superscript for brevity, let us first rewrite the goal-conditioned Bellman operator as 
+
+TPφ (Q)( s, a, g ) = Es′∼Pφ(s,a ) [M (s′, g )] , where M (s′, g ) := r(s′, g ) + γV (s′, g ) . (1) When S, A, G are finite, we can assemble a matrix M ∈ R|G|×|S| with entries Mlk = M (s′
+
+> k
+
+, g l), and the Bellman equation becomes a linear system, viewing Q(s, a ) ∈ R|G| , P φ(s, a ) ∈ R|S| as vectors: 
+
+Q(s, a, g l) = Tφ(Q)( s, a, g l) = X 
+
+> k
+
+Pφ(s, a, s ′
+
+> k
+
+)Mlk =⇒ M P φ(s, a ) = Q(s, a ) (2) for each s, a . Writing Jφ(s, a ) for the Jacobian of Pφ(s, a ) with respect to φ, P -learning by gradient descent takes the explicit form φn+1 = φn − αn
+
+P 
+
+> s,a
+
+Jφ(s, a )⊤M ⊤(M P φ(s, a ) − Q(s, a )) . In the tabular setting where S, A, G are finite and Pφ(s, a ) = φ(s, a ) with φ : S × A → R|S| , each Jacobian is the identity Jφ(s, a ) = I and the update decouples, using a constant step size α, as 
+
+Tabular P-learning: Pn+1 (s, a ) = Pn(s, a ) − αM ⊤(M P n(s, a ) − Q(s, a )) . (3) As shown below, tabular P -learning converges to a particularly friendly closed-form solution. 
+
+> link to proof
+
+Theorem 1 (Convergence of P -learning) . In the tabular setting, fix a policy π, a Q-function 
+
+Q ∈ Q , initial P0(s, a ) ∈ ∆( S) for each (s, a ), and let σmax denote the largest singular value of M (Equation 1). Then P -learning (Equation 3) with step size 0 < α < 2/σ 2max converges to 
+
+P∞(s, a ) = M +Q(s, a ) +  I − M +M P0(s, a ) ,
+
+where M + is the Moore–Penrose pseudo-inverse of M . Equivalently, P∞ is the orthogonal projection of P0 onto the set of global minima Z = arg min P ∥T P (Q) − Q∥22.
+
+Theorem 1 reveals key conditions for P -learning to converge to the true world model. The term 
+
+(I − M +M )P0 represents the underdetermination from value equivalence: when M is rank-deficient (M +M̸ = I), multiple WMs yield identical Q-values, and P -learning selects among them based on the initial guess P0. 2 When M has full rank , the iteration converges to a unique solution M +Q,in which case M + can be viewed as an inverse Bellman map , noting that M + = M −1 when M
+
+is square. In this regime, P -learning can informally be viewed as a way to uniquely extract the agent’s ‘beliefs’ about the world (implicit model P ) by sampling its ‘beliefs’ about the value of states and actions (learnt function Q). If Q-values are moreover exact , i.e. satisfy TP (Q) = Q,then P -learning converges to the true kernel P . We provide intuition for how goals break value equivalence in Appendix B.1, and formal guarantees in Section 4. 
+
+Deterministic MDPs. If dynamics are deterministic, we can parameterise the model as a successor function Pφ : S × A → S . The drawback is that backpropagation flows through r(Pφ(s, a ), g )
+
+and Q(Pφ(s, a ), a ′, g ) via the chain rule, requiring these to be differentiable almost everywhere. This is usually satisfied when the Q-function is a neural network and r is distance-based (including 
+
+rg (s) = 1[|| s − g|| < σ ]); otherwise, methods like evolutionary strategies [ 25 , 26 ] are appropriate. If S is finite, P -learning can instead be performed via column-matching (Section 4.1). The WM is then unique provided column-injectivity , a much weaker requirement than full-rankness.     
+
+> 1E.g. if the Robbins-Monro conditions are satisfied, stochastic gradient descent (SGD) converges to a stationary point [ 24 ].
+> 2Note that P-learning can desert the probability simplex if Mis rank-deficient; see Appendix B.2 for a projected variant.
+
+44 Theoretical Results 
+
+Our core theoretical results are sufficient conditions on the goals and reward functions (G, r ) that resolve the value equivalence problem via Q-values, meaning that a unique world model can be extracted from (Q, π, r ). When Q-values are exact , we prove that the model coincides with the true transition kernel P . When Q-values are approximate , we provide bounds on the accuracy of the extracted world model, with further results for arbitrary Q-values in Appendix C.6. For finite MDPs, our results characterise the number of goals |G| needed to identify P uniquely, for various families of reward functions r. For MDPs with continuous S ⊆ Rd, uniqueness is typically driven not by count, but coverage of S (excluding Theorems 8 and 9). In this regime, our results therefore provide guarantees for goals sampled from a distribution with sufficiently broad support, e.g. uniform over a bounded goal region, as is common in GCRL benchmarks like JaxGCRL [ 27 ]. However, the next section will demonstrate that even agents trained with a handful of goals, despite not covering S, often encode P with high precision. We summarise our results in Table 1. 
+
+Notation. We write Q for arbitrary goal-conditioned Q-values, with M the corresponding function from Equation 1, and Qπ for the exact Q-values of policy π, with M = M π . We say Q is ϵ-approximate if ∥Q(s, a, ·) − Qπ (s, a, ·)∥1 ≤ ϵ for all s, a . The norm ∥ · ∥ without subscript refers to the standard Euclidean norm ∥ · ∥ 2, and Bσ (0) := {s ∈ Rd | ∥ s∥ < σ } is the open ball of radius σ,with S + Bσ (0) := {s + x | s ∈ S, x ∈ Bσ (0) }. Finally, we write ∃!P (Q, π, r, γ ) or simply ∃!P (Q)
+
+to assert that P is the unique world model which satisfies the Bellman equation T πP (Q) = Q.Table 1: Sufficient conditions on the goals (G, r ) for which ∃!P (Qπ ).State space S Deterministic P Stochastic P Reward r                                      
+
+> Finite S|G| ≥ 1Prop 1 |G| ≥ |S| Prop 8 Gaussian
+> |G| ≥ 1Thm 2a |G| ≥ |S| Thm 3a Generic
+> |G| ≥ |S| Thm 3b |G| ≥ |S| Thm 3b Spanning †
+> Continuous
+> S ⊆ Rd
+> |G| large, finite Thms 8,9 Gnon-empty interior ⋆Thm 6 Gaussian
+> G ⊇ S +Bσ(0) Thm 4 G ⊇ S +Bσ(0) ⋆Thm 7 Indicator
+> ⋆For unconditional policies; see Appendix D.3. †Including indicator goals, i.e. r(s, g ) = δsg .
+
+4.1 Finite Space 
+
+Using our formulation of the Bellman equation (1) as Es′∼P (s,a )[M (s′, g )] = Q(s, a, g ), we show that unique recovery of P is guaranteed by different structural conditions on M depending on kernel stochasticity, but not on the choice of parameterisation for Q-values or policies. 
+
+Deterministic MDPs. For deterministic kernels P : S ×A → S , the Bellman equation (1) collapses to M (P (s, a ), g ) = Q(s, a, g ). Writing M (s′) = M (s′, ·) and Q(s, a ) = Q(s, a, ·), extracting P
+
+reduces to identifying which column of M matches Q(s, a ) via column-matching , i.e. 
+
+P (s, a ) := arg min 
+
+> s′
+
+∥M (s′) − Q(s, a )∥1 .
+
+In particular, the arg min (and therefore the kernel P ) is unique provided M is column-injective :
+
+M (s)̸ = M (s′) for all s̸ = s′. To quantify injectivity, we define the column separation of M as 
+
+∆( M ) := min s̸=s′ ∥M (s) − M (s′)∥1. Theorem 2 shows that even with a single goal, (a) P is uniquely determined by exact Q-values Qπ for generic (“almost all”) reward functions and (b) P can also be recovered exactly from ϵ-approximate Q-values if ϵ is sufficiently small. 
+
+> link to proof
+
+Theorem 2 (Deterministic, Finite MDPs) . Fix any deterministic finite MDP and goal set |G| ≥ 1.(a) For any policy π, the set of reward functions r : S × G → R for which M π is column-injective, and thus ∃!P (Qπ ), has full Lebesgue measure. (b) If Q is ϵ-approximate and M is column-injective with column separation ∆, the estima-tor ˆP (s, a ) = argmin s′ ∥Q(s, a ) − M (s′)∥1 satisfies ˆP = P for all ϵ < ∆(1 + γm )/2,and any estimator fails to recover P in the worst-case for ϵ ≥ ∆/2.
+
+5As a corollary, for any base reward r0 and any random vector ξ ∈ R|S| whose distribution is absolutely continuous with respect to Lebesgue measure (e.g. Gaussian, or uniform on a bounded open region), the perturbed reward r = r0 + ξ satisfies ∃!P (Qπ ) almost surely (proof in Appendix C.1). This gives a recipe for ensuring identifiability by initialising rewards with noise, as demonstrated empirically in 
+
+FourRooms (Appendix F). The same conclusion does not follow for general parametric families like indicator rewards; however, when the state space can be embedded in continuous space (e.g. in a 2D environment), we can guarantee ∃!P (Qπ ) for Gaussian rewards: 
+
+> link to proof
+
+Proposition 1 (Gaussian Rewards) . Fix any deterministic finite MDP, policy π, and variance σ > 0.For any injective map φ : S ,→ Rd, the single-goal set G = {g} with Gaussian reward function 
+
+rg (s) = exp( −∥ φ(s) − g∥2/2σ2) satisfies ∃!P (Qπ ) for Lebesgue-almost every g ∈ Rd.
+
+Stochastic MDPs. For stochastic kernels, the Bellman equation (2) becomes a set of linear systems 
+
+M π P (s, a ) = Qπ (s, a ), implying that P is unique if M is full-rank . In order to specify a concrete class of rewards for which ∃!P (Qπ ), we say that goals (G, r ) span the state space if rank( R) = |S| ,where Rlk := r(sk, g l). This includes the common indicator goals [ 12 , 13 ] given by G = S and 
+
+r(s, g ) = δsg , since rank( R) = rank( I) = |S| . Using this condition, we state our main result. 
+
+> link to proof
+
+Theorem 3 (Finite MDPs) . Fix any finite MDP and goal set |G| ≥ |S| .(a) For any policy π, the set of reward functions r : S × G → R for which M π is full-rank, and thus ∃!P (Qπ ), has full Lebesgue measure. (b) For any goals (G, r ) that span S and any discount factor γ ∈ [0 , 1) , the set of policies π
+
+for which M π is full-rank has full Lebesgue measure. Similarly, for any π, the set of 
+
+γ ∈ [0 , 1) for which M π is full-rank has full Lebesgue measure. In particular, there exist γ−, γ + ∈ (0 , 1) such that M π is full-rank for all γ < γ − or γ > γ +.(c) If Q is ϵ-approximate and M has full rank, the estimator ˆP ij = M +Qij satisfies 
+
+∥ ˆP ij − Pij ∥1 ≤ ∥ M +∥1(1 + γm )ϵ , 
+
+and any estimator has worst-case error (1 + γ)ϵ/ 2.
+
+While Theorem 3(a) is analogous to Theorem 2(a), showing that identifiability holds for generic 
+
+reward functions when |G| ≥ |S| , part (b) shows that spanning goals are also sufficient if we shift genericity to policies or discount factors. We provide a stronger version of this result in Appendix C.3 (Proposition 5), including a finite failure set over γ and a treatment of optimal and entropy-regularised policies (functions of Q). Results for perturbed and Gaussian rewards are provided in Appendix C.4. In some settings, such as single-goal contrastive RL [ 28 ], the actor learns a single unconditional policy 
+
+πg = πg′ for all g, g ′, trained to maximise an environment-provided goal, but with a critic that encodes 
+
+Q-values Qπg for this policy with respect to all indicator goals g ∈ S . In this unconditional regime, Theorem 3(b) strengthens to M π always being full-rank (unlike general policies, cf. Appendix C.5). If we also assume indicator goals, the upper bound improves to ∥ ˆP ij − Pij ∥1 ≤ 4ϵ/ (1 − 2ϵ) for all 
+
+ϵ < 1/2 (Proposition 6), and M π reduces to the occupancy measure [29]. 
+
+What about arbitrary Q-values? While our results are stated for exact or approximate Q ≈ Qπ , note that a unique compatible world model can also be extracted for arbitrary Q-functions, e.g. during training, under similar conditions; see Propositions 9 and 10 in Appendix C.6. 
+
+Are multiple goals necessary? Could value equivalence instead be broken by Q-values for a single goal, but multiple horizons (discount factors γ) or behaviours (policies π), e.g. Multi-Rainbow [30] or Horde [ 31 ]? We prove in Appendix C.7 that this is not generally possible: for any |S| ≥ 4, there is a family of MDPs in which P cannot be identified from the Q-values {Qπr,γ | π ∈ Π, γ ∈ [0 , 1) }
+
+over all policies π and all discount factors γ, for any single-goal reward function r : S → R.
+
+Local MDPs. Sitting between deterministic and fully-stochastic settings, we say that an MDP is 
+
+N -local if supp( s, a ) := |{ s′ : P (s′ | s, a ) > 0}| ≤ N for every (s, a ), e.g. a robot who can only move to a neighbourhood of its position in a single timestep. In Appendix C.8 we prove that P can be identified uniquely in local MDPs for (a) |G| ≥ N − 1 generic goals when the support is known, and (b) |G| ≥ 2N − 1 otherwise. This generalises the stochastic case (where the support N = |S| is trivially known) and the deterministic case (where N = 1 but the successor state is unknown). 64.2 Continuous Space 
+
+For continuous S ⊆ Rd, the matrix M is replaced by a possibly infinite family {mπg }g∈G , and invertibility or column-injectivity generalises to whether this family is measure determining or 
+
+point separating for stochastic or deterministic MDPs; see Appendix D.2. We prove results for two classes of goals G ⊆ Rd: (sparse) indicator goals given by rg (s) = 1[|| s − g|| < σ ] with a threshold 
+
+σ > 0, commonly used in GCRL, and Gaussian goals rg (s) = exp( −|| s − g|| 2/2σ2) with a variance 
+
+σ > 0 controlling reward sparsity, which admit stronger guarantees. Theorem 4, stated below, is our most relevant result for MuJoCo environments like Reacher , which often use indicator goals and 
+
+termination upon arrival , i.e. a termination criterion Dg (s) = 1[|| s − g|| ≥ σ] that prevents further accumulation of reward once the goal is reached; see formal definition in Appendix D.1. 
+
+> link to proof
+
+Theorem 4. Fix any continuous deterministic MDP, policy π, threshold σ > 0 and a goal set 
+
+G ⊇ S + Bσ (0) with indicator rewards rg (s′) = 1[∥s′ − g∥ < σ ] and termination upon arrival. Then {mπg : g ∈ G} is point separating on S, hence ∃!P (Qπ ).
+
+Our full set of results, including those for stochastic kernels, are stated and proven in Appendix D. In the deterministic setting, we show that a sufficiently large but finite number of terminating Gaussian goals is sufficient to identify P (Theorem 8), while only 2d + 1 non-terminating Gaussian goals are enough when V π is real-analytic (Theorem 9). For stochastic kernels, Theorems 6 and 7 show that a goal set with non-empty interior suffices for Gaussian goals, and G ⊇ S + Bσ (0) for indicator goals, but only for unconditional policies. The challenging intersection of stochastic kernels and general (goal-conditioned) policies is beyond the scope of this paper. 
+
+# 5 Experiments 
+
+We verify that our findings hold empirically in MountainCar [ 32 ] and MuJoCo Reacher [ 33 ], both of which are continuous and deterministic. We defer the finite and stochastic setting to Appendix F, where agents are shown to contain highly accurate world models using only |G| = 1 , 4, 20 goals for deterministic, local (windy) and fully stochastic (teleporting) variants of FourRooms [34 ] respectively. We train agents using PQN [ 20 ] with Hindsight Experience Replay (HER) [ 35 ], and extract each agent’s implicit world model (WM) at the end of training using P -learning. Hyperparameters and environment details are in Appendix E. All results are reported over 10 seeds.  
+
+> P-learning
+
+Figure 2: Q-values (top) and implicit WM (bottom) of a Reacher agent trained on |G| = 4 goals. Learnt values Qg (θ, ω, a ) are coarsely similar ( NMSE = 5 .7 × 10 −1) to ground truth Qtrue , shown for g = (0 , 1) , a = (1 , 1) and two slices ω = (1 , −1) , θ = (1 , −1) . Nevertheless, the extracted WM 
+
+P (θ, ω, a ) is highly accurate ( NMSE = 1 .2 × 10 −4), shown for prediction of y-position Py vs true 
+
+P true  
+
+> y
+
+(same slice). Bottom right: WM/true rollouts of goal-conditioned policy for two start states. 75.1 Reacher 
+
+Our theoretical guarantees for continuous S ⊆ Rd require an infinite number of indicator goals covering all dimensions of S. However, we find that accurate world model extraction in Reacher is feasible even with a small number |G| = 4 of goals defined only with respect to fingertip position 
+
+(x, y ) = (cos θ1 + cos θ2, sin θ1 + sin θ2). We consider the goals with unit distance in the cardinal directions, G = {(±1, 0) , (0 , ±1) }, covering a limited portion of the fingertip space [−2, 2] . The indicator (sparse) reward function is rg (θ, ω, x ) = 1{∥ x − g∥ < σ }, with σ = 0 .2 matching ReacherHard in MuJoCo Playground [36], and episodes terminate upon reaching the goal region. 
+
+Figure 3: Mean return ± SE (10 training seeds and 512 env. resets), for optimal (R⋆) vs WM-trained (RWM ) policies on 3 unseen goals. We visualise slices of the learnt Q-values, extracted WM and trajectory rollouts in Figure 2. Despite imperfect Q-values (normalised mean squared error 
+
+NMSE = 5 .7 × 10 −1), the WM matches ground truth with extremely high fidelity ( NMSE = 1 .2 × 10 −4). To further validate accuracy, and determine whether 
+
+P -learning reveals hidden generalisation capabili-ties, we train policies exclusively inside the extracted WM using value iteration, for three unseen goals that are increasingly far from the training distri-bution: (i) far fingertip: reach fingertip position 
+
+(x, y ) = ( √2, √2) , which is twice as far as any training goal; (ii) target angle: reach joint configuration θ = (0 , π ), noting that distinct angle config-urations can induce identical positions; and (iii) target velocity: reach velocity ω = (2 , 2) , where ω
+
+covers a different dimension as the training goals. Despite the agent only training on position-based goals, the WM-learnt policy is quasi-optimal on all three tasks, as shown in Figure 3. Notably, the second and third goals would be impossible to achieve using position-based successor features, since the optimal Q-functions for these goals is not a linear combination of training Q-functions. To further study the relationship between model-free training and implicit world models, we analyse whether more performant agents tend to encode more accurate WMs. We follow recent work suggesting that network capacity improves goal-conditioned performance [ 37 ] and plot agent return, MSE of the extracted WM, and return of a WM-trained policy on unseen goals, against architecture capacity ( Q-network depth/width) in Figure 4. We run each configuration over ten seeds, and fix all other hyperparameters. The resulting Spearman rank correlation coefficient between agent return and WM error is ρ = −0.98 with 95% confidence interval [−0.99 , −0.95] , and similarly ρ = +0 .95 [+0 .89 , +0 .97] for agent return and WM-policy return on unseen goals. These strong correlations suggest that performant goal-conditioned agents tend to have better world models and better implicit generalisation capabilities, and vice-versa. We expand this analysis in Appendix E.2. 
+
+Figure 4: Agent return on training goals (left), implicit world model MSE (middle) and return of WM-extracted policies on unseen goals (right), for a Reacher agent trained with just |G| = 4 goals. Top: metrics as a function of training time for fixed width W = 512 and increasing depth D. Bottom: Heatmap over all widths/depths at the end of training, with mean ± SE over 10 seeds. The Spearman correlation coefficient between agent return and WM error is ρ = −0.98 [ −0.99 , −0.95] .85.2 MountainCar 
+
+In MountainCar , the environment goal is to reach position x = 0 .5 under 200 timesteps. Unlike 
+
+Reacher , which has goal-conditioning baked in, we augment the environment to support arbitrary goals. We train a MountainCar agent using 4 linearly spaced, position-based goals, with a sparse reward function rg (x, v ) = 1{| x − g| < σ }, where g ∈ [−1.2, 0.6] , with termination upon arrival and threshold σ = 0 .1. The original environment goal corresponds exactly to g = 0 .6. Again, the dynamics extracted from a trained PQN agent match the true transition kernel with high fidelity (NMSE = 6 .7 × 10 −3). To further validate accuracy, we consider three out-of-distribution goals: 
+
+(i) Fast car: reach velocity v = 0 .06 ; (ii) Gentle car: reach the top of the hill x = 0 .6 without exceeding |v| = 0 .05 (the unconstrained optimal policy uses |v| ≥ 0.06 ); (iii) Shortest path: find the shortest path to one of two goals x = −1.0 and x = 0 .4, which, as noted by Touati and Ollivier [10], could not be achieved using successor features based on the indicator-goal family. 
+
+Figure 5: Quiver plots of WMs extracted from two agents trained with position- and velocity-based goals, vs ground truth, for action a = right .Each arrow starts from a state s and points to the predicted or true next-state s′ = P (s, a ).Again, planning inside the implicit WM reveals implicit generalisation capabilities (Figure 3). Investigating further, we train a second MountainCar agent with four 
+
+velocity -based goals . The resulting implicit WM is near-identical to that of the position-trained agent, namely, they are ~42 times closer to each other ( NMSE = 1 .7 × 10 −4)than to ground truth ( NMSE = 7 .2 × 10 −3), as illustrated in Figure 5. This leads us to an informal “local-global” hypothesis, left for future exploration: value-based agents, trained to predict returns on a small number of local goals (i.e. with reward functions defined on a subset of variables), tend to encode an accurate world model over all dependent environment variables. 
+
+# 6 Related Work 
+
+Value equivalence. Grimm et al. [6] introduced the value equivalence (VE) principle, and showed that the equivalence class collapses to a single point for value functions that form a basis of R|S| combined with |A| pointwise-linearly-independent policies, neither of which we assume. Their work focuses on learning a surrogate model to enhance planning using environment samples, while ours addresses the problem of extracting an agent’s internal world model with access only to (Q, π, r ). Algorithms such as MuZero [ 38 ], VAML [ 39 , 4 ] and unified frameworks [ 40 ] also learn value-equivalent models without addressing identifiability. Fellows et al. [41] demonstrate that Bayesian model-free methods can learn Bayes-optimal policies, implying that model-free approaches implicitly encode a posterior over environment dynamics, and hence a space of world models. Relatedly, delayed Q-learning [42 ] achieves PAC sample complexity comparable to model-based RL despite never representing P
+
+explicitly. Conversely, Zhu et al. [43] exhibit MDP families where P admits exponentially smaller circuit representations than Q⋆, which motivates extracting P as a compact summary of an agent. 
+
+GCRL. GCRL has emerged as a popular field wherein agents are trained on a number of tasks [ 44 ,35 , 29 ], with the bulk of recent research focused on enhancing the performance of goal-conditioned agents, e.g. by scaling compute usage [ 45 ], goal set [ 46 ] or network size [ 37 ]. Our work takes a different tack by analysing what agents encode during and after training, and showing that their implicit representation of the world improves with the number of goals, network size and performance. 
+
+World models from agents. Richens et al. [47] proved that ϵ-optimal policies for sufficiently diverse 
+
+multi-step goals of depth d recover approximate dynamics, but require competence on dn 2m goals; they do not address the more realistic setting of single-step goals, nor continuous MDPs. Adamczyk [48] showed that converged Q-values encode dynamics under a “reverse Lipschitz” assumption on 
+
+V π which rarely holds in practice, and is limited to deterministic MDPs and a single goal. Turner [49 ,Theorem F.117 ] proved that V ⋆ recovers deterministic MDPs up to isomorphism, but not in stochastic environments. Bush et al. [50] provide mechanistic-interpretability evidence that model-free agents develop implicit forward models, but do not address uniqueness or extraction. 9Decoupling dynamics from reward. The successor representation [ 51 ] and successor features [ 8, 9]decompose value functions into transition- and reward-dependent components, but only address families of reward functions that can be decomposed as linear functions of shared features. This excludes e.g. the indicator functions in continuous environments [ 32 ], which would require infinitely many features to represent. Forward-backward learning [ 10 ] relaxes this constraint significantly, and the successor measure of Lehnert and Littman [52 , p. 7 ] and Blier et al. [29 , Prop. 1 ] was shown to be invertible in the special case of unconditional π, indicator goals and exact Q, but does not address identifiability or extraction. Reward-free RL [ 53 ] and inverse RL [ 54 ] solve orthogonal problems to ours: reward-free exploration produces a dataset sufficient to plan for any downstream reward, whereas we show the dual phenomenon: diverse reward-rich training implicitly encodes 
+
+P . Inverse RL recovers r from (P, π ), while we recover P from (r, π, Q ). Indeed, RL, Q-learning, and P-learning can all be thought of as different resolutions to the same inconsistency (the Bellman residual) between a world model P , action-values Q, and rewards r – an instance of a general pattern that also has analogues in decision theory and supervised learning [55]. 
+
+# 7 Conclusion 
+
+In this work, we provided sufficient conditions under which it is possible to recover environment dynamics from the Q-values of a goal-conditioned model-free agent, for a variety of MDP classes (deterministic or stochastic, discrete or continuous). We introduced a novel method, P -learning, which enables the extraction of this implicit world model. We subsequently showed, empirically, the accuracy and effectiveness of P -learning in a number of RL environments, despite goal sets that significantly breach our theoretical guarantees. We demonstrated that this WM leads to implicit generalisation capabilities hidden in the agent’s value functions, with zero-shot transfer to reward functions defined on orthogonal variables. Finally, we provided evidence for a relationship between the performance of an agent, and the fidelity of its underlying world model. 
+
+Limitations. Our results come with a number of caveats. First, our theoretical results for stochastic MDPs with continuous state spaces only apply to unconditional policies, and while we expect them to generalise, we leave them as open conjectures for future work. Secondly, our work does not encompass partially observable MDPs, or model-free agents that do not learn Q-values. Third, we have not run experiments to test whether P -learning scales to very large, finite environments. Finally, 
+
+P -learning is not a substitute for model-based RL; instead, we focus on the conceptual and empirical connection between model-based, model-free and goal-conditioned RL. 
+
+Future Work. We hope our results will inspire a deeper understanding of the implicit generalisation capabilities lurking in model-free agents; hybrid methods that leverage them; and interpretability or auditing tools based on internal world models, to ensure that agents can efficiently be repurposed when they are trained using reward functions that are, perhaps inevitably, misspecified. 
+
+# Acknowledgements 
+
+We are grateful to David Abel for his timely suggestions and references to existing work, Michael Matthews for his JAX implementation of PQN augmented with HER, Maria Kostylew for her comments and support, Uljad Berdica for his feedback and world model expertise, Shimon Whiteson for feedback on early drafts, and Matthew Farrugia-Roberts for helpful early conversations. 
+
+AL conducted this work as part of the MATS Program (ML Alignment & Theory Scholars), and is generously supported by the Cooperative AI PhD Fellowship. MF is funded by the UKRI Engineering and Physical Sciences Research Council EP/Y028481/1. AG is funded by the EPSRC Centre for Doctoral Training in Autonomous Intelligent Machines and Systems EP/S024050/1. 
+
+# Author Contributions 
+
+AL led the project, designed the method, proved the theoretical results, ran the experiments and wrote the paper. MF and AG helped with writing, editing and experiment design. JR and JF 
+
+provided guidance and helped frame the paper throughout. OR contributed to the writing, editing, mathematical precision, and provided guidance throughout. 10 References 
+
+[1] Richard Sutton and Andrew Barto. Reinforcement learning: An introduction . A Bradford Book, 2018. [2] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan Wierstra, and Martin Riedmiller. Playing atari with deep reinforcement learning, 2013. [3] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal Policy Optimization Algorithms, August 2017. [4] Nathan Lambert, Brandon Amos, Omry Yadan, and Roberto Calandra. Objective mismatch in model-based reinforcement learning. In Proceedings of the 2nd Conference on Learning for Dynamics and Control ,Proceedings of Machine Learning Research. PMLR, 2020. [5] Thomas M. Moerland, Joost Broekens, Aske Plaat, and Catholijn M. Jonker. Model-based reinforcement learning: A survey. Foundations and Trends in Machine Learning , 2023. [6] Christopher Grimm, André Barreto, Satinder Singh, and David Silver. The value equivalence principle for model-based reinforcement learning. In Advances in Neural Information Processing Systems , 2020. [7] Christopher Grimm, André Barreto, Gregory Farquhar, David Silver, and Satinder Singh. Proper value equivalence. In Advances in Neural Information Processing Systems , 2021. [8] André Barreto, Will Dabney, Rémi Munos, Jonathan J. Hunt, Tom Schaul, Hado van Hasselt, and David Silver. Successor features for transfer in reinforcement learning. In Advances in Neural Information Processing Systems , 2017. [9] Diana Borsa, André Barreto, John Quan, Daniel Mankowitz, Rémi Munos, Hado van Hasselt, David Silver, and Tom Schaul. Universal Successor Features Approximators, 2018. [10] Ahmed Touati and Yann Ollivier. Learning one representation to optimize all rewards. In Proceedings of the 35th International Conference on Neural Information Processing Systems , 2021. [11] Tom Schaul, Daniel Horgan, Karol Gregor, and David Silver. Universal Value Function Approximators. In 
+
+Proceedings of the 32nd International Conference on Machine Learning . PMLR, 2015. [12] Benjamin Eysenbach, Tianjun Zhang, Sergey Levine, and Ruslan Salakhutdinov. Contrastive learning as goal-conditioned reinforcement learning. In Advances in Neural Information Processing Systems , 2022. [13] Seohong Park, Kevin Frans, Benjamin Eysenbach, and Sergey Levine. OGBench: Benchmarking Offline Goal-Conditioned RL. In The Thirteenth International Conference on Learning Representations , 2024. [14] Martha White. Unifying task specification in reinforcement learning. In Proceedings of the 34th Interna-tional Conference on Machine Learning - Volume 70 , ICML’17, 2017. [15] Martin Riedmiller. Neural fitted q iteration – first experiences with a data efficient neural reinforcement learning method. In Machine Learning: ECML 2005 , 2005. [16] Richard Sutton. Learning to predict by the method of temporal differences. Machine Learning , 08 1988. [17] Christopher John Cornish Hellaby Watkins. Learning from Delayed Rewards . PhD thesis, King’s College, University of Cambridge, Cambridge, UK, May 1989. [18] Christopher J. C. H. Watkins and Peter Dayan. Q-learning. Machine learning , 1992. [19] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A. Rusu, Joel Veness, Marc G. Bellemare, Alex Graves, Martin Riedmiller, Andreas K. Fidjeland, Georg Ostrovski, Stig Petersen, Charles Beattie, Amir Sadik, Ioannis Antonoglou, Helen King, Dharshan Kumaran, Daan Wierstra, Shane Legg, and Demis Hassabis. Human-level control through deep reinforcement learning. Nature , February 2015. ISSN 00280836. [20] Matteo Gallici, Mattie Fellows, Benjamin Ellis, Bartomeu Pou, Ivan Masmitja, Jakob Nicolaus Foerster, and Mario Martin. Simplifying deep temporal difference learning. The International Conference on Learning Representations , 2025. [21] Diederik P. Kingma and Max Welling. Auto-encoding variational bayes. In International Conference on Learning Representations , 2014. [22] Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation and ap-proximate inference in deep generative models. In Proceedings of the 31st International Conference on International Conference on Machine Learning - Volume 32 , 2014. 
+
+11 [23] Leemon C. Baird. Residual algorithms: reinforcement learning with function approximation. In Proceed-ings of the International Conference on Machine Learning , 1995. [24] Herbert Robbins and Sutton Monro. A Stochastic Approximation Method. The Annals of Mathematical Statistics , 1951. [25] I. Rechenberg. Evolutionsstrategien. In Simulationsmethoden in der Medizin und Biologie . Springer Berlin Heidelberg, 1978. [26] Bidipta Sarkar, Mattie Fellows, Juan Agustin Duque, Alistair Letcher, Antonio León Villares, Anya Sims, Clarisse Wibault, Dmitry Samsonov, Dylan Cope, Jarek Liesen, Kang Li, Lukas Seier, Theo Wolf, Uljad Berdica, Valentin Mohl, Alexander David Goldie, Aaron Courville, Karin Sevegnani, Shimon Whiteson, and Jakob Nicolaus Foerster. Evolution strategies at the hyperscale, 2026. [27] Michał Bortkiewicz, Władek Pałucki, Vivek Myers, Tadeusz Dziarmaga, Tomasz Arczewski, Łukasz Kuci´ nski, and Benjamin Eysenbach. Accelerating Goal-Conditioned RL Algorithms and Research. In 
+
+International Conference on Learning Representations , 2025. [28] Grace Liu, Michael Tang, and Benjamin Eysenbach. A single goal is all you need: Skills and exploration emerge from contrastive RL without rewards, demonstrations, or subgoals. In The Thirteenth International Conference on Learning Representations , 2025. [29] Léonard Blier, Corentin Tallec, and Yann Ollivier. Learning Successor States and Goal-Dependent Values: A Mathematical Viewpoint, 2021. [30] William Fedus, Carles Gelada, Yoshua Bengio, Marc G. Bellemare, and Hugo Larochelle. Hyperbolic discounting and learning over multiple horizons, 2019. [31] Richard S. Sutton, Joseph Modayil, Michael Delp, Thomas Degris, Patrick M. Pilarski, Adam White, and Doina Precup. Horde: a scalable real-time architecture for learning knowledge from unsupervised sensorimotor interaction. In The 10th International Conference on Autonomous Agents and Multiagent Systems , 2011. [32] Mark Towers, Ariel Kwiatkowski, and Jordan Terry. Gymnasium: A standard interface for reinforcement learning environments. https://gymnasium.farama.org/ , 2023. Farama Foundation. [33] Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based control. In 
+
+2012 IEEE/RSJ International Conference on Intelligent Robots and Systems . IEEE, 2012. [34] Richard S. Sutton, Doina Precup, and Satinder Singh. Between mdps and semi-mdps: A framework for temporal abstraction in reinforcement learning. Artificial Intelligence , 1999. [35] Marcin Andrychowicz, Filip Wolski, Alex Ray, Jonas Schneider, Rachel Fong, Peter Welinder, Bob McGrew, Josh Tobin, Pieter Abbeel, and Wojciech Zaremba. Hindsight experience replay. In Advances in Neural Information Processing Systems , 2017. [36] Kevin Zakka, Baruch Tabanpour, Qiayuan Liao, Mustafa Haiderbhai, Samuel Holt, Jing Yuan Luo, Arthur Allshire, Erik Frey, Koushil Sreenath, Lueder A. Kahrs, Carlo Sferrazza, Yuval Tassa, and Pieter Abbeel. Mujoco playground: An open-source framework for gpu-accelerated robot learning and sim-to-real transfer., 2025. URL https://github.com/google-deepmind/mujoco_playground .[37] Kevin Wang, Ishaan Javali, Michał Bortkiewicz, Tomasz Trzcinski, and Benjamin Eysenbach. 1000 layer networks for self-supervised RL: Scaling depth can enable new goal-reaching capabilities. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. [38] Julian Schrittwieser, Ioannis Antonoglou, Thomas Hubert, Karen Simonyan, Laurent Sifre, Simon Schmitt, Arthur Guez, Edward Lockhart, Demis Hassabis, Thore Graepel, Timothy Lillicrap, and David Silver. Mastering Atari, Go, chess and shogi by planning with a learned model. Nature , 2020. [39] Amir-massoud Farahmand. Iterative value-aware model learning. In Advances in Neural Information Processing Systems , 2018. [40] Benjamin Freed, Thomas Wei, Roberto Calandra, Jeff Schneider, and Howie Choset. Unifying model-based and model-free reinforcement learning with equivalent policy sets. In Reinforcement Learning Conference ,2024. [41] Mattie Fellows, Brandon Gary Kaplowitz, Christian Schroeder De Witt, and Shimon Whiteson. Bayesian exploration networks. In Proceedings of the 41st International Conference on Machine Learning , Proceed-ings of Machine Learning Research, 2024. 
+
+12 [42] Alexander L. Strehl, Lihong Li, Eric Wiewiora, John Langford, and Michael L. Littman. Pac model-free reinforcement learning. In Proceedings of the 23rd International Conference on Machine Learning , 2006. [43] Hanlin Zhu, Baihe Huang, and Stuart Russell. On representation complexity of model-based and model-free reinforcement learning. In The Twelfth International Conference on Learning Representations , 2024. [44] Leslie Pack Kaelbling. Learning to achieve goals. In International Joint Conference on Artificial Intelligence , 1993. [45] Raj Ghugare, Michał Bortkiewicz, Alicja Ziarko, and Benjamin Eysenbach. On the Role of Iterative Computation in Reinforcement Learning, February 2026. arXiv:2602.05999 [cs]. [46] Michael Matthews, Matthew Jackson, Michael Beukman, Thomas Foster, Alistair Letcher, Scott Fujimoto, Cédric Colas, and Jakob Foerster. Goal-conditioned agents that learn everything all at once, 2026. [47] Jonathan Richens, Tom Everitt, and David Abel. General agents need world models. In Forty-Second International Conference on Machine Learning , 2025. [48] Jacob Adamczyk. Inferring transition dynamics from value functions. In The Thirteenth International Conference on Learning Representations , 2025. [49] Alexander Matt Turner. On avoiding power-seeking by artificial intelligence, 2022. [50] Thomas Bush, Stephen Chung, Usman Anwar, Adrià Garriga-Alonso, and David Krueger. Interpreting emergent planning in model-free reinforcement learning. In The Thirteenth International Conference on Learning Representations , 2025. [51] Peter Dayan. Improving generalization for temporal difference learning: The successor representation. 
+
+Neural Computation , 1993. [52] Lucas Lehnert and Michael L. Littman. Successor features combine elements of model-free and model-based reinforcement learning. Journal of Machine Learning Research , 2020. [53] Chi Jin, Akshay Krishnamurthy, Max Simchowitz, and Tiancheng Yu. Reward-free exploration for reinforcement learning. In Proceedings of the 37th International Conference on Machine Learning ,Proceedings of Machine Learning Research, 2020. [54] Haoyang Cao and Samuel N. Cohen. Identifiability in inverse reinforcement learning. In Advances in Neural Information Processing Systems , 2021. [55] Oliver E Richardson, Mandana Samiei, Mehran Shakerinava, Joseph D Viviano, Abdessamad El Kabid, Ali Parviz, and Yoshua Bengio. Local inconsistency resolution: The interplay between attention and control in probabilistic models. Proceedings of the 29th International Conference on Artificial Intelligence and Statistics , 2026. [56] Shakir Mohamed, Mihaela Rosca, Michael Figurnov, and Andriy Mnih. Monte carlo gradient estimation in machine learning. J. Mach. Learn. Res. , 2020. [57] A. J. Wilkie. Model completeness results for expansions of the ordered field of real numbers by restricted pfaffian functions and the exponential function. Journal of the American Mathematical Society , 1996. [58] Steven G. Krantz and Harold R. Parks. A Primer of Real Analytic Functions . Birkhäuser Boston, 2nd edition, 2002. [59] Gerald B. Folland. Real Analysis: Modern Techniques and Their Applications . Pure and Applied Mathematics: A Wiley-Interscience Series of Texts, Monographs and Tracts. John Wiley & Sons, 1999. [60] John M. Lee. Introduction to Smooth Manifolds . Springer, 2nd edition, 2013. [61] Salomon Bochner. Harmonic Analysis and the Theory of Probability . University of California Press, 1955. [62] Elias M. Stein and Guido Weiss. Introduction to Fourier Analysis on Euclidean Spaces . Princeton Mathematical Series. Princeton University Press, 1971. [63] Robert Tjarko Lange. gymnax: A JAX-based reinforcement learning environment library, 2022. URL 
+
+http://github.com/RobertTLange/gymnax .[64] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Chris Leary, Dougal Maclaurin, George Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. JAX: compos-able transformations of Python+NumPy programs, 2018. URL http://github.com/jax-ml/jax .
+
+13 A Proofs for P -Learning 
+
+A.1 Derivation of P -Learning 
+
+We provide pseudocode for P -learning in Algorithm 1 below, with batch size 1 for simplicity. To derive the update, recall the definition of the Bellman residual 
+
+L(φ) := ∥T πφ (Q) − Q∥2 
+
+> d
+
+= 12 E(g,s,a )∼d
+
+h T πφ (Q)( s, a, g ) − Q(s, a, g )2i
+
+= 12 Ed[δ2
+
+> φ
+
+] ,
+
+where δφ(s, a, g ) = T πφ (Q)( s, a, g ) − Q(s, a, g ) is the TD error. By the chain rule, and since the expectation does not depend on φ, we have 
+
+∇φL(φ) = E(g,s,a )∼d
+
+δφ(s, a, g )∇φT πφ (Q)( s, a, g ) .
+
+We now assume three standard regularity conditions for the score-function gradient estimator [ 56 ], namely: (i) Pφ is continuously differentiable in φ, (ii) Pφ has full support, and (iii) there is an integrable function g : S → R with sup φ ∥∇ φPφ(s′ | s, a )∥1 ≤ g(s′) for all s, a, s ′. Then the gradient can be estimated via the log-derivative trick [56]: 
+
+∇φL(φ) = E(g,s,a )∼d
+
+δφ(s, a, g )∇φ Es′∼Pφ(s,a ),a ′∼π(·| s′,g ) [r(s′, g ) + γQ (s′, a ′, g )] 
+
+= E(g,s,a )∼d,s ′∼Pφ(s,a ),a ′∼π(s′,g ) [δφ(s, a, g )( r(s′, g ) + γQ (s′, a ′, g )) ∇φ log Pφ(s′ | s, a )] .
+
+To reduce variance and make the per-sample direction of this update explicit, we subtract the baseline 
+
+Q(s, a, g ) to get a per-sample TD error 
+
+ˆδφ(s, a, g, s ′, a ′) := r(s′, g ) + γQ (s′, a ′, g ) − Q(s, a, g ) ,
+
+and the update, as claimed in the main text, simplifies to 
+
+∇φL(φ) = E(g,s,a )∼d,s ′∼Pφ(s,a ),a ′∼π(s′,g )
+
+δφ(s, a, g )ˆδφ(s, a, g, s ′, a ′)∇φ log Pφ(s′ | s, a ) . (4) Note that the baseline preserves unbiasedness: Q(s, a, g ) is constant under the inner sampling of 
+
+(s′, a ′), so it factors out and multiplies the expected score Es′∼Pφ(s,a )[∇φ log Pφ(s′ | s, a )] , which is zero because R 
+
+> S
+
+Pφ(s′ | s, a )ds ′ = 1 . Now the TD error δφ(s, a, g ) does not depend on the variables 
+
+(s′, a ′) in the outer expectation, so we can factor it out, yielding: 
+
+∇φL(φ) = E(g,s,a )∼d
+
+
+
+δφ(s, a, g ) Es′∼Pφ(s,a ), a ′∼π(s′,g )
+
+hˆδφ∇φ log Pφ(s′ | s, a )
+
+i
+
+.
+
+The gradient is a product of two expectations over (s′, a ′), so an unbiased estimator requires two independent samples: (s′
+
+> 1
+
+, a ′
+
+> 1
+
+) to form an unbiased estimate ˆδ1 of the outer factor δφ, and an independent (s′
+
+> 2
+
+, a ′
+
+> 2
+
+) to estimate the inner expectation. Independence ensures unbiased estimation: 
+
+∇φL(φ) = E(g,s,a )∼d
+
+
+
+δφ(s, a, g ) Es′∼Pφ(s,a ),a ′∼π(s′,g ) [ˆδφ∇φ log Pφ(s′ | s, a )] 
+
+
+
+= E(g,s,a )∼d,s 1,2∼Pφ(s,a ),a 1,2∼π(s1,2,g )
+
+hˆδ1 ˆδ2∇φ log Pφ(s2 | s, a )
+
+i
+
+.
+
+This derivation leads to the pseudocode for P -learning in Algorithm 1 below, with batch size 1 for simplicity. Crucially, both samples come from the model Pφ rather than the environment, so double sampling here is essentially free, costing only an extra forward pass through Pφ and Q, unlike the double-sampling obstruction in TD learning which requires double-sampling in the environment [ 23 ]. 
+
+Deterministic case. When dynamics are known to be deterministic and the model is parameterised as a successor function Pφ : S × A → S , the inner expectation over s′ in T πφ (Q) collapses to 
+
+T πφ (Q)( s, a, g ) = r(Pφ(s, a ), g ) + γV g (Pφ(s, a )) , Vg (s′) = Ea′∼π(s′,g )[Q(s′, a ′, g )] .
+
+Hence δφ(s, a, g ) is computable from a single forward pass, with no Monte-Carlo estimate over s′;the only remaining randomness is over a′ ∼ π(Pφ(s, a ), g ). The gradient 
+
+∇φL(φ) = δφ(s, a, g )∇φ
+
+r(Pφ(s, a ), g ) + γ V g (Pφ(s, a )) 
+
+obtained by chain rule (reparameterisation) through Pφ is then unbiased from a single sample. This requires r and Q to be differentiable almost everywhere in their first argument, as discussed in Section 3; otherwise, zero-shot methods like evolutionary strategies [25, 26] are appropriate. 14 Algorithm 1 P -Learning. 
+
+Require: Parametric family Pφ, Q-function Q, policy π, reward r, discount γ, sampling distribution 
+
+d over (g, s, a ), step sizes {αn}, initial φ0. 
+
+> 1:
+
+for n = 0 , 1, . . . , do  
+
+> 2:
+
+Sample (g, s, a ) ∼ d 
+
+> 3:
+
+Sample s′
+
+> 1
+
+, s ′ 
+
+> 2
+
+∼ Pφn (· | s, a ), a′ 
+
+> 1
+
+∼ π(· | s′
+
+> 1
+
+, g ), a′ 
+
+> 2
+
+∼ π(· | s′
+
+> 2
+
+, g ) 
+
+> 4:
+
+δi ← r(s′
+
+> i
+
+, g ) + γ Q (s′
+
+> i
+
+, a ′
+
+> i
+
+, g ) − Q(s, a, g ) for i = 1 , 2 
+
+> 5:
+
+ˆgn ← δ1δ2∇φ log Pφ(s′ 
+
+> 2
+
+| s, a ) φ=φn 
+
+> 6:
+
+φn+1 ← φn − αn ˆgn 
+
+> 7:
+
+end for  
+
+> 8:
+
+return Extracted world model Pφn .
+
+A.2 Proof of Theorem 1 Theorem 1 (Convergence of P -learning). In the tabular setting, fix a policy π, a Q-function 
+
+Q ∈ Q , initial P0(s, a ) ∈ ∆( S) for each (s, a ), and let σmax denote the largest singular value of M (Equation 1). Then P -learning (Equation 3) with step size 0 < α < 2/σ 2max converges to 
+
+P∞(s, a ) = M +Q(s, a ) +  I − M +M P0(s, a ) ,
+
+where M + is the Moore–Penrose pseudo-inverse of M . Equivalently, P∞ is the orthogonal projection of P0 onto the set of global minima Z = arg min P ∥T P (Q) − Q∥22.
+
+Proof. Fix s, a and write M := M π and Q := Q(s, a ), Pt := Pt(s, a ) for brevity. The iteration is 
+
+Pt+1 = Pt − αM ⊤(M P t − Q) .
+
+Now let r = rank( M ) and write the SVD M = U ΣV ⊤ where U ∈ RL×r , V ∈ Rn×r have orthonormal columns, and Σ = diag( σ1, . . . , σ r ) ≻ 0. We extend V to an orthonormal basis [V V ⊥]
+
+of Rn with V⊥ ∈ Rn×(n−r), so that V ⊤⊥ V⊥ = In−r and V ⊤V⊥ = 0 . In particular, [V ; V⊥] is an orthogonal n × n matrix with V V ⊤ + V⊥V ⊤⊥ = In, and we can decompose each iterate as 
+
+Pt = ( V V ⊤ + V⊥V ⊤⊥ )Pt = V a t + V⊥bt ,
+
+where at := V ⊤Pt ∈ Rr and bt := V ⊤⊥ Pt ∈ Rn−r . Using orthogonality (V ⊤⊥ V ) = 0 ,
+
+bt+1 = V ⊤⊥ Pt+1 = bt − αV ⊤⊥ M ⊤(M P t − Q) = bt − α(V ⊤⊥ V )Σ U ⊤(M P t − Q) = bt ,
+
+so bt = b0 = V ⊤⊥ P0 for all t. We now prove by induction that 
+
+at = ( I − αΣ2)ta0 + α
+
+> t−1
+
+X
+
+> k=0
+
+(I − αΣ2)kΣU T Q
+
+for all t ≥ 0. The base case t = 0 holds trivially. Assuming the claim holds for fixed t ≥ 0,
+
+at+1 = at − αΣU ⊤(U ΣV ⊤Pt − Q) = ( I − αΣ2)at + αΣU ⊤Q
+
+= ( I − αΣ2)(I − αΣ2)ta0 + α
+
+> t−1
+
+X
+
+> k=0
+
+(I − αΣ2)kΣU T Q + αΣU ⊤Q
+
+= ( I − αΣ2)t+1 a0 + α
+
+> t
+
+X
+
+> k=0
+
+(I − αΣ2)kΣU T Q , 
+
+so the induction is complete. In particular, since Σ = diag( σ1, . . . , σ r ) ≻ 0, we have 1 − ασ 2 
+
+> i
+
+< 1
+
+for all 0 < α < 2/σ 2max and hence (I − αΣ2)t → 0 as t → ∞ , thus 
+
+lim  
+
+> t→∞
+
+at = lim  
+
+> t→∞
+
+α
+
+> t−1
+
+X
+
+> k=0
+
+(I − αΣ2)kΣU T Q
+
+= αI − (I − αΣ2)−1ΣU T Q = Σ −1U ⊤Q . 
+
+15 Combining the expressions for at and bt, we conclude that 
+
+P∞ := lim  
+
+> k→∞
+
+Pt = V Σ−1U ⊤Q + V⊥V ⊤⊥ P0
+
+for all 0 < α < 2/σ 2max . Now M + = V Σ−1U ⊤ is the Moore–Penrose pseudo-inverse of M , and 
+
+M +M = V Σ−1U ⊤U ΣV ⊤ = V V ⊤ =⇒ I − M +M = V⊥V ⊤⊥ ,
+
+so we obtain P∞ = M +Q + ( I − M +M )P0 as claimed. 
+
+Full column-rank. If rank( M ) = n, we have I − M +M = 0 , and P∞ = M +Q independent of 
+
+P0. If in addition the system M P = Q is consistent, e.g. when Q = M P for exact tabular Q-values, then the true transition kernel P is the unique solution and P∞ = M +Q = P .
+
+# B Value Equivalence and Pseudo-World Models 
+
+B.1 Intuition: Breaking Value Equivalence 
+
+We provide intuition for how exactly spanning goals break value equivalence using the notion of “test functions” to determine unknown distributions. Recalling the Bellman operator 
+
+TP (Q)( s, a, g ) = Es′∼P (s,a ) [Mg (s′)] , where Mg (s′) := rg (s′) + γV g (s′) ,
+
+notice that the Bellman equation reduces to Q(s, a, g ) = Es′∼P (s,a ) [Mg (s′)] , which can be viewed as imposing |G| constraints on the expectations of known “test functions” or “Bellman probes” Mg
+
+under the unknown distribution P (s, a ). If the agent is trained on a single goal g, it is natural to expect that there will be many world models ˆP that have the same expectation under the single test function, i.e. such that Es′∼ ˆP (s,a ) [Mg (s′)] = Q(s, a, g ), inducing value equivalence. However, probability distributions can be determined by expectations over multiple test functions: beginning with the finite setting, a distribution p ∈ ∆n is uniquely determined by the first n − 1
+
+moments of any injective random variable (‘test function’) X : [ n] → R. For example, in the 1-dimensional case p = ( p1, 1 − p1), if we know the first moment E[X] = p1X(1) + (1 − p1)X(2) ,we can invert the system to determine p1 = ( E[X] − X(2)) /(X(1) − X(2)) uniquely. For general 
+
+p ∈ ∆n, the first n moments induce a linear system of equations known as a Vandermonde system ,which is invertible if and only if X is injective – meaning that p can be recovered uniquely. However, the Bellman probes are not simple functions like monomials, and it is not clear that they will similarly induce an invertible system. For continuous MDPs Section 4.2, the picture is even more involved, and invertibility generalises to a set of test functions being measure determining , meaning that distinct Borel measures have distinct expectations. 
+
+B.2 World Models and Pseudo-World Models 
+
+We introduce two spaces of stochastic world models: 
+
+P := {P : S × A → Σ( S)} and P∆ := {P : S × A → ∆( S)} ⊂ P ,
+
+where Σ( S) denotes the space of finite signed measures over S. Elements of P∆ are valid world models , while elements of P \ P ∆ are pseudo-world models : signed measures that may still satisfy the Bellman equation TP (Q) = Q but do not correspond to valid probabilistic dynamics. In particular, the P -learning iteration Pt+1 (s, a ) = Pt(s, a ) − αM ⊤(M P t(s, a ) − Q(s, a )) does not preserve positivity or normalisation, so the limit P∞ = M +Q + ( I − M +M )P0 generally lies in P.However, if the conditions of Theorem 3(a) are satisfied, then there exists a true kernel P ∈ P ∆ with 
+
+Q = M P , and M has full rank, so P∞ = M +M P = P ∈ P ∆, so the iteration converges to a true world model. Moreover, in realistic settings with function approximation, the world model is typically parameterised as a neural network Pφ : S × A → P with a softmax output layer, so P -learning is constrained to the simplex by construction. Finally, in deterministic MDPs, a world model is defined as a function P : S × A → S , so the distinction collapses, and either column-matching or approximate methods always return a valid world model. If none of these conditions hold, the pseudo-world caveat can be mitigated in full generality by a projected variant of P -learning, given by 
+
+Pt+1 (s, a ) = Π ∆
+
+ Pt(s, a ) − αM ⊤(M P t(s, a ) − Q(s, a ))  ,
+
+16 where Π∆ is the Euclidean projection onto the simplex. Since projection onto a closed convex set is non-expansive, the iteration still converges, and the limit is P ∆ 
+
+> ∞
+
+= arg min P ∈P ∆ ∥M P − Q∥2.This is not generally equal to post-hoc projection Π∆(P∞) of the unconstrained limit, which ignores the geometry of the loss landscape and can return a strictly worse fit than P ∆ 
+
+> ∞
+
+when M is poorly conditioned. In the approximate setting of Theorem 3(b), where M is full-rank, both post-hoc projection and projected P -learning inherit the same asymptotic upper bound. 
+
+# C Proofs for Finite MDPs 
+
+In this appendix, we formalise and prove our results for MDPs with finite state spaces: Appendices C.1 and C.2 for deterministic MDPs, Appendix C.3 for stochastic MDPs, and Appendix C.8 for local MDPs. We first state and prove a simple lemma that underpins many of our results. 
+
+Lemma 1. Fix any finite (goal-augmented) MDP M = ( S, A, G, P, μ, r, γ ), and recall the definition 
+
+M (s′, g ) := r(s′, g ) + γV π (s′, g )
+
+from Equation 1. Then the resolvent identity 
+
+Ml = Rl
+
+ I − γ(P πl )T −1 (5) 
+
+holds for all gl ∈ G , where Mlk := M (sk, g l), Rlk := r(sk, g l) and the policy-induced kernel 
+
+P πl (sk, s k′ ) := P 
+
+> j
+
+π(aj | sk, g l)P (sk′ | sk, a j ) are viewed as matrices. 
+
+Proof. We use n := |S| , m := |A| , L := |G| throughout, viewing reward functions Rlk := 
+
+r(sk, g l) ∈ R|G|×|S| and similarly M, V as matrices. Rewriting Equation 2 as 
+
+M πlk = Rlk + γV πl 
+
+> lk
+
+,
+
+and dropping the superscript π for simplicity, we define the policy-induced kernel P πl 
+
+> kk ′
+
+:= P 
+
+> j
+
+πlkj Pkjk ′ for each l, and expand the Bellman equation 
+
+Mlk = Rlk + γ X
+
+> j,k ′
+
+πlkj Pkjk ′ Mlk ′ (6) 
+
+= Rlk + γ X
+
+> k′
+
+P πl 
+
+> kk ′
+
+Mlk ′ .
+
+Defining ¯P πl = ( P πl )T , we rewrite this equation as 
+
+X
+
+> k′
+
+Mlk ′
+
+ δk′k − γ ¯P πl
+
+> k′k
+
+ = Rlk .
+
+The quantity in the brackets is not independent from l, so this is not a matrix product. However, the 
+
+lth row of M can still be written as a matrix product: 
+
+Ml = Rl
+
+ I − γ ¯P πl
+
+−1 ,
+
+noting that ¯P πl is column-stochastic matrix for each l, so (I − γ ¯P πl ) is invertible for each l.
+
+C.1 Proof of Theorem 2 (Deterministic MDPs) Theorem 2 (Deterministic, Finite MDPs). Fix any deterministic finite MDP and goal set |G| ≥ 1.(a) For any policy π, the set of reward functions r : S × G → R for which M π is column-injective, and thus ∃!P (Qπ ), has full Lebesgue measure. (b) If Q is ϵ-approximate and M is column-injective with column separation ∆, the estima-tor ˆP (s, a ) = argmin s′ ∥Q(s, a ) − M (s′)∥1 satisfies ˆP = P for all ϵ < ∆(1 + γm )/2,and any estimator fails to recover P in the worst-case for ϵ ≥ ∆/2.
+
+We split this result into three parts: Proposition 2 for part (a), which includes the corollary mentioned below Theorem 2, and Propositions 3 and 4 for part (b). 17 Proposition 2. Fix any deterministic finite MDP, goal set |G| ≥ 1 and policy π. Then the set of reward functions r : S × G → R for which M π is column-injective, and thus ∃!P (Qπ ), has full Lebesgue measure. In particular, |G| = 1 , fix any r0 : S → R and any random vector ξ ∈ R|S| 
+
+whose distribution is absolutely continuous with respect to Lebesgue measure. Then the perturbed reward r = r0 + ξ satisfies ∃!P (Qπ ) almost surely, viewing r ∈ R|S| as a vector. 
+
+Proof. First recall from Section 4.1 that for deterministic finite MDPs, the Bellman equation reduces to M (P (s, a ), g ) = Q(s, a, g ) for all g ∈ G . Writing M (s′) = M (s′, ·), this implies that the true transition kernel satisfies 
+
+P (s, a ) = arg min 
+
+> s′
+
+∥M (s′) − Q(s, a )∥1 .
+
+In particular, a sufficient condition for this argmin to be unique, and thus ∃!P (Qπ ), is for M to be column-injective, i.e. M (sk)̸ = M (sk′ ) for all k̸ = k′. Now the resolvent identity (Equation 5) 
+
+Ml = Rl
+
+ I − γ ¯P πl
+
+−1
+
+implies that the map F : RL×n → RL×n given by F (R) = M is linear and invertible. Moreover, for any k̸ = k′, the set {M ∈ RL×n : M·,k = M·,k ′ } is a proper subspace of RL×n, so it has Lebesgue measure zero. Taking a finite union over the  n
+
+> 2
+
+ pairs k̸ = k′, the set 
+
+{R ∈ RL×n | ∃ k̸ = k′ with F (R)·,k = F (R)·,k ′ } = F −1S  
+
+> k̸=k′
+
+{M ∈ RL×n | M·,k = M·,k ′ }
+
+
+
+has Lebesgue measure zero since it is the preimage of a Lebesgue-measure-zero set under an invertible linear map. Therefore, M has pairwise distinct columns for almost every R ∈ RL×n, i.e. almost every r : S × G → R. The first half of the proof is complete. As a corollary, taking |G| = 1 and viewing the single reward function as a vector r ∈ R|S| , the set 
+
+B = {r ∈ R|S| | M π not column-injective }
+
+has zero Lebesgue measure. Now fix any base reward r0 ∈ R|S| and any random vector ξ ∈ R|S| 
+
+whose distributions μ is absolutely continuous with respect to λ. By translation-invariance of Lebesgue measure, λ(B − r0) = λ(B) = 0 , and absolute continuity ( μ ≪ λ) implies μ(B − r0) = 0 ,i.e. Pξ∼μ(r0 + ξ ∈ B) = 0 . By definition of B, we conclude that M π (r0 + ξ) is almost surely column-injective, hence ∃!P (Qπ , π, r 0 + ξ, γ ) almost surely. 
+
+Proposition 3. Fix any deterministic finite MDP and goal set |G| ≥ 1. If Q is ϵ-approximate and M
+
+is column-injective with column separation ∆, the estimator ˆP (s, a ) = argmin s′ ∥Q(s, a )−M (s′)∥1
+
+satisfies ˆP = P for all ϵ < ∆(1 + γm )/2.
+
+Proof. Fix a state-action pair (si, a j ) and write k⋆ := P (si, a j ) for the true successor. Throughout, indices l ∈ [L], k ∈ [n], j ∈ [m] correspond to goals, states, and actions respectively, so πlkj =
+
+π(aj | sk, g l) and Qlkj = Q(sk, a j , g l); we moreover write Qij = Q(si, a j , ·) ∈ RL. It suffices to show that Qij is closer to the true column ek⋆ than to any other column ek for k̸ = k⋆, where ek is the standard basis vector of Rn corresponding to state sk ∈ S . The approximate matrix M satisfies 
+
+Mlk − M πlk = γ P 
+
+> j′
+
+πlkj ′ (Qlkj ′ − Qπlkj ′ ), so for each column k:
+
+∥M·,k − M π
+
+> ·,k
+
+∥1 ≤ γ X
+
+> l
+
+X
+
+> j′
+
+πlkj ′ Qlkj ′ − Qπlkj ′ ≤ γ X
+
+> j′
+
+∥Qkj ′ − Qπkj ′ ∥1 ≤ γmϵ . 
+
+By the triangle inequality, the distance from Qij to the true column satisfies 
+
+∥Qij − M π 
+
+> ·,k ⋆
+
+∥1 ≤ ∥ Qij − Qπij ∥1 + ∥M·,k ⋆ − M π 
+
+> ·,k ⋆
+
+∥1 ≤ ϵ + γmϵ = ϵ(1 + γm ) .
+
+For any k̸ = k⋆, using the Bellman equation Qπij = M π 
+
+> ·,k ⋆
+
+, we apply both standard and reverse triangle inequalities as follows: 
+
+∥Qij − M·,k ∥1 = ∥Qij − Qπij + M π 
+
+> ·,k ⋆
+
+− M π 
+
+> ·,k
+
++ M π 
+
+> ·,k
+
+− M·,k ∥1
+
+≥ ∥ M π 
+
+> ·,k ⋆
+
+− M π
+
+> ·,k
+
+∥1 −  ∥Qij − Qπij ∥1 + ∥M π 
+
+> ·,k
+
+− M·,k ∥1
+
+
+
+≥ ∆1 − ϵ(1 + γm ) ,
+
+18 where ∥M·,k ⋆ − M·,k ∥1 ≥ ∆1 by definition of column separation. Recovery succeeds when the true column is strictly closer than any wrong column, i.e. ϵ(1 + γm ) < ∆1 − ϵ(1 + γm ), giving 
+
+ϵ < ∆1/2(1 + γm ). Since the choice of (si, a j ) was arbitrary, the bound holds uniformly. When 
+
+π is unconditional, factoring out πlkj ′ = πkj ′ sharpens the column error to γϵ , giving an improved bound ϵ < ∆1/2(1 + γ).
+
+Proposition 4. For any n ≥ 3, m ≥ 1, L ≥ 1, γ ∈ [0 , 1) , and ϵ > 0, there exist two distinct deterministic transition kernels P, P ′, a reward function r, and a policy π such that the induced matrix M π has column separation ∆1 = ϵ, and (i) ∥Qπij (P ) − Qπij (P ′)∥1 ≤ ϵ for all (i, j );(ii) P (si, a j )̸ = P ′(si, a j ) for some (i, j ).Consequently, any estimator mapping ϵ-approximate Q-values to a deterministic world model fails to recover the true world for ϵ ≥ ∆1/2.
+
+Proof. Take n = 3 , m = 1 , L = 1 . The construction below extends to any n ≥ 3, m ≥ 1, L ≥ 1 by adding identity-transition states s4, . . . , s n, self-loop actions a2, . . . , a m, and extra goals g2, . . . , g L
+
+with rl,k identical at s2, s 3 for l ≥ 2 (contributing zero to both column separation and Q-differences). We define two deterministic transition kernels as follows: P and P ′ agree on the absorbing states 
+
+P (s2, ·) = P ′(s2, ·) = s2 and P (s3, ·) = P ′(s3, ·) = s3, but disagree at (s1, a 1) where P (s1, a 1) = 
+
+s2 and P ′(s1, a 1) = s3. Take the deterministic policy π(a1 | s) = 1 , and for any c ∈ R, set rewards 
+
+r(s2) := ( c + ϵ/ 2)(1 − γ), r(s3) := ( c − ϵ/ 2)(1 − γ), with r(s1) arbitrary. Since s2, s 3 self-loop under all actions, the Bellman equation gives V π (sk) = rk/(1 − γ) at these states for both P, P ′, so 
+
+M π 
+
+> 2
+
+= c + ϵ/ 2 , M π 
+
+> 3
+
+= c − ϵ/ 2
+
+and thus ∆1 := ∥M π 
+
+> 2
+
+− M π 
+
+> 3
+
+∥1 = ϵ, as claimed. Now the Q-values at s2 or s3 depend only on M π
+
+> 2
+
+and M π 
+
+> 3
+
+respectively, which are invariant across P, P ′, so the Q-differences are zero. At (s1, a 1),
+
+Qπ
+
+> 11
+
+(P ) = M π 
+
+> 2
+
+, Qπ
+
+> 11
+
+(P ′) = M π 
+
+> 3
+
+,
+
+so ∥Qπ
+
+> 11
+
+(P )−Qπ
+
+> 11
+
+(P ′)∥1 = ϵ. At (s1, a j ) for j ≥ 2, π(a1 | s1) = 1 gives V π 
+
+> 1
+
+(P ) = Qπ
+
+> 11
+
+(P ) = M π
+
+> 2
+
+and similarly V π 
+
+> 1
+
+(P ′) = M π 
+
+> 3
+
+, so 
+
+Qπj (P ) = r1 + γM π 
+
+> 2
+
+, Qπ 
+
+> 1j
+
+(P ′) = r1 + γM π 
+
+> 3
+
+,
+
+giving ∥Qπj (P ) − Qπj (P ′)∥1 = γϵ ≤ ϵ. Hence (i) holds with all Q-differences bounded by ϵ, and (ii) follows from P (s1, a 1) = s2̸ = s3 = P ′(s1, a 1). Now let ˆQ := ( Qπ (P ) + Qπ (P ′)) /2, which satisfies ∥ ˆQij − Qπij (P )∥1 ≤ ϵ/ 2 at every (i, j ), with equality at (s1, a 1), and similarly for P ′. Hence at ϵ = ∆ 1/2, both (P, ˆQ) and (P ′, ˆQ) satisfy the ϵ-feasibility constraint ∥ ˆQ − Qπ ∥1 ≤ ϵ. Any estimator ˆP returns a world model that necessarily disagrees with either P or P ′ at (s1, a 1), since 
+
+P (s1, a 1)̸ = P ′(s1, a 1), so every estimator fails to recover the true world for ϵ ≥ ∆1/2.
+
+C.2 Proof of Proposition 1 
+
+While Theorem 2 proves that “almost every” single-goal reward function satisfies ∃!P (Qπ ), this does not necessarily hold for general parametric families. Below we prove that the Gaussian family is particularly well-behaved. Note that π : S → ∆( A) is treated as fixed (not dependent on g), but the same conclusion extends to the optimal policy πg : S → A with respect to the varying goal g (cf. proof of the stochastic generalisation, Proposition 8). 
+
+Proposition 1 (Gaussian Rewards). Fix any deterministic finite MDP, policy π, and variance σ > 0.For any injective map φ : S ,→ Rd, the single-goal set G = {g} with Gaussian reward function 
+
+rg (s) = exp( −∥ φ(s) − g∥2/2σ2) satisfies ∃!P (Qπ ) for Lebesgue-almost every g ∈ Rd.Proof. Viewing single-goal reward functions r : S → R as vectors r ∈ R|S| , the Gaussian family 
+
+{rg ∈ R|S| | g ∈ Rd} is a d-dimensional submanifold of R|S| which can have zero Lebesgue measure, so we cannot apply Theorem 2(a) directly. We instead exploit the explicit form of the matrix induced by Gaussian rewards. Since |G| = 1 , Equation 5 reduces to 
+
+M π = r⊤ 
+
+> g
+
+H , where H := ( I − γ ¯P π )−1 .
+
+19 Recall that ∃!P (Qπ ) holds if M π is column-injective, and define vss ′ := H·,s − H·,s ′ . Then column-injectivity of M π fails for a goal set G = {g} iff r⊤ 
+
+> g
+
+vss ′ = 0 for some s̸ = s′, which we can rewrite as hss ′ (g) = 0 for some s̸ = s′, where 
+
+hss ′ (g) := r⊤ 
+
+> g
+
+vss ′ =
+
+> n
+
+X
+
+> k=1
+
+e−∥ φ(sk )−g∥2/2σ2
+
+(Hks − Hks ′ ) .
+
+Since ∥φ(sk) − g∥2 is a polynomial in g, each summand is a composition of real-analytic functions, so hss ′ is real-analytic in g ∈ Rd. Now assume for contradiction that hss ′ ≡ 0. Then 
+
+> n
+
+X
+
+> k=1
+
+cke−∥ φ(sk )−g∥2/2σ2
+
+= 0 ∀g ∈ Rd ,
+
+where ck := Hks − Hks ′ . Since φ is injective, the centres xk = φ(sk) are distinct, and the Gaussians 
+
+{g 7 → e−∥ xk −g∥2/2σ2
+
+}nk=1 centred at any distinct points x1, . . . , x n ∈ Rd are linearly independent as functions on Rd, so ck = 0 for all k, hence H·,s = H·,s ′ . But H is invertible, so it has pairwise distinct columns, which is a contradiction, so we conclude hss ′̸ ≡ 0. The zero set of a non-zero real-analytic function on Rd has Lebesgue measure zero, so λ(h−1 
+
+> ss ′
+
+(0)) = 0 for each pair s̸ = s′.Column-injectivity fails only if g lies in S 
+
+> s̸=s′
+
+h−1 
+
+> ss ′
+
+(0) , a finite union of measure-zero sets, hence 
+
+λ
+
+
+
+{g ∈ Rd | ¬∃ !P (Qπ , π, r g )}
+
+
+
+≤ X
+
+> s̸=s′
+
+λ h−1 
+
+> ss ′
+
+(0)  = 0 .
+
+C.3 Proof of Theorem 3 (Stochastic MDPs) Theorem 3 (Finite MDPs). Fix any finite MDP and goal set |G| ≥ |S| .(a) For any policy π, the set of reward functions r : S × G → R for which M π is full-rank, and thus ∃!P (Qπ ), has full Lebesgue measure. (b) For any goals (G, r ) that span S and any discount factor γ ∈ [0 , 1) , the set of policies π
+
+for which M π is full-rank has full Lebesgue measure. Similarly, for any π, the set of 
+
+γ ∈ [0 , 1) for which M π is full-rank has full Lebesgue measure. In particular, there exist γ−, γ + ∈ (0 , 1) such that M π is full-rank for all γ < γ − or γ > γ +.(c) If Q is ϵ-approximate and M has full rank, the estimator ˆP ij = M +Qij satisfies 
+
+∥ ˆP ij − Pij ∥1 ≤ ∥ M +∥1(1 + γm )ϵ , 
+
+and any estimator has worst-case error (1 + γ)ϵ/ 2.
+
+We split this result into three parts: Proposition 5 for exact Q-values, and Propositions 6 and 7 for the upper and lower-bounds of the approximate setting. As foreshadowed in the main text, Proposition 5 is stronger than Theorem 3(a–b): informally, it states that fixing any three of the four components in (P, π, r, γ ), the set of values of the remaining component for which M π is full-rank, and thus 
+
+∃!P (Qπ , π, r, γ ), has full Lebesgue measure. Theorem 3(a) follows from part (b), while Theorem 3(b) follows from parts (c–d), where the failure set for discount factors is in fact finite , strictly sharper in the main text. Part (a) of Proposition 5 moreover shows that “almost all” kernels P are identified uniquely for fixed (π, r, γ ). Proposition 5 also deals with optimal and optimal entropy-regularised policies, which call for additional care because such policies themselves vary with (P, r, γ ).
+
+C.3.1 Proof of Theorem 3(a–b) 
+
+To formally state the result, first write n := |S| , m := |A| , L := |G| and let P∆ := {P : S × A → 
+
+∆( S)} be the space of world models, which is isomorphic to the simplex product (∆ n)nm and inherits the Lebesgue measure from Rnm (n−1) . We write R = {r : S × G → R} for the space of reward functions, Π = {π : S × G → ∆( A)} for the set of GC policies, and Π◦ for its deterministic subset. Finally, denote by M ⋆(P ) = M π⋆l (P )(P ) ∈ RL×n the matrix corresponding to the optimal policy π⋆l (P ); similarly for M ⋆(γ) and M ⋆(r). For part (d) we will additionally make use of the soft 20 Bellman operator Tα : Rn2m → Rn2m, defined for any α > 0 by 
+
+(TαQ)lij = X
+
+> k
+
+Pijk 
+
+Rlk + γα log 
+
+X
+
+> j′
+
+exp( Qlkj ′ /α )
+
+ ,
+
+the unique fixed point Qα (cf. Lemma 2), and the optimal entropy-regularised policy π⋆α given by 
+
+(π⋆α)lij = exp( Qαlij /α )
+
+P 
+
+> j′
+
+exp( Qαlij ′ /α ) .
+
+Recall that P is identified uniquely by (Qπ , π, r, γ ), written ∃!P (Qπ ), if there is a unique solution P
+
+to the Bellman equation T πP (Qπ ) = Qπ , which reduces to M π being full-rank (Equation 2). 
+
+Proposition 5 (Finite MDPs, Exact) . Fix any finite state space S and goals (G, r ) that span S.(a) For any (·, r, γ, π ), the set {P ∈ P ∆ | rank( M π (P )) < n } has Lebesgue measure zero. So does the optimal-policy set {P ∈ P ∆ | rank( M ⋆(P )) < n }.(b) For any (P, ·, γ, π ), the set {r ∈ R | rank( M π (r)) < n } has Lebesgue measure zero. So does the optimal-policy set {r ∈ R | rank( M ⋆(r)) < n }.(c) For any (P, r, ·, π ), the set {γ ∈ [0 , 1) | rank( M π (γ)) < n } is finite. So is the optimal-policy set {γ ∈ [0 , 1) | rank( M ⋆(γ)) < n }. Moreover, there exist γ−, γ + ∈ (0 , 1) such that M π (γ) and M ⋆(γ) are full-rank for all 0 ≤ γ < γ − or γ > γ +.(d) For any (P, r, γ, ·) the set {π ∈ Π | rank( M π ) < n } has Lebesgue measure zero. More-over, the set {α ∈ [0 , ∞) | rank( M π⋆α ) < n } is finite, where π⋆α is the optimal entropy-regularised policy with entropy coefficient α, and there exist α−, α + ∈ (0 , ∞) such that 
+
+M π⋆α is full-rank for all α < α − or α > α +.
+
+Proof. We use n = |S| , m = |A| , L = |G| throughout, and recall the resolvent identity 
+
+Ml = Rl
+
+ I − γ ¯P πl
+
+−1
+
+from Lemma 1. Though each row is produced by an invertible matrix (scaled by Rl), the resulting concatenation M may be rank-deficient. However, we can still prove that full-rankness is a generic property over each of the four variables, using the standard characterisation rank( M ) < n ⇐⇒ 
+
+det( M T M ) = 0 . The order is chosen to facilitate recycling along the way. 
+
+Part (c). Fix P, r and first consider (i) a fixed GC policy π, taking M (·) as a function of γ, omitting the superscript π for simplicity. Equation 5 gives Mlk = P 
+
+> k′
+
+Rlk ′
+
+ I − γ ¯P πl
+
+−1
+
+> k′k
+
+, so writing C(l)
+
+> k′k
+
+for the (k′, k )th cofactor of  I − γ ¯P πl
+
+, we use Cramer’s rule to obtain 
+
+Mlk =
+
+P 
+
+> k′
+
+Rlk ′ C(l)
+
+> k′k
+
+det( I − γ ¯P πl ) . (7) Each cofactor C(l) 
+
+> k′k
+
+is the signed determinant of an (n − 1) × (n − 1) submatrix of  I − γ ¯P πl
+
+,which is a polynomial of degree no greater than n − 1 in γ. Since the coefficients Rlk ′ are constants (independent of γ), the numerator of Mlk is also a polynomial of degree at most n − 1. Now for any I ⊂ [L] with |I| = n, writing MI ∈ Rn×n for the submatrix of M with rows indexed by I, the Leibniz formula gives 
+
+det( MI ) = X
+
+> σ
+
+sgn (σ) Y
+
+> l∈I
+
+Mlσ (l) =
+
+P 
+
+> σ
+
+sgn (σ) Q
+
+> l∈I
+
+P 
+
+> k′
+
+Rlk ′ C(l)
+
+> k′σ(l)
+
+Q 
+
+> l∈I
+
+det( I − γ ¯P πl ) ,
+
+which is a rational function of γ whose numerator AI has degree 
+
+deg( AI ) ≤ max 
+
+> σ
+
+X
+
+> l∈I
+
+deg X
+
+> k′
+
+Rlk ′ C(l)
+
+> k′σ(l)
+
+!
+
+≤ max 
+
+> σ
+
+X
+
+> l∈I
+
+(n − 1) = n(n − 1) .
+
+By the Cauchy–Binet formula, det( M T M ) = P 
+
+> |I|=n
+
+det( MI )2, which is rational in γ with nu-merator of degree at most 2n(n − 1) . Finally note that det( M T M ) cannot be uniformly zero, 21 since M = R for γ = 0 , and spanning goals imply rank( R) = n, hence det( RT R)̸ = 0 . In particular, the set of roots of the non-zero rational function f := det( M π (·)T M π (·)) : [0 , 1) → R
+
+is finite and has cardinality bounded above by the degree of its numerator, so we conclude that 
+
+{γ ∈ [0 , 1) | rank( M π (γ)) < n } has cardinality C ≤ 2n(n − 1) .We now turn to (ii) optimal policies π⋆, which depend on γ. The key is noticing that the optimal value function V ⋆(γ) is componentwise equal to: 
+
+V ⋆(γ) = max  
+
+> π∈Π◦
+
+V π (γ) ,
+
+where Π◦ is the set of goal-conditioned deterministic policies, which is a finite set bounded of size 
+
+mn2
+
+(mn possible deterministic policies for each of the n goals). It follows immediately that 
+
+M ⋆(γ) = R + γV ⋆(γ) = max  
+
+> π∈Π◦
+
+M π (γ) ,
+
+hence 
+
+{γ ∈ [0 , 1) | rank( M ⋆(γ)) < n } ⊆ [
+
+> π∈Π◦
+
+{γ ∈ [0 , 1) | rank( M π (γ)) < n } .
+
+Applying part (ii) to each π ∈ Π◦, we obtain 
+
+C⋆ = {γ ∈ [0 , 1) | rank( M ⋆(γ)) < n }
+
+≤ [
+
+> π∈Π◦
+
+{γ ∈ [0 , 1) | rank( M π (γ)) < n }
+
+≤ X
+
+> π∈Π◦
+
+{γ ∈ [0 , 1) | rank( M π (γ)) < n } ≤ 2mn2
+
+n(n − 1) .
+
+In particular, since the zeroes are finite, there exists γ+ ∈ (0 , 1) such that M π (γ) and M ⋆(γ) are full-rank for all γ > γ +. Moreover, since M π is continuous in γ and M π (0) = M ⋆(0) = R has full rank by assumption that goals span the state space, there exists γ− such that M π (γ) and M ⋆(γ) are full-rank for all 0 ≤ γ < γ − (otherwise the set of zeroes would be infinite). 
+
+Part (a). Now fix r, γ and begin with (i) a fixed GC policy π, taking M (·) as a function of P .Again, Equation 7 guarantees that each entry Mlk (·) is a rational function in the entries of P , so 
+
+f := det( M (·)T M (·)) : F∆ → R must also be rational. To prove f̸ ≡ 0, consider the static world 
+
+P0(s′ | s, a ) = δss ′ , which satisfies ¯P πl 
+
+> 0
+
+= I for any policy πl. Then using Equation 5, 
+
+M (P0) = R (I − γI )−1 = R
+
+1 − γ =⇒ f (P0) = det( RT R)(1 − γ)2n̸ = 0 ,
+
+since spanning goals satisfy rank( R) = n. Now consider the set X = {x ∈ Rn−1 | xi ≥ 0, P 
+
+> i
+
+xi ≤
+
+1} ⊂ Rn−1 and the bijective map g : X → ∆n given by g(x) = ( x1, . . . , x n−1, 1 − P 
+
+> i
+
+xi). The intrinsic Lebesgue measure λ∆ on ∆n ⊂ Rn is naturally inherited from the Lebesgue measure on 
+
+Rn−1 by defining 
+
+λ∆(A) := λ(g−1(A)) (8) for any measurable set A. This extends to the product map G = gmn : Xmn → (∆ n)mn = F∆. We now consider the pulled-back function h : Xmn → R given by h = f ◦ G. Since f and G are both non-zero rational functions, and G is bijective, h is also a non-zero rational map. The set of roots of non-zero rational functions Rd → R has Lebesgue measure zero, which also holds for non-zero rational maps U → R on any subset U ⊂ Rd (by monotonicity of the Lebesgue measure), hence 
+
+λ(h−1(0)) = 0 . (9) We conclude that the bad set B = {P ∈ F ∆ | rank( M (P )) < n } satisfies 
+
+λ∆(B) = λ∆(f −1(0)) (8) 
+
+= λ(G−1(f −1(0))) = λ (f ◦ G)−1(0)  = λ(h−1(0)) (9) 
+
+= 0 .
+
+The argument for (ii) optimal policies is similar to part (a)(ii) . We have 
+
+M ⋆(P ) = R + γV ⋆(P ) = max  
+
+> π∈Π◦
+
+M π (P ) ,
+
+22 where Π◦ is the finite set of goal-conditioned deterministic policies, hence 
+
+{P ∈ F ∆ | rank( M ⋆(P )) < n } ⊆ [
+
+> π∈Π◦
+
+{P ∈ F ∆ | rank( M π (P )) < n } .
+
+Applying part (b)(i) to each π ∈ Π◦, we obtain 
+
+λ∆
+
+ {P ∈ F ∆ | rank( M ⋆(P )) < n } ≤ λ∆
+
+  [
+
+> π∈Π◦
+
+{P ∈ F ∆ | rank( M π (P )) < n }
+
+≤ X
+
+> π∈Π◦
+
+λ∆
+
+ {P ∈ F ∆ | rank( M π (P )) < n } = 0 .
+
+Part (b). Now fix P , γ and π and take M π (·) as a function of the reward r ∈ R , written as a matrix Rlk ∈ RL×n. Since each entry Mlk is linear in the entries of R by Equation 5, the function 
+
+f := det( M π (·)T M π (·)) : RL×n → R is a polynomial of degree 2n in the entries of R. To prove that f̸ ≡ 0, consider the reward matrix R0 with rows R0 
+
+> l
+
+= el(I − γ ¯P πl ) for l ∈ [n] and R0 
+
+> l
+
+= 0 for 
+
+l > n . Then for l ∈ [n],
+
+Ml = R0 
+
+> l
+
+(I − γ ¯P πl )−1 = el(I − γ ¯P πl )( I − γ ¯P πl )−1 = el ,
+
+while Ml = 0 for l > n , so M T M = I and f (R0) = det( I)̸ = 0 . The zero set of a non-zero polynomial has Lebesgue measure zero, so 
+
+λ {R ∈ RL×n | rank( M π (R)) < n } = λ(f −1(0)) = 0 .
+
+The result for optimal policies is identical to part (a)(ii) .
+
+Part (d). Now fix P, r, γ and take M (·) as a function of π. The proof over policies is identical to parts (a-c)(i) : det(( M π )T M π ) is a rational function over the entries of π, and taking any goal-independent policy π0 (eg the uniform policy) gives 
+
+M π0 = R  I − γ ¯P π0 −1
+
+which has rank rank( R) = n by assumption of spanning goals, so det(( M π0 )T M π0 )̸ = 0 . The pullback argument establishes zero measure. The second claim for entropy-regularised policies π⋆α is less straightforward, because the matrix 
+
+M π⋆α is not rational in α. Recall from above that Qα is the unique fixed point of the soft Bellman operator Tα (well-defined by Lemma 2), and π⋆α is the softmax of Qα at temperature α. Now let 
+
+f : (0 , ∞) → R be defined by f (α) = det(( M π⋆α )T M π⋆α ). By Lemma 3, the function α 7 → Qα
+
+is analytic and definable in Rexp . The matrix M π⋆α is obtained from Qα and π⋆α using definable operations (polynomials, division, exp , log ), and det(( M π⋆α )T M π⋆α ) is a polynomial in the entries of M π⋆α , so f is definable. It is analytic for the same reasons. As α → ∞ , the soft-optimal policy converges to the uniform policy π0, which is goal-independent, so det(( M π0 )T M π0 )̸ = 0 . By continuity, 
+
+lim  
+
+> α→∞
+
+f (α) = det(( M π0 )T M π0 )̸ = 0 ,
+
+so f is a non-zero, analytic and definable function. Since Rexp is o-minimal [ 57 , Second Main Theorem], and f is definable, the zero set {α ∈ (0 , ∞) | f (α) = 0 } is a finite union of points and open intervals. But f cannot be zero on an interval by the identity theorem for analytic functions, so the zero set is a finite set of C points. In particular, there exist α−, α + ∈ (0 , ∞) with α− < α + such that f (α)̸ = 0 for all α / ∈ (α−, α +), since otherwise the zero set of f would be infinite, and thus 
+
+M π⋆α is full-rank for all α / ∈ (α−, α +). Adding the single boundary point α = 0 preserves finiteness: 
+
+{α ∈ [0 , ∞) | rank( M π⋆α ) < n } ⊆ {0} ∪ { α ∈ (0 , ∞) | f (α) = 0 } ≤ 1 + C < ∞ .
+
+C.3.2 Proof of Theorem 3(c) 
+
+We split Theorem 3(c) into two parts: Proposition 6 for the upper bound and Proposition 7 for the worst-case lower bound. Recall that a policy is called unconditional if πg = πg′ for all g ∈ G .23 Proposition 6 (Finite MDPs, Approximate) . Fix a finite MDP and assume (G, r ) span S, Q is 
+
+ϵ-approximate, and M has full rank. Then the estimator ˆP ij = M +Qij satisfies 
+
+∥ ˆP ij − Pij ∥1 ≤ ∥ M +∥1(1 + γm )ϵ . 
+
+Moreover, a sufficient condition for M to be full-rank is for M π to be full-rank and ϵ <
+
+1/γm ∥(M π )+∥1. If π is unconditional and goals are states ( G = S), then M π is always full-rank and the bound improves to 
+
+∥ ˆP ij − Pij ∥1 ≤ ϵ(1 + γ)2
+
+1 − ϵγ (1 + γ) ≤ 4ϵ
+
+1 − 2ϵ ∈ O(ϵ)
+
+for all ϵ < 1/γ (1 + γ), which is satisfied whenever ϵ < 1/2.
+
+Proof. We first decompose M = M π + E, where Elk = γ P 
+
+> j′
+
+πlkj ′ (Qlkj ′ − Qπlkj ′ ) satisfies 
+
+∥E∥1 = max 
+
+> k
+
+X
+
+> l
+
+Elk ≤ γ max 
+
+> k
+
+X
+
+> l
+
+X
+
+> j′
+
+πl,kj ′ Qlkj ′ − Qπlkj ′
+
+≤ γ max 
+
+> k
+
+X
+
+> l
+
+X
+
+> j′
+
+Qlkj ′ − Qπlkj ′ = γ max 
+
+> k
+
+X
+
+> j′
+
+∥Qkj ′ − Qπkj ′ ∥1 ≤ γmϵ . 
+
+If M is full-rank, then M +M π = M +(M − E) = I − M +E and 
+
+ˆP ij − Pij = M +Qij − Pij = M +(Qij − Qπij ) + ( M +M π − I)Pij 
+
+= M +(Qij − Qπij ) − M +EP ij = M + Qij − Qπij − EP ij 
+
+ .
+
+Taking norms and using ∥Pij ∥1 = 1 ,
+
+∥ ˆP ij − Pij ∥1 ≤ ∥ M +∥1 (ϵ + γmϵ ) = ∥M +∥1(1 + γm )ϵ . 
+
+A sufficient condition for M to be full-rank is ϵ < 1/γm ∥(M π )+∥1, since then (M π )+M =
+
+I − (M π )+E is invertible if ∥(M π )+∥1∥E∥1 < 1, and (M π )+M being invertible forces M full-rank since M x = 0 implies x = 0 . When π is unconditional and G = S, factoring out πlkj ′ = πkj ′
+
+sharpens the bound to ∥E∥1 ≤ γϵ and Equation 5 gives M π = ( I − γ(P π )T )−1, implying M π is always invertible with ∥(M π )−1∥1 = 1 + γ by row-stochasticity of P π . Then 
+
+∥ ˆP ij − Pij ∥1 ≤ ∥ (M π )−1∥1∥M π ˆP ij − M π Pij ∥1
+
+= (1 + γ)∥(M π − M ) ˆP ij + Qij − Qπij ∥1
+
+≤ (1 + γ)  ∥E∥1∥ ˆP ij ∥1 + ∥Qij − Qπij ∥1
+
+
+
+≤ (1 + γ)
+
+
+
+γϵ 
+
+
+
+∥ ˆP ij − Pij ∥1 + 1 
+
+
+
++ ϵ
+
+
+
+.
+
+Solving for ∥ ˆP ij − Pij ∥1, we conclude 
+
+∥ ˆP ij − Pij ∥1 ≤ ϵ(1 + γ)2
+
+1 − ϵγ (1 + γ) ≤ 4ϵ
+
+1 − 2ϵ ∈ O(ϵ)
+
+for all ϵ < 1/γ (1 + γ), which is satisfied whenever ϵ < 1/2.
+
+We now show that the upper bound of Proposition 6 is tight up to a constant factor. 
+
+Proposition 7 (Worst-Case Lower Bound) . For any n ≥ 2, m ≥ 2, γ ∈ [0 , 1) , and ϵ > 0 sufficiently small, there exist two MDPs with transition kernels P, P ′ ∈ P ∆, a goal set G that spans the state space, and a policy π such that (i) ∥Qπij (P ) − Qπij (P ′)∥1 ≤ ϵ for all (i, j );(ii) ∥Pij − P ′ 
+
+> ij
+
+∥1 ≥ (1 + γ)ϵ for some (i, j ).Consequently, any estimator ˆP mapping ϵ-approximate Q-values to a world model incurs worst-case error at least (1 + γ)ϵ/ 2 ∈ Ω( ϵ).
+
+24 Proof. Take n = 2 , m = 2 , L = 2 with indicator goals G = S. The construction below extends to any n ≥ 2, m ≥ 2 by adding identity-transition states s3, . . . , s n and self-loop actions a3, . . . , a m.We define two transition kernels as follows: P always swaps states regardless of actions, i.e. P (s2 |
+
+s1, ·) = 1 , P (s1 | s2, ·) = 1 , and P ′ agrees with P everywhere except P ′(·s1, a 1) = ( δ, 1 − δ)
+
+for some δ ∈ (0 , 1) . Now take the deterministic policy π(a2 | sk) = 1 for k ∈ { 1, 2} that always selects the second action a2. Since a1 is off-policy, the value function V π depends only on a2-transitions, which are identical in P and P ′, hence V π (P ) = V π (P ′) and M π (P ) = M π (P ′). The policy-induced transition ¯P π = ( P π )T is the swap matrix, so 
+
+M π = ( I − γ ¯P π )−1 = 11 − γ2
+
+1 γγ 1
+
+
+
+.
+
+Comparing action-value functions, we have Qlij (P ) = P 
+
+> k
+
+Pijk M πlk = Qlij (P ′) for all (i, j )̸ =(1 , 1) since P, P ′ agree everywhere except at (s1, a 1). For the latter, 
+
+Qπl11 (P ) = X
+
+> k
+
+P (sk | s1, a 1)M πlk = M πl2 , Qπl11 (P ′) = M πl2 + δ(M πl1 − M πl2) ,
+
+so 
+
+∥Qπ
+
+> 11
+
+(P ) − Qπ
+
+> 11
+
+(P ′)∥1 = δ X
+
+> l
+
+M πl1 − M πl2 = 2δ
+
+1 − γ2 1 − γ = 2δ
+
+1 + γ .
+
+Setting δ := (1 + γ)ϵ/ 2 gives ∥Qπij (P ) − Qπij (P ′)∥1 ≤ ϵ for all (i, j ) and ∥P1,1 − P ′
+
+> 1,1
+
+∥1 = 2 δ =(1 + γ)ϵ, as claimed. For ϵ < 2/(1 + γ) we have δ < 1, so P ′ is a valid world model. In particular, for any estimator ˆP , let ˆQ := Qπ (P ) and notice that (P, ˆQ) and (P ′, ˆQ) satisfy ∥ ˆQ − Qπ (P )∥1 = 0 ≤ ϵ
+
+and ∥ ˆQ − Qπ (P ′)∥1 ≤ ϵ. The triangle inequality gives 
+
+∥ ˆP ( ˆQ) − P ∥1 + ∥ ˆP ( ˆQ) − P ′∥1 ≥ ∥ P − P ′∥1 = (1 + γ)ϵ , 
+
+so max  ∥ ˆP ( ˆQ) − P ∥1, ∥ ˆP ( ˆQ) − P ′∥1
+
+ ≥ (1 + γ)ϵ/ 2. Hence at least one of P, P ′ is at distance 
+
+≥ (1 + γ)ϵ/ 2 from ˆP ( ˆQ), and since ˆP cannot distinguish between them (both are ϵ-feasible given 
+
+ˆQ), the worst-case error of ˆP on ϵ-approximate inputs is at least (1 + γ)ϵ/ 2.
+
+C.3.3 Supporting Results 
+
+We prove supporting results for Proposition 5, starting with the soft Bellman equation. 
+
+Lemma 2 (Soft Bellman) . For any α > 0, γ ∈ [0 , 1) , the soft Bellman operator Tα given by 
+
+(TαQ)lij = X
+
+> k
+
+Pijk 
+
+Rlk + γα log 
+
+X
+
+> j′
+
+exp( Qlkj ′ /α )
+
+
+
+is a γ-contraction in the supremum norm: ∥T αQ − T αQ′∥∞ ≤ γ∥Q − Q′∥∞.
+
+Proof. The log-sum-exp function α log( P 
+
+> j′
+
+exp( Qlkj ′ /α )) is 1-Lipschitz in Q with respect to the supremum norm. Since Pijk sums to 1 over k,
+
+|(TαQ)lij − (TαQ′)lij | = γ X
+
+> k
+
+Pijk α log 
+
+P 
+
+> j′
+
+exp( Qlkj ′ /α )
+
+P 
+
+> j′
+
+exp( Q′ 
+
+> lkj ′
+
+/α )
+
+!
+
+≤ γ X
+
+> k
+
+Pijk α log 
+
+P 
+
+> j′
+
+exp( Qlkj ′ /α )
+
+P 
+
+> j′
+
+exp( Q′ 
+
+> lkj ′
+
+/α )
+
+!
+
+≤ γ X
+
+> k
+
+Pijk ∥Q − Q′∥∞ = γ∥Q − Q′∥∞ .
+
+We will use the following background on definable functions to show that the map α 7 → Qα is particularly well-behaved. 
+
+Definition 1. A set S ⊆ Rn is definable in Rexp = ( R, <, +, ·, exp) if it can be described by a first-order formula using the symbols <, +, ·, exp and quantifiers over R. For example, the graph of the logarithm function Glog = {(x, y ) | x > 0 ∧ exp( y) = x} is definable. A function f : A → Rm
+
+25 (where A ⊆ Rn) is definable if its graph {(x, f (x)) | x ∈ A} ⊆ Rn+m is a definable set. For example, log : R+ → R is definable, but sin : R → R is not. A foundational result of Wilkie [57 , Second Main Theorem ] establishes that Rexp is o-minimal : every definable subset of R is a finite union of points and open intervals. This is a strong tameness property which implies, for instance, that the set of zeroes of a definable function f : R → R is a finite union of points and open intervals. If f is also a non-trivial analytic function, then it cannot be zero on an open interval, so it must have a finite set of zeroes (analogous to polynomials!) 
+
+Lemma 3 (Soft Bellman definability) . For each α > 0, let Qα be the unique fixed point of the soft Bellman operator Tα. Then the function α 7 → Qα is definable and real analytic in Rexp .
+
+Proof. The set R = {(α, Q ) ∈ (0 , ∞) × Rn2m : TαQ = Q} is definable in Rexp , since Tα involves only polynomial operations and the functions exp and log . By Lemma 2, Tα is a contraction, so there is a unique Qα such that TαQα = Qα for each α > 0. In particular, R is the graph of α 7 → Qα, so the map is definable. Now define F : (0 , ∞) × Rn2m → Rn2m by F (α, Q ) = Q − T αQ, which is analytic because it is the composition of analytic functions (polynomials, exp and log ). The Jacobian of F with respect to 
+
+Q is the n2m × n2m matrix DQF = I − DQTα. By Lemma 2, Tα is a γ-contraction in the sup-norm. For any unit vector v with ∥v∥∞ = 1 ,
+
+∥DQTα · v∥∞ = lim 
+
+> t→0
+
+∥T α(Q + tv ) − T αQ∥∞
+
+|t| ≤ lim 
+
+> t→0
+
+γ∥tv ∥∞
+
+|t| = γ∥v∥∞ = γ , 
+
+so taking the supremum over unit vectors implies ∥DQTα∥∞ ≤ γ < 1. It follows that the Neumann series P
+
+> k≥0
+
+(DQTα)k converges in operator norm to (I − DQTα)−1, so DQF = I − DQTα is invertible. In particular, DQF and its inverse are continuous in (α, Q ), so for any (α0, Q 0) such that F (α0, Q 0) = 0 , the analytic implicit function theorem [ 58 ] implies that there is an analytic 
+
+GU : U → Rn2m such that F (α, G (α)) = 0 for all α in some neighbourhood U of α0. Uniqueness of solutions Qα to F (α, Q α) = 0 implies that the local maps GU agree everywhere: for two different neighbourhoods U, V , the analytic functions GU and GV must satisfy F (α, G U (α)) = 0 = F (α, G V (α)) for all α ∈ U ∩ V , but this implies GU (α) = Qα = GV (α), so GU = GV . In particular, there is a global analytic function G : (0 , ∞) → Rn2m such that F (α, G (α)) = 0 for all 
+
+α > 0. By uniqueness, Qα = G(α), so α 7 → Qα is real analytic on (0 , ∞).
+
+C.4 Proofs of Corollary 1 (Perturbed Rewards) and Proposition 8 (Gaussian Rewards) 
+
+Proposition 2 for deterministic kernels guaranteed that ∃!P (Qπ ) almost surely under any absolutely continuous perturbation ξ of a single-goal base reward r0 ∈ R|S| . The same translation-invariance argument extends to the stochastic setting of Theorem 3, viewing the reward as a matrix and the perturbation as matrix-valued. 
+
+Corollary 1 (Perturbed Rewards, Stochastic) . Fix any finite MDP, policy π goal set |G| ≥ |S| ,base reward R0 ∈ R|G|×|S| and random matrix Ξ ∈ R|G|×|S| whose distribution μ is absolutely continuous with respect to Lebesgue measure (e.g. entrywise independent Gaussians). Then the perturbed reward R := R0 + Ξ satisfies ∃!P (Qπ ) almost surely. 
+
+Proof. Viewing reward functions r : S × G → R as matrices R ∈ R|G|×|S| with Rlk := r(sk, g l),Proposition 5(b) establishes that the set 
+
+B := {R ∈ R|G|×|S| | rank( M π (R)) < |S|} 
+
+has zero Lebesgue measure. Now fix any base reward R0 ∈ R|G|×|S| and any random matrix 
+
+Ξ ∈ R|G|×|S| whose distribution μ is absolutely continuous with respect to Lebesgue measure λ.By translation-invariance of Lebesgue measure, λ(B − R0) = λ(B) = 0 , and absolute continuity (μ ≪ λ) implies μ(B − R0) = 0 , i.e. PΞ∼μ(R0 + Ξ ∈ B) = 0 . By definition of B, M π (R0 + Ξ) is almost surely full-rank, hence ∃!P (Qπ , π, R 0 + Ξ , γ ) almost surely. 26 We similarly extend Proposition 1, where a single Gaussian reward generically implies ∃!P (Qπ ) for deterministic MDPs, to the stochastic setting. Extra care is required to define π independently from g,but the result again extends to include optimal policies defined as a function of g.
+
+Proposition 8 (Gaussian Rewards) . Fix any finite MDP, L ≥ |S| , policies π1, . . . , π L : S → ∆( A),and σ1, . . . , σ L > 0. For any injective map φ : S ,→ Rd, the goal set G = {g1, . . . , g L} with Gaussian rewards rgl (s) = exp( −∥ φ(s) − gl∥2/2σ2 
+
+> l
+
+) and policy π(·| s, g l) := πl(·| s) satisfies 
+
+∃!P (Qπ ) for Lebesgue-almost every (g1, . . . , g L) ∈ (Rd)L. The same conclusion also holds for the optimal (instead of fixed) policy π⋆ with respect to (g1, . . . , g L).
+
+Proof. Write n := |S| and recall that ∃!P (Qπ ) if rank( M π ) = n, which for L ≥ n is equivalent to 
+
+det(( M π )T M π )̸ = 0 . By Equation 5, M π has rows 
+
+M πl = rgl Hl , where Hl := ( I − γ ¯P πl )−1 .
+
+Writing Rlk := rgl (sk) = exp( −∥ φ(sk) − gl∥2/2σ2 
+
+> l
+
+), the matrix R is real-analytic in the goal tuple 
+
+g := ( g1, . . . , g L) ∈ (Rd)L. Since each M πl = RlHl is linear in Rl with goal-independent Hl,
+
+f (g1, . . . , g L) := det  (M π )T M π 
+
+is real-analytic on (Rd)L. Now the zero set of a non-zero real-analytic function on (Rd)L has Lebesgue measure zero, so it suffices to exhibit one tuple of goals for which f̸ = 0 . We first show that for any fixed σ > 0, the family Sσ := {rg,σ ∈ Rn | g ∈ Rd} spans Rn. Assume otherwise for contradiction; then there exists w̸ = 0 such that 
+
+> n
+
+X
+
+> k=1
+
+wke−∥ φ(sk )−g∥2/2σ2
+
+= wT rg,σ = 0 
+
+for all g ∈ Rd. Since φ is injective, the centres xk = φ(sk) are distinct, and the Gaussians 
+
+{g 7 → e−∥ xk −g∥2/2σ2
+
+}nk=1 centred at any distinct points x1, . . . , x n ∈ Rd are linearly independent as functions on Rd, so we conclude wk = 0 for all k, a contradiction. Hence span (Sσ ) = Rn. We now construct (gl)nl=1 inductively such that {M πl }nl=1 = {rgl Hl}nl=1 are linearly independent vectors. Proceed by induction on l: at step l ∈ { 1, . . . , n }, with gj already chosen for j < l , set V0 = {0} and 
+
+Vl−1 := span {M πj }j<l 
+
+for l − 1 ≥ 1, of dimension no greater than l − 1 < n . Since Hl is invertible, span ({rg,σ l Hl : g ∈ Rd}) = span ({rg,σ l : g ∈ Rd}) = span (Sσl ) = Rn ,
+
+so the family {rg,σ l Hl : g ∈ Rd} cannot be contained in the proper subspace Vl−1, hence there exists gl ∈ Rd with rgl Hl /∈ Vl−1. After n steps, we obtain Vn = span {M πj }nj=1 = Rn and thus 
+
+rank( M π ) = n. Choosing the remaining gl for l > n arbitrarily, we obtain f (g1, . . . , g L)̸ = 0 and thus f̸ ≡ 0. We conclude λ(f −1(0)) = 0 , and finally 
+
+λ
+
+ g ∈ (Rd)L | ¬∃ !P (Qπ )
+
+
+
+≤ λ
+
+ g ∈ (Rd)L | rank( M π (g)) < n 
+
+
+
+= λ(f −1(0)) = 0 .
+
+For the optimal-policy claim, let Π◦ denote the finite set of goal-conditioned deterministic policies 
+
+π : S × [L] → A , of size |A| |S|· L. For each goal tuple g ∈ (Rd)L, define π⋆(g) ∈ Π◦ by 
+
+π⋆(g)( ·, l ) := π⋆(·, g l), the optimal policy for goal gl. Then 
+
+{g : rank( M π⋆(g)(g)) < n } ⊆ [
+
+> π∈Π◦
+
+{g : rank( M π (g)) < n } .
+
+For each fixed π ∈ Π◦, decomposing into per-slot policies πl := π(·, l ) and applying the first part of the proposition gives measure zero for the corresponding term. By finite subadditivity, 
+
+λ {g : rank( M π⋆(g)(g)) < n } ≤ X
+
+> π∈Π◦
+
+λ {g : rank( M π (g)) < n } = 0 .
+
+27 C.5 Example of Rank Deficiency 
+
+Theorem 3 proves that M π is almost always full-rank, but singularities can occur for specific (P, π, γ )
+
+even when goals are states ( G = S). We construct an explicit example for n = m = 3 . Let 
+
+S = {0, 1, 2} = A, with deterministic transition kernel P (s, a ) = a and deterministic policies 
+
+π0(i) ≡ 0; π1(0) = 1 , π 1(1) = 1 , π 1(2) = 2 ; π2(0) = 2 , π 2(1) = 1 , π 2(2) = 2 . Writing 
+
+c = 1 /(1 − γ), one can analytically compute: 
+
+M π =
+
+c c − 1 c − 1
+
+c − 1 c 0
+
+c − 1 0 c
+
+!
+
+= I + ( c − 1) 
+
+1 1 11 1 01 0 1
+
+!
+
+.
+
+The rhs matrix has eigenvalues 1+ √2, 1, 1−√2, so setting γ = 1 /√2 gives 1+( c−1)(1 −√2) = 0 
+
+and thus det( M π ) = 0 . However, note that the matrix is full-rank for all γ̸ = 1 /√2, and for any perturbation of the policies, making singularities “exceptionally rare” as guaranteed by Theorem 3. 
+
+C.6 Arbitrary Q-Values 
+
+Theorems 2 and 3 give conditions under which the true kernel P is identified uniquely by exact 
+
+Q-values, or approximately by ϵ-approximate Q-values. Propositions 9 and 10 below show that analogous results apply to arbitrary Q ∈ Q . This is particularly relevant for deep RL agents, which seldom have converged Q-values, but may nonetheless encode a unique world model that we denote 
+
+P ⋆ – as opposed to P , since there is no guarantee the extracted world model will approximate the true kernel. While the proof techniques are very similar (constructing a map from Q to M , instead of 
+
+R to M , whose preimages preserve measure-zero sets), neither follows from the other. First, recall that we write M for the matrix from Equation 2 induced by (Q, π, r, γ ).
+
+Proposition 9 (General Uniqueness, Stochastic) . Fix a finite MDP, a policy π, and a reward function 
+
+r : S × G → R. Then the set {Q ∈ Q | rank( M ) < min( L, n )} has Lebesgue measure zero. Moreover, if |G| ≥ |S| , then for every Q outside this set, P ⋆(s, a ) := M +Q(s, a ) is the unique minimiser of the Bellman residual ∥T πP ⋆ (Q) − Q∥2, and if |G| = |S| , then T πP ⋆ (Q) = Q.
+
+Proof. Recall the notation L = |G| , n = |S| and define the map F : Q → RL×n by F (Q) = 
+
+R + γV = R + γπQ , i.e. Vli = P 
+
+> j
+
+πlij Qlij . Note that F is affine and surjective, since for any 
+
+M ∈ RL×n, defining Qlij = ( Mli − Rli )/γ gives Vli = Mli − Rli and thus F (Q) = M . Then the set of Q ∈ Q for which M has deficient-rank is 
+
+{Q ∈ Q | rank( M ) < min( L, n )} = F −1({M ∈ RL×n | rank( M ) < min( L, n )})
+
+which has Lebesgue measure zero as the preimage of a Lebesgue-measure-zero set under a surjective affine map: the rank-deficient set {M ∈ RL×n | rank( M ) < min( L, n )} is the zero set of 
+
+det( M T M ) when L ≥ n, or of det( M M T ) when L ≤ n, which is a non-zero polynomial in the entries of M . Therefore, M has full-rank for almost every Q ∈ Q . Now recall that the Bellman equation T πP ⋆ (Q) = Q is a linear system M P ⋆ij = Qij for each i, j (see Equation 2). If L ≥ n, the rank-nullity theorem gives dim( ker (M )) = n − dim( im (M )) = 0 , so the system M P ⋆ij = Qij has at most one solution, and the unique least-squares solution is given by P ⋆ij = M +Qij . If L = n, we have P ⋆ij = M −1Qij and thus M P ⋆ij = Qij exactly, i.e. T πP ⋆ (Q) = Q.
+
+Proposition 10 (General Uniqueness, Deterministic) . Fix a finite MDP, a policy π, and a reward function r : S × G → R. Then the set {Q ∈ Q | ∃ k̸ = k′ with M·,k = M·,k ′ } has Lebesgue measure zero. Moreover, for any |G| ≥ 1 and any Q outside this set, P ⋆(s, a ) := arg min s′ ∥Q(s, a )−M·,s ′ ∥1
+
+is the unique deterministic world model minimising the Bellman residual ∥T πP ⋆ (Q) − Q∥2, and at most one deterministic model P ⋆ satisfies T πP ⋆ (Q) = Q.
+
+Proof. Let F : Q → RL×n be the affine surjection from the proof of Proposition 9. For any k̸ = k′,the set {M ∈ RL×n : M·,k = M·,k ′ } is a proper subspace of RL×n, so it has Lebesgue measure zero. Taking a finite union over the  n
+
+> 2
+
+ pairs k̸ = k′, the set 
+
+{Q ∈ Q | ∃ k̸ = k′ with M·,k = M·,k ′ } = F −1S  
+
+> k̸=k′
+
+{M ∈ RL×n | M·,k = M·,k ′ }
+
+
+
+28 has Lebesgue measure zero since it is the preimage of a Lebesgue-measure-zero set under a surjective affine map. Therefore, M has pairwise distinct columns for almost every Q ∈ Q . Now the Bellman equation T πP ⋆ (Q) = Q reduces in deterministic MDPs to Qij = M·,P ⋆(si,a j ) for each (i, j ). Since columns are pairwise distinct, the argmin P ⋆(si, a j ) = arg min k ∥Qij − M·,k ∥1 is unique and minimises ∥Qij − M·,P ⋆(si,a j )∥2 = ∥T πP ⋆ (Q) − Q∥2.
+
+We note that all results above refer to world models P ⋆ ∈ P which may lie outside the probability simplex; we refer to Appendix B.2 for discussion. 
+
+C.7 Impossibility Result for Multiple Discount Factors and Policies 
+
+Below we prove that, unlike multiple goals, multiple discount factors and multiple policies are not usually sufficient to break value equivalence. 
+
+Proposition 11. For any n ≥ 4, there is a family of finite MDPs with n states in which P cannot be uniquely identified from the set of Q-values {Qπr,γ | π ∈ Π, γ ∈ [0 , 1) } over all policies π and all discount factors γ, for any reward function r : S → R. The non-identifiable family has dimension at least 1 when {r2, r 3, r 4} are not all equal, and dimension at least 2 when r2 = r3 = r4.
+
+Proof. Take n = 4 , m ≥ 1, and let s2, s 3, s 4 be absorbing states: P (sk | sk, a j ) = 1 for k ∈{2, 3, 4} and every aj . From s1, fix any interior escape, e.g. 
+
+P (· | s1, a 1) =  p1, 1−p1 
+
+> 3
+
+, 1−p1 
+
+> 3
+
+, 1−p1
+
+> 3
+
+
+
+for some p1 ∈ (0 , 1) , and P (· | s1, a j ) for j ≥ 2 arbitrary. For any reward function r ∈ R4, we construct a family of transition kernels Pϵ̸ = P such that Q-values are identical for all Pϵ, for all π, γ .First, let 
+
+Cr := {∆ ∈ R4 : ∆ 1 = 0 , 1⊤∆ = 0 , r ⊤∆ = 0 } .
+
+If {r2, r 3, r 4} are not all equal, note that 
+
+∆r := (0 , r 3 − r4, r 4 − r2, r 2 − r3)
+
+is a non-zero element of Cr (and in fact spans the one-dimensional vector space Cr ). If on the other hand r2 = r3 = r4, the constraint r⊤∆ = 0 reduces to 1⊤∆ = 0 . In particular the pair-swaps 
+
+∆1 
+
+> r
+
+:= (0 , 1, −1, 0) , ∆2 
+
+> r
+
+:= (0 , 0, 1, −1) 
+
+are non-zero, linearly independent elements of Cr (and in fact span the two-dimensional vector space Cr ). In either case Cr̸ = {0}, so the family {Pϵ}ϵ∆∈C r constructed below gives at least a one-parameter family of distinct stochastic kernels (two-parameter in the second case). Now pick any 
+
+0̸ = ∆ ∈ C r . Since P (· | s1, a 1) is interior, there exists ϵ0 > 0 such that for every ϵ ∈ (−ϵ0, ϵ 0),
+
+Pϵ(· | s1, a 1) := P (· | s1, a 1) + ϵ∆
+
+is a valid transition function (non-negativity by interior, and 1⊤∆ = 0 preserves the sum); define Pϵ
+
+to agree with P everywhere else. Now fix any policy π and γ ∈ [0 , 1) . For k ∈ { 2, 3, 4}, the Bellman equation at an absorbing state gives V π (sk) = rk/(1 − γ), depending on r alone. For k = 1 , writing 
+
+αl(ϵ) := P 
+
+> j
+
+π(aj | s1)Pϵ(sl | s1, a j ), the Bellman equation reads 
+
+V π (s1) = α1(ϵ)( r1 + γV π (s1)) + 
+
+> 4
+
+X
+
+> l=2
+
+αl(ϵ)rl/(1 − γ) ,
+
+depending on the kernel only through α1(ϵ) and P4 
+
+> l=2
+
+αl(ϵ)rl. Now ∆1 = 0 implies α1(ϵ) = α1(0) 
+
+for all ϵ, and since r⊤∆ = 0 ,
+
+> 4
+
+X
+
+> l=2
+
+(αl(ϵ) − αl(0)) rl = ϵπ (a1 | s1)r⊤∆ = 0 ,
+
+so P4 
+
+> l=2
+
+αl(ϵ)rl is also ϵ-independent. Hence V πPϵ (s1) = V πP (s1). Now consider the Q-values 
+
+QπPϵ (s, a ; γ) = 
+
+> 4
+
+X
+
+> l=1
+
+Pϵ(sl | s, a )[ rl + γV π (sl)] .
+
+29 The only entry dependent on ϵ is (s1, a 1), for which 
+
+QπPϵ (s1, a 1) − QπP (s1, a 1) = 
+
+> 4
+
+X
+
+> l=2
+
+∆lrl/(1 − γ) = ϵr ⊤∆/(1 − γ) = ϵr ⊤∆/(1 − γ) = 0 ,
+
+hence QπPϵ = QπP for every ϵ ∈ (−ϵ0, ϵ 0) and every (π, γ ).
+
+C.8 Proof of Theorem 5 (Local MDPs) 
+
+As a middle-ground between deterministic and stochastic, we present a result referenced at the end of Section 4.1 for N -local MDPs , defined by supp s,a (P ) := |{ s′ : P (s′ | s, a ) > 0}| ≤ N for all 
+
+(s, a ). To restrict the usual hypothesis class P = {P : S × A → ∆( S)}, we introduce two classes corresponding to N -local MDPs with known or unknown support respectively 
+
+PΓ := {P ∈ P : supp s,a (P ) = Γ( s, a ) ∀s, a } ,
+
+PN := {P ∈ P : | supp s,a (P )| ≤ N ∀s, a } ,
+
+where Γ : S × A → 2S is a fixed support function with |Γ( s, a )| ≤ N for all (s, a ). For example, a deterministic MDP is a 1-local MDP with typically unknown support (the successor state is not known), while an MDP with locally constrained dynamics may have known support if the agent has some prior knowledge about the environment. In the extreme case, a stochastic MDP is simply an 
+
+n-local (i.e. global) MDP with known support (the entire state space). 
+
+Theorem 5 (Local) . Fix any N -local finite MDP, policy π and support Γ.(a) Known support: For any |G| ≥ N − 1, the set of reward functions r : S × G → R for which P ∈ P Γ is uniquely determined by Qπ has full Lebesgue measure. (b) Unknown support: For any |G| ≥ 2N − 1, the set of reward functions r : S × G → R
+
+for which P ∈ P N is uniquely determined by Qπ has full Lebesgue measure. 
+
+Proof. Write L = |G| , and supp( i, j ) := {k ∈ [n] : Pijk > 0} for the support of P (· | si, a j ).
+
+Part (a). When supp( i, j ) = Γ( si, a j ) is known, the Bellman equation (Equation 2) reduces to a linear system of size ≤ N per state-action pair. Taking | supp( i, j )| = N without loss of generality (the proof follows identically when the support is smaller), we have 
+
+M πij := M π 
+
+> :,supp( i,j )
+
+∈ RL×N
+
+and augmenting M πij and Qij with ones to obtain Mπij ∈ R(L+1) ×N and Qij ∈ RL+1 , the transition function P satisfies 
+
+Mπij Pij = Qij (10) for all i, j , where Pij := Pi,j, supp( i,j ) ∈ ∆N . In particular, P ∈ P Γ is uniquely determined if 
+
+rank( Mπij ) ≥ N . The proof now follows similarly to that of Proposition 2 (b) . First recall the resolvent identity from Lemma 1: 
+
+M πl = Rl(I − γ ¯P πl )−1 ,
+
+where ¯P π = ( P π )T . Since (I − γ ¯P πl )−1 is invertible for each l, the map F : RL×n → RL×n given by F (R) = M π is linear and invertible. Now P ∈ P Γ is uniquely determined by Equation 10 if 
+
+rank( Mπij ) ≥ N for all i, j . Taking the converse statement, 
+
+{R ∈ RL×n | ¬∃ !P (Q)} ⊆ { R ∈ RL×n | ∃ i, j s.t. rank( Mπij ) < N }
+
+= F −1
+
+
+
+{M ∈ RL×n | ∃ i, j s.t. rank( Mij ) < N }
+
+!
+
+= F −1
+
+ [
+
+> i,j
+
+{M ∈ RL×n | rank( Mij ) < N }
+
+
+
+.
+
+For generic M ∈ RL×n, the augmented matrix M ∈ R(L+1) ×n is also generic, and so is any slice of columns Mij , with rank( Mij ) = min( L + 1 , N ) = N almost surely, for all L ≥ N − 1. In 30 particular, 
+
+λ  {M ∈ RL×n | rank( Mij ) < N } = 0 
+
+for each i, j , and under measure-zero preservation through finite unions and F −1,
+
+λ  {R ∈ RL×n | ¬∃ !P (Q)} = 0 .
+
+Part (b). P ∈ P N is uniquely determined if for each i, j , there are no Pij ̸ = P ′ 
+
+> ij
+
+∈ ∆nN such that 
+
+Mπ Pij = Qij = Mπ P ′ 
+
+> ij
+
+,
+
+Subtracting one side from the other, note that Pij − P ′ 
+
+> ij
+
+∈ Λn 
+
+> 2N
+
+:= {T ∈ Rn | ∥ T ∥0 ≤ 2N }, so 
+
+P ∈ P N is uniquely determined if there is no 0̸ = Tij ∈ Λn 
+
+> 2N
+
+such that 
+
+Mπ Tij = 0 ,
+
+noting that the last-row constraint P 
+
+> k
+
+Tijk = 0 is implied by P 
+
+> k
+
+Pijk − P ′ 
+
+> ijk
+
+= 0 . In particular, writing M:,K for the matrix sliced to the columns indexed by K ⊂ [n] with |K| = 2 N , this is equivalent to M:,K Tij = 0 having no non-trivial solutions for Tij ∈ R2N for all such K, which is implied by rank( M:,K ) ≥ 2N . Now the map F : RL×n → RL×n given by F (R) = M π is linear and invertible, and P ∈ P N is uniquely determined if rank( Mπ 
+
+> :,K
+
+) ≥ 2N for all K ⊂ [n] with 
+
+|K| = 2 N . Taking the converse statement, 
+
+{R ∈ RL×n | ¬∃ !P (Q)} ⊆ { R ∈ RL×n | ∃| K| = 2 N s.t. rank( Mπ 
+
+> :,K
+
+) < 2N }
+
+= F −1
+
+
+
+{M ∈ RL×n | ∃| K| = 2 N s.t. rank( M:,K ) < 2N }
+
+
+
+= F −1
+
+ [
+
+> |K|=2 N
+
+{M ∈ RL×n | rank( M:,K ) < 2N }
+
+ .
+
+For generic M ∈ RL×n, the augmented matrix M ∈ R(L+1) ×n is also generic, and so is any slice of columns M:,K , with rank( M:,K ) = min( L + 1 , 2N ) = 2 N almost surely, for all L ≥ 2N − 1. In particular, 
+
+λ  {M ∈ RL×n | rank( M:,K ) < 2N } = 0 
+
+for each K, and under measure-zero preservation through finite unions and F −1,
+
+λ  {R ∈ RL×n | ¬∃ !P (Q)} = 0 .
+
+# D Proofs for Continuous MDPs 
+
+This section contains all proofs for continuous MDPs; note that Lemmas 4 and 5 hold for arbitrary Borel state spaces S, but in order to specify concrete reward families (indicator and Gaussian) for which ∃!P (Qπ ) holds, we specialise the goal-augmented MDP definition of Section 2 to Borel 
+
+continuous state spaces S ⊆ Rd. Formally, the condition on P being a Markov kernel means that it satisfies two measurability conditions: (i) for each (s, a ), B 7 → P (B | s, a ) is a Borel probability measure on S, and (ii) for each Borel set B ∈ ΣS , (s, a ) 7 → P (B | s, a ) is measurable, ensuring that Bellman integrals R 
+
+> S
+
+V (s′)P (ds ′ | s, a ) are well-defined. No absolute continuity of P with respect to Lebesgue measure is assumed unless stated explicitly. 
+
+D.1 Termination and the Bellman Family 
+
+In order to match the goal-dependent termination functions commonly used in GCRL (often written in code as dones ), and thereby to formally state Theorems 4 and 8, we generalise the goal-augmented MDP formalism (Section 2) to include a termination function D : S × G → { 0, 1} that specifies pairs 
+
+(s, g ) beyond which rewards are set to zero. We use a similar formalism as the state-based discount factors γ : S → [0 , 1] used by Sutton et al. [31] and White [14] , but with a goal-augmented domain. Writing rg (·), D g (·) := r(·, g ), D (·, g ), The return of a trajectory τ = ( st, a t)t≥0 with respect to g is 31 now given by 
+
+R(τ, g ) := X
+
+> t≥0
+
+γtrg (st+1 )
+
+> t
+
+Y
+
+> k=1
+
+Dg (sk) ,
+
+where the empty product ( t = 0 ) is defined as 1, and which reduces to the usual return when 
+
+D ≡ 1. Note that the multiplicative factor makes returns path-dependent, and could not be folded into the Markovian reward r. Terminating environments could instead be handled by adding aborbing states [ 14 ], but this imposes a modification on the state space, while transition-based termination does not, and cannot handle goal-dependence. With this in hand, the value and action-value functions are defined exactly as before: V π (s, g ) := Eτ ∼πg
+
+R(τ, g ) | s0 = s
+
+and Qπ (s, a, g ) := Eτ ∼πg
+
+R(τ, g ) | s0 = s, a 0 = a, with τ ∼ πg shorthand for independently sampling s0 ∼ μ, a t ∼ π(st, g ), s t+1 ∼ P (st, a t). In integral form, the Bellman equation becomes 
+
+Qπg (s, a ) = 
+
+Z
+
+> S
+
+
+
+rg (s′) + γD g (s′) V πg (s′)
+
+
+
+P (d s′ | s, a ) .
+
+While the product Qtk=1 Dg (sk) induces path-dependent returns, the Bellman operators inherit the usual γ-contraction properties, and their unique fixed point admits an optimal Markovian policy [ 14 ]. 
+
+Definition 2 (Bellman family) . For any fixed (Qπ , π, r, γ ) with goal set G, we define the Bellman family as the collection {mπg : g ∈ G} of bounded Lebesgue-measurable functions 
+
+mπg (s′) := rg (s′) + γD g (s′)V πg (s′) , with V πg (s′) = 
+
+Z
+
+> A
+
+Qπg (s′, a ′)π(d a′ | s′, g ) .
+
+In particular, for any (s, a ), the Bellman equation 
+
+∀s, a, g. Qπ (s, a, g ) = 
+
+Z
+
+mπg (s′)P (d s′ | s, a )
+
+requires that action-values be a collection of expectations of the known test functions mπg under the 
+
+unknown measure P (· | s, a ).
+
+D.2 Determining Measures 
+
+The two reward function families we consider for continuous MDPs are the following, adjoined with the notion of termination upon arrival .
+
+Definition 3. Given S, G ⊆ Rd, we define the Gaussian and indicator reward functions r : S ×G → R
+
+as r(s, g ) = exp( −∥ s − g∥2/(2 σ2)) and r(s, g ) = 1[∥s − g∥ < σ ] respectively, where σ > 0 is a fixed variance / threshold we omit from r for brevity. For indicator rewards, we say that we assume 
+
+termination upon arrival if Dg (s) = 1[∥s − g∥ ≥ σ] = 1 − rg (s). For Gaussian goals, we say that we assume ρ-termination if Dg (s) = 1[∥s − g∥ ≥ ρ], noting that the Gaussian variance σ is not necessarily equal to the termination threshold ρ.To prove that P can be identified uniquely from (Qπ , π, r, γ ), we need to show that the Bellman family {mπg : g ∈ G} is measure determining , defined as follows. 
+
+Definition 4 (Measure-determining family) . A set F of bounded measurable functions f : S → R is 
+
+measure determining if for any probability measures μ, ν ∈ ∆( S),
+
+Z
+
+f dμ =
+
+Z
+
+f dν ∀f ∈ F =⇒ μ = ν. 
+
+When policies are unconditional, Lemma 5 shows that Bellman families are measure-determining if the underlying reward family is signed-measure-determining, as defined below. 
+
+Definition 5 (Signed-measure-determining family) . A set F of bounded measurable functions 
+
+f : S → R is signed-measure-determining if for any finite signed measures η and ˜η on S,
+
+Z
+
+f dη =
+
+Z
+
+f d˜ η ∀f ∈ F =⇒ η = ˜ η. 
+
+Definition 5 is stronger than Definition 4, since probability measures are finite signed measures. 32 D.3 Proofs for Unconditional Policies (Stochastic & Deterministic MDPs) 
+
+The results below apply to arbitrary stochastic continuous MDPs, which includes deterministic ones. However, they are restricted to unconditional policies πg = πg′ for all g ∈ G . The next section will deal with general (goal-conditioned) policies, but only apply to deterministic MDPs. Results for the challenging intersection of stochastic kernels and goal-conditioned policies is beyond the scope of this paper, and left for future work. 
+
+D.3.1 Proof of Theorem 6 (Gaussian Goals) Theorem 6. Fix any continuous stochastic MDP, unconditional policy π and termination function 
+
+D, σ > 0, and a goal set G ⊆ Rd with non-empty interior and Gaussian rewards rg (s′) = exp( −∥ s′ − g∥2/(2 σ2)) . Then the Bellman family {mπg }g∈G is measure determining on S, and thus ∃!P (Qπ ). The conclusion also holds when G is a countable set dense in some non-empty open subset of Rd.
+
+Proof. We prove that {rg : g ∈ G} is determining for finite signed measures on S, which by Lemma 5 implies that {mπg } is measure determining on S. Let η be a finite signed measure on S with R 
+
+> S
+
+rg dη = 0 for all g ∈ G . Writing φσ (x) := exp( −∥ x∥2/(2 σ2)) , note that rg (s′) = φσ (g − s′), so 
+
+F (g) := 
+
+Z
+
+> S
+
+φσ (g − s′) η(d s′) = ( η ∗ φσ )( g)
+
+vanishes on G by hypothesis. By Lemma 6, F is real-analytic on Rd. Since G ⊆ Rd has non-empty interior in Rd, F vanishes on an open ball U ⊆ G , and the identity theorem for real-analytic functions on Rd [58 ] gives F ≡ 0 on Rd. The Fourier transform argument derived in Lemma 7 implies η = 0 .If G is instead countable and dense in some non-empty open U ⊆ Rd, then F vanishes on a dense subset of U , and continuity (implied by real-analyticity) gives F = 0 on U , and the identity theorem applies as before. 
+
+D.3.2 Proof of Theorem 7 (Indicator Goals) 
+
+For indicator rewards, the goal set is required to contain the open ball of radius σ around the state space. Recall that Bσ (0) := {s ∈ Rd | ∥ s∥ < σ }, and S + Bσ (0) := {s + x | s ∈ S, x ∈ Bσ (0) }
+
+Theorem 7. Fix any continuous stochastic MDP, unconditional policy π and termination function 
+
+D, σ > 0, and goal set G ⊇ S + Bσ (0) with indicator rewards rg (s′) = 1[∥s′ − g∥ < σ ]. Then the Bellman family {mπg }g∈G is measure determining on S, and thus ∃!P (Qπ ).
+
+Proof. We prove that {rg : g ∈ G} is determining for finite signed measures on S, which by Lemma 5 implies that {mπg } is measure determining on S. Let η be a finite signed measure on S
+
+with R 
+
+> S
+
+rg dη = 0 for all g ∈ G . Writing ψσ (x) := 1[∥x∥ < σ ], we have rg (s′) = ψσ (g − s′), so 
+
+F (g) := 
+
+Z
+
+> S
+
+ψσ (g − s′) η(d s′) = ( η ∗ ψσ )( g)
+
+vanishes on G by hypothesis. For any g / ∈ S + Bσ (0) , every s′ ∈ S satisfies ∥g − s′∥ ≥ σ, so 
+
+ψσ (g − s′) = 0 and thus F (g) = 0 . Combined with F = 0 on G ⊇ S + Bσ (0) , we have F ≡ 0 on 
+
+Rd. The Fourier transform argument proven in Lemma 9 allows us to conclude η = 0 .
+
+D.4 Proofs for Goal-Conditioned Policies (Deterministic MDPs) 
+
+We now consider deterministic MDPs, where P (· | s, a ) = δf (s,a )(·) for a successor function 
+
+f : S × A → S and the Dirac delta δ. In this setting, measure determination reduces to a simpler condition called point separation .
+
+Definition 6 (Point-separating goals) . A family F of real-valued functions on S is point separating 
+
+if for any x̸ = y in S there exists f ∈ F such that f (x)̸ = f (y).33 In particular, if the MDP is deterministic and the family {mπg : g ∈ G} is point separating on S, the successor function f is uniquely identified by (π, Q π ): any f, f ′ satisfying the Bellman equation 
+
+mπg
+
+ f (s, a ) = Qπ (s, a, g ) = mπg
+
+ f ′(s, a ) ∀g, s, a (11) must have f (s, a ) = f ′(s, a ) for every (s, a ).
+
+D.4.1 Proof of Theorem 4 (Deterministic MDPs, Indicator Goals with Termination) Theorem 4 . Fix any continuous deterministic MDP, policy π, threshold σ > 0 and a goal set 
+
+G ⊇ S + Bσ (0) with indicator rewards rg (s′) = 1[∥s′ − g∥ < σ ] and termination upon arrival. Then {mπg : g ∈ G} is point separating on S, hence ∃!P (Qπ ).
+
+Proof. (i) Reward separation. Fix any x̸ = y ∈ S . We first exhibit g ∈ G with rg (x) = 1 and 
+
+rg (y) = 0 . If ∥x − y∥ ≥ σ, taking g = x ∈ SG gives ∥x − g∥ = 0 < σ , hence rg (x) = 1 , while 
+
+∥y − g∥ = ∥y − x∥ ≥ σ implies rg (y) = 0 . Otherwise, let δ := 12 ∥x − y∥ ∈ (0 , σ/ 2) and define 
+
+g := x + ( σ − δ) x − y
+
+∥x − y∥ .
+
+Then ∥g − x∥ = σ − δ < σ , so g ∈ Bσ (x) = x + Bσ (0) ⊆ S + Bσ (0) ⊆ G and rg (x) = 1 . Writing 
+
+u := ( x − y)/∥x − y∥, we have g − y = ( x − y) + ( σ − δ)u = ( ∥x − y∥ + σ − δ)u, so 
+
+∥g − y∥ = ∥x − y∥ + σ − δ = 12 ∥x − y∥ + σ > σ , 
+
+hence rg (y) = 0 . In either case, the family {rg : g ∈ G} separates x from y.
+
+(ii) Bellman family expansion. Fix g as constructed in step (i). By Lemma 4, 
+
+mπg = X
+
+> k≥0
+
+γkT kg rg , where (Tg h)( s) = Dg (s) Es′∼P πg (·| s)[h(s′)] ,
+
+is the per-goal Bellman operator. We claim that for all k ≥ 0,
+
+(T kg rg )( s) = Eτ
+
+"Y
+
+> t<k
+
+Dg (st) rg (sk) s0 = s
+
+#
+
+, (12) where τ = ( st)t≥0 is the policy-induced trajectory with at ∼ πg (· | st) and st+1 = f (st, a t). The base case k = 0 holds by definition of the empty product equalling 1. For the inductive step, we use the definition of Tg and the inductive hypothesis applied to s1 to get 
+
+(T k+1  
+
+> g
+
+rg )( s) = Dg (s) E (T kg rg )( s1) s0 = s
+
+= Dg (s) E
+
+"
+
+Eτ ′
+
+"Y
+
+> t<k
+
+Dg (s′
+
+> t
+
+) rg (s′
+
+> k
+
+) s′ 
+
+> 0
+
+= s1
+
+#
+
+s0 = s
+
+#
+
+= E
+
+"
+
+Dg (s0) Y
+
+> t<k
+
+Dg (st+1 ) rg (sk+1 ) s0 = s
+
+#
+
+= E
+
+" Y
+
+> t<k +1
+
+Dg (st) rg (sk+1 ) s0 = s
+
+#
+
+,
+
+where the third equality uses the Markov property (the inner trajectory τ ′ started at s1 has the same law as (st+1 )t≥0 under the original chain) to merge the nested expectations. 
+
+(iii) Bellman separation. Since rg (x) = 1 , the assumption of termination upon arrival (Definition 3) gives Dg (x) = 1 − rg (x) = 0 , so the product in Equation 12 contains the factor Dg (s0) = 0 for every k ≥ 1, conditional on s0 = x. Therefore (T kg rg )( x) = 0 for all k ≥ 1, and only the k = 0 
+
+term survives: 
+
+mπg (x) = rg (x) = 1 .
+
+For y, we have rg (y) = 0 and hence Dg (y) = 1 . Conditioning on s0 = y throughout, we define the hitting time 
+
+T := inf {t ≥ 1 : st ∈ Bσ (g)} ∈ { 1, 2, . . . } ∪ {∞} .
+
+34 Note first that the k = 0 term contributes (T 0 
+
+> g
+
+rg )( y) = rg (y) = 0 . For k ≥ 1, we evaluate 
+
+(T kg rg )( y) by splitting on whether T < k , T = k, or T > k , recalling that s0 = y satisfies 
+
+∥y − g∥ > σ , so s0 /∈ Bσ (g) and Dg (s0) = 1 . On {T < k }, the index T ∈ { 1, . . . , k − 1}
+
+falls inside the product Q 
+
+> t<k
+
+Dg (st), and sT ∈ Bσ (g) gives Dg (sT ) = 1 − rg (sT ) = 0 , killing the product. On {T = k}, for every 1 ≤ t < k we have st /∈ Bσ (g) by definition of T , so 
+
+Dg (st) = 1 ; combined with Dg (s0) = 1 , the entire product equals 1, while sk ∈ Bσ (g) gives 
+
+rg (sk) = 1 , so the integrand equals 1. On {T > k }, sk /∈ Bσ (g), so rg (sk) = 0 kills the integrand. Combining, the {0, 1}-valued integrand Q 
+
+> t<k
+
+Dg (st) rg (sk) is precisely the indicator of {T = k},so (T kg rg )( y) = Eτ [1{T = k} | s0 = y] for k ≥ 1. Swapping sum and expectation since all terms are nonnegative (Fubini [59]), and using P 
+
+> k≥1
+
+γk1{T = k} = γT (with the convention γ∞ = 0 ), 
+
+mπg (y) = X
+
+> k≥1
+
+γk Eτ [1{T = k} | s0 = y] = Eτ
+
+γT s0 = y ≤ γ < 1 = mπg (x) ,
+
+where the final bound uses T ≥ 1. We conclude that {mπg : g ∈ G} separates x from y. Since (x, y )
+
+was arbitrary, the Bellman family is point separating on S, and (11) implies that the P is uniquely identified by (π, Q π , r, γ ).
+
+D.4.2 Proof of Theorem 8 (Deterministic MDPs, Gaussian Goals with Termination) 
+
+We now turn to Gaussian goals rg (s) = exp( −∥ s − g∥2/(2 σ2)) paired with ρ-termination , i.e. a termination function Dg (s) = 1[∥s − g∥ ≥ ρ] (see Definition 3). Unlike indicator rewards, 
+
+Dg̸ = 1 − rg , with the termination threshold ρ being independent from the Gaussian variance σ.
+
+Theorem 8. Fix any continuous deterministic MDP with compact S ⊆ Rd, policy π and σ, ρ > 0
+
+satisfying the smallness condition 
+
+σ2 < ρ2
+
+−4 log(1 − γ) .
+
+Then there is a finite goal set G ⊆ S + Bρ(0) with Gaussian rewards rg (s) = exp( −∥ s −
+
+g∥2/(2 σ2)) and ρ-termination Dg (s) = 1[∥s − g∥ ≥ ρ] such that {mπg : g ∈ G} is point separating on S, hence ∃!P (Qπ ). In particular, ∃!P (Qπ ) for any G ⊇ S + Bρ(0) .
+
+Proof. (i) Constructing G. First note that the smallness condition is equivalent to 
+
+exp( −ρ2/(2 σ2)) < (1 − γ)2 , or equivalently, σ2 < ρ2
+
+−4 log(1 − γ) . (13) Now pick η ∈ (0 , ρ/ 2) small enough that 
+
+exp( −2η2/σ 2) > exp( −ρ2/(2 σ2)) 1 − γ + γ , (14) which exists because the LHS tends to 1 as η → 0 while the RHS is smaller than 1 by Equation 13. By compactness, we can choose locii c1, . . . , c N ∈ S such that S ⊆ SNi=1 Bη (ci). Let e1, . . . , e d
+
+denote the standard basis of Rd and define, for each i ∈ [N ] and j ∈ [d], the finite set of goals 
+
+G := {gij | 1 ≤ i ≤ N, 0 ≤ j ≤ d} with 
+
+gi0 := ci , and gij := ci + ηe j for j ∈ [d] .
+
+Since ci ∈ S and ∥gij − ci∥ = ∥ηe j ∥ = η < ρ , we have gij ∈ ci + Bρ(0) and thus G ⊆ S + Bρ(0) .
+
+(ii) Bellman expansion. Fix any g ∈ G . By Lemma 4, we have mπg = P 
+
+> k≥0
+
+γkT kg rg with 
+
+(Tg h)( s) = Dg (s) Es′∼P πg (·| s)[h(s′)] . The trajectory formula (Equation 12) in the proof of Theo-rem 4 holds for any bounded measurable reward, so for all k ≥ 0,
+
+(T kg rg )( s) = Eτ
+
+" Y
+
+> t<k
+
+Dg (st)rg (sk) s0 = s
+
+#
+
+.
+
+35 (iii) Bellman separation. Fix distinct x, y ∈ S and pick i with x ∈ Bη (ci). For each j ∈ { 0, . . . , d },
+
+∥x − gij ∥ ≤ ∥ x − ci∥ + ∥ci − gij ∥ < η + η = 2 η < ρ , 
+
+by assumption that η ∈ (0 , ρ/ 2) . Hence Dgij (x) = 0 and the product in the trajectory formula above contains the factor Dg (s0) = 0 for every k ≥ 1 when s0 = x. Only the k = 0 term survives: 
+
+mπgij (x) = rgij (x) = exp( −∥ x − gij ∥2/(2 σ2)) > exp( −2η2/σ 2) . (15) For y, we distinguish two cases. 
+
+Case A: some j satisfies ∥y − gij ∥ ≥ ρ. Fix any such j and write g := gij . Conditioning on s0 = y,define the hitting time 
+
+T := inf {t ≥ 1 : st ∈ Bρ(g)} ∈ { 1, 2, . . . } ∪ {∞} ,
+
+which automatically satisfies T ≥ 1 since s0 = y / ∈ Bρ(g). We bound the pathwise integrand P 
+
+> k≥0
+
+γk Q 
+
+> t<k
+
+Dg (st) rg (sk) by case analysis on k relative to T . For 0 ≤ k < T , every st with 
+
+0 ≤ t < k satisfies st /∈ Bρ(g) (true at t = 0 since ∥y − g∥ ≥ ρ, and at 1 ≤ t < k < T by definition of T ), so Dg (st) = 1 . On the other hand, ∥sk − g∥ ≥ ρ gives rg (sk) ≤ exp( −ρ2/(2 σ2)) . For 
+
+k = T (only when T < ∞), the product Q 
+
+> t<T
+
+Dg (st) = 1 as above and rg (sT ) ≤ 1, contributing 
+
+γT ≤ γ since T ≥ 1. For k > T , the product contains the factor Dg (sT ) = 0 . Summing, 
+
+X
+
+> k≥0
+
+γk Y
+
+> t<k
+
+Dg (st) rg (sk) ≤ 
+
+> T−1
+
+X
+
+> k=0
+
+γk exp( −a2/(2 σ2)) + 1{T < ∞} γT ≤ exp( −a2/(2 σ2)) 1 − γ + γ . 
+
+Taking expectations on both sides (Fubini–Tonelli [ 59 ], since all terms are nonnegative) and applying the trajectory formula above, 
+
+mπg (y) = X
+
+> k≥0
+
+γk(T kg rg )( y) ≤ exp( −a2/(2 σ2)) 1 − γ + γ < exp( −2η2/σ 2) < m πg (x) ,
+
+where the strict inequalities use Equations 14 and 15 respectively. Hence mπg (y)̸ = mπg (x).
+
+Case B: ∥y − gij ∥ < ρ for every j = 0 , . . . , d . Then Dgij (y) = 0 for all j and the same k = 0 
+
+collapse gives mπgij (y) = rgij (y) for all j. Now assume for contradiction that mπgij (x) = mπgij (y)
+
+for every j; then substituting mπgij (x) = rgij (x) by Equation 15, we have ∥x − gij ∥2 = ∥y − gij ∥2
+
+for every j. Expanding squared norms and subtracting the j = 0 identity from the j-th gives 
+
+2⟨gij − gi0, x − y⟩ = 0 , which reduces to η⟨ej , x − y⟩ = 0 for j = 1 , . . . , d , forcing x = y, a contradiction. Hence mπgij (x)̸ = mπgij (y) for some goal gij .Since (x, y ) was arbitrary, {mπg : g ∈ G} is point separating on S, and (11) implies that P is uniquely identified by (π, Q π , r, γ ). The last claim is immediate: if a goal set G′ satisfies G′ ⊇ S + Bρ(0) 
+
+then G′ ⊇ G , hence {mπg : g ∈ G ′} ⊇ { mπg : g ∈ G} , which inherits point separation. 
+
+Remark 1 (Finite, but large!) . For S ⊆ [−R, R ]d, a grid with linear spacing η/ √d along each axis covers S by η-balls: each grid cell is a hypercube of side η/ √d and diagonal η, hence fits in an η-ball. This gives an upper bound 
+
+N ≤ 2R√d/η d =⇒ |G| ≤ (d + 1) 2R√d/η d ,
+
+which is O(d exp( d log( d))) in the dimension. The construction, albeit finite, is therefore impractical, but serves to illustrate the stronger mathematical guarantees for Gaussian goals (finite goals) as opposed to indicator goals (infinite goals) in this setting. 
+
+D.4.3 Proof of Theorem 9 (Deterministic MDPs, Gaussian Goals with Analytic Regularity) 
+
+The construction of Theorem 8 relies on the smallness condition σ2 < ρ 2/(−4 log(1 − γ)) and a goal-ball termination function, producing a finite but exponentially-sized goal set (see Remark 1). Trading termination for real-analytic regularity on D and V π yields a sharper guarantee: L ≥ 2d + 1 
+
+Gaussian goals in generic position suffice for point separation, with no constraint on σ.36 Theorem 9. Fix any continuous deterministic MDP with open S ⊆ Rd, unconditional policy 
+
+π, σ > 0, Gaussian rewards rg (s) = exp( −∥ s − g∥2/(2 σ2)) , and assume that V π and D are real-analytic on S × Rd and S respectively. Then for every L ≥ 2d + 1 , the set of goal tuples 
+
+g = ( g1, . . . , g L) ∈ S L for which {mπgl }Ll=1 is point separating on S has full Lebesgue measure in SL. In particular, for Lebesgue-almost every L-element goal set G = {g1, . . . , g L} ⊆ S , we have ∃!P (Qπ ) for all L ≥ 2d + 1 .
+
+Proof. (i) Resolvent identity. Following the proof of Lemma 5, notice that the Markov operator 
+
+(T h )( s) := D(s) R 
+
+> S
+
+h(s′)P π (d s′ | s) is independent from g, and its adjoint T ∗ on finite signed measures satisfies ∥T ∗∥TV ≤ 1 and R 
+
+> S
+
+T h dη = R 
+
+> S
+
+hd( T ∗η). For each x ∈ S , define 
+
+μx := ( I − γT ∗)−1δx = X
+
+> t≥0
+
+γt(T ∗)tδx , (16) a finite non-negative Borel measure on S. By construction, μx satisfies the resolvent identity 
+
+μx − γT ∗μx = δx . (17) Using mπg = ( I − γT )−1rg from Lemma 4 and following the proof of Lemma 5 gives 
+
+mπg (x) = 
+
+Z
+
+> S
+
+mπg dδx = X
+
+> t≥0
+
+γt
+
+Z
+
+> S
+
+(T trg )d δx
+
+= X
+
+> t≥0
+
+γt
+
+Z
+
+> S
+
+rg d(( T ∗)tδx)=
+
+Z
+
+> S
+
+rg d
+
+ X 
+
+> t≥0
+
+γt(T ∗)tδx
+
+
+
+=
+
+Z
+
+> S
+
+rg dμx = ( μx ∗ φσ )( g) ,
+
+where φσ (u) := exp( −∥ u∥2/(2 σ2)) and rg (s′) = φσ (g − s′).
+
+(ii) Non-vanishing slices. For x, y ∈ S , we define the slice function hx,y : Rd → R by 
+
+hx,y (g) := mπg (x) − mπg (y) = (( μx − μy ) ∗ φσ )( g) ,
+
+which is real-analytic on Rd by Lemma 6 applied to the finite signed measure μx − μy . We prove that hx,y ̸ ≡ 0 for all x̸ = y via the contrapositive: if hx,y ≡ 0, then (μx − μy ) ∗ φσ ≡ 0, so 
+
+μx = μy by Lemma 7, and applying Equation 17 yields δx = δy , which implies x = y. Writing 
+
+Λ := {(x, x ) : x ∈ S} ⊆ S 2 for the diagonal, we conclude that hx,y ̸ ≡ 0 for all (x, y ) ∈ S 2 \ Λ.
+
+(iii) The bad set. In order to characterise the set of goal tuples that fail to induce point-separation, we define U := ( S2 \ Λ) × (Rd)L ⊆ R2d+Ld and the map H : U → RL by 
+
+H x, y, g :=  hx,y (g1), . . . , h x,y (gL) ,
+
+where g = ( g1, . . . , g L) is a tuple of L goals, and let 
+
+E := H−1(0) = {(x, y, g) ∈ U : hx,y (gl) = 0 ∀ l ∈ [L]} .
+
+Now notice that the Bellman family {mπgl }Ll=1 fails to be point-separating on S if and only if there exist x̸ = y ∈ S with hx,y (gl) = 0 for every l. Defining π2 : U → (Rd)L as the coordinate projection (x, y, g) 7 → g, this leads us to the “bad set” 
+
+B := π2(E) = {g ∈ (Rd)L : ∃ x̸ = y such that hx,y (gl) = 0 ∀ l ∈ [L]}
+
+of points g ∈ B that induce a “bad” Bellman family. Our goal is therefore to prove that B has Lebesgue measure zero in RLd . To do so, we will partition E into a countable union based on the 
+
+vanishing order of partial derivatives. 
+
+(iv) Partitioning E. For a multi-index β ∈ Nd, we write ∂βg to denote the corresponding partial derivative in the Rd-variable g, as distinct from the bold tuple g, with order |β| := Pdi=1 βi. For 
+
+(x, y, g) ∈ E and each l ∈ [L], we define 
+
+Ωl(x, y, g) := inf {| β| ≥ 0 : ∂βg hx,y (gl)̸ = 0 }
+
+37 as the corresponding vanishing order . Now real-analyticity of D, V π and r implies that mπg (x) = 
+
+rg (x) + γD (x)V π (x, g ) is jointly real-analytic in g and x, and in particular, (x, y, g ) 7 → hx,y (g)
+
+is real-analytic on the open set (S2 \ Λ) × Rd. Since hx,y ̸ ≡ 0 for x̸ = y by part (ii) , the identity theorem [ 58 ] implies that the Taylor series of hx,y at gl has at least one non-zero coefficient, so 
+
+Ωl(x, y, g) < ∞ for all (x, y, g) ∈ E. Moreover, Ωl(x, y, g) ≥ 1 since hx,y (gl) = 0 by assumption that (x, y, g) ∈ E. We thus have Ωl ∈ N (positive natural numbers), and can partition E as a countable (disjoint) union 
+
+E = [
+
+> N∈NL
+
+EN , EN := {(x, y, g) ∈ E : Ω l(x, y, g) = Nl ∀ l ∈ [L]} .
+
+(v) Local dimension. Fix N and p = (¯ x, ¯y, ¯g) ∈ EN. By definition, for each l ∈ [L], there is a multi-index βl ∈ Nd with |βl| = Nl and ∂βl 
+
+> g
+
+h¯x, ¯y (¯ gl)̸ = 0 . Since |βl| ≥ 1, pick a coordinate cl ∈ [d]
+
+with βcl 
+
+> l
+
+≥ 1, and let αl ∈ Nd be βl with its cl-th entry decremented by 1, so |αl| = Nl − 1 and 
+
+∂βl 
+
+> g
+
+= ∂gcl ∂αl 
+
+> g
+
+, (18) where gcl denotes the cl-th scalar coordinate of g ∈ Rd. We now define the map 
+
+Sp : U → RL , Sp
+
+ x, y, g 
+
+> l
+
+:= ∂αl 
+
+> g
+
+hx,y (gl) ,
+
+and its zero set 
+
+Zp := S−1 
+
+> p
+
+(0) = {(x, y, g) ∈ U : Sp(x, y, g) = 0 } .
+
+The motivation for this construction is that EN ⊆ Zp : any (x, y, g) ∈ EN satisfies Ωl(x, y, g) = Nl
+
+for every l, so for |αl| = Nl − 1 < N l, we have 
+
+Sp(x, y, g)l = ∂αl 
+
+> g
+
+hx,y (gl) = 0 ∀ l ∈ [L] ,
+
+hence (x, y, g) ∈ Zp. We now leverage this inclusion to show that Zp has the local structure of a real-analytic submanifold of U in a neighbourhood of p. First, the map Sp is real-analytic on U
+
+since partial derivatives of real-analytic functions are real-analytic. To invoke the implicit function theorem, we split the coordinates of U ⊆ R2d+Ld into w := ( gc1 
+
+> 1
+
+, . . . , g cL 
+
+> L
+
+) ∈ RL, comprising the 
+
+L scalar coordinates of g singled out by the indices c1, . . . , c L chosen above, and the remaining 
+
+2d + L(d − 1) coordinates v. This identifies U with an open subset of R2d+L(d−1) × RL via the bijection (x, y, g) ↔ (v, w ), and we write p = ( vp, w p) accordingly. The key is now to notice that the partial Jacobian DwSp(p) ∈ RL×L is diagonal: 
+
+DwSp(p) = 
+
+
+
+∂β1 
+
+> g
+
+h¯x, ¯y (¯ g1) · · · 0
+
+... . . . ...
+
+0 · · · ∂βL 
+
+> g
+
+h¯x, ¯y (¯ gL)
+
+ ,
+
+where the diagonal entries ∂gcl ∂αl 
+
+> g
+
+h¯x, ¯y (¯ gl) = ∂βl 
+
+> g
+
+h¯x, ¯y (¯ gl) use Equation 18, and are non-zero by definition of βl. In particular, DwSp(p) is invertible. Combined with Sp(p) = 0 , the real-analytic implicit function theorem [ 58 ] provides open neighbourhoods Vp ⊆ R2d+L(d−1) of vp and Wp ⊆ RL
+
+of wp, and a real-analytic function Gp : Vp → Wp such that Sp(v, G p(v)) = 0 for all v ∈ Vp, and moreover these are the only zeros of Sp in Vp × Wp:
+
+Zp ∩ (Vp × Wp) = {(v, G p(v)) : v ∈ Vp} .
+
+In other words, setting Up := Vp × Wp and ψp(v) := ( v, G p(v)) for brevity, the zero set Zp is the image of the real-analytic map ψp in a neighbourhood of p, namely, 
+
+Zp ∩ Up = ψp(Vp) .
+
+Returning to our set EN ⊆ Zp, we obtain the local inclusion EN ∩ Up ⊆ ψp(Vp).
+
+(vi) Measure-zero conclusion. The open set U ⊆ R2d+Ld is second-countable, so the open cover EN ⊆ S 
+
+> p∈EN
+
+Up admits a countable subcover EN ⊆ S 
+
+> n∈N
+
+Upn , and the local inclusion 
+
+EN ∩ Up ⊆ ψp(Vp) from part (v) gives 
+
+EN = EN ∩ [
+
+> n∈N
+
+Upn = [
+
+> n∈N
+
+EN ∩ Upn ⊆ [
+
+> n
+
+ψpn (Vpn ) .
+
+38 At last, we invoke the assumption L ≥ 2d + 1 to get 
+
+2d + L(d − 1) = 2 d + Ld − L ≤ 2d + Ld − (2 d + 1) < Ld , 
+
+so the parameterising domain Vpn ⊆ Rk with k := 2 d + L(d − 1) has dimension strictly less than Ld .In particular, since projection is also real-analytic, π2(ψpn (Vpn )) is the image of the real-analytic map 
+
+π2 ◦ ψpn : Vpn → RLd , from an open subset of Rk with k < Ld . By Sard’s theorem [ 60 ], or a direct proof covering Vpn with countably many cubes, it immediately follows that λLd (π2(ψpn (Vpn ))) = 0 
+
+for every n. Moreover, since π2 is monotonic and preserves unions, π2(EN) ⊆ S 
+
+> n
+
+π2(ψpn (Vpn )) .We sidestep a direct proof that π2(EN) is Lebesgue measurable by working with the Lebesgue outer measure λ∗
+
+> Ld
+
+, which is defined everywhere, agrees with the Lebesgue measure on measurable sets, and satisfies countable subadditivity [59]. Using this property, have 
+
+λ∗
+
+> Ld
+
+(π2(EN)) ≤ X
+
+> n∈N
+
+λ∗
+
+> Ld
+
+(π2(ψpn (Vpn ))) = 0 .
+
+Using union preservation once more, the bad set is given by B = π2(E) = S 
+
+> N∈NL
+
+π2(EN), hence 
+
+λ∗
+
+> Ld
+
+(B) ≤ X
+
+> N∈NL
+
+λ∗
+
+> Ld
+
+(π2(EN)) = 0 .
+
+Completeness of Lebesgue measure [ 59 ] guarantees that every set with Lebesgue outer measure zero is Lebesgue-measurable with measure zero, so we conclude λLd (B) = 0 . Now recall that a Bellman family {mπgl }Ll=1 is point-separating on S iff g /∈ B. Hence the goal tuples in SL that fail to induce point-separation are exactly B ∩ S L, of λLd -measure zero, and the complement has full Lebesgue measure in SL. In particular, λLd -almost every L-element goal set G = {g1, . . . , g L} ⊆ S satisfies 
+
+∃!P (Qπ ) since the diagonal S 
+
+> i̸=j
+
+{gi = gj } ⊆ S L has λLd -measure zero, so λLd -almost every tuple has distinct entries and corresponds to an L-element goal set. 
+
+D.5 Supporting Results Lemma 4 (Resolvent) . Let γ ∈ [0 , 1) , a measurable policy π, measurable termination function D
+
+and bounded measurable reward function r. For any goal g, let Tg be the Markov operator 
+
+(Tg h)( s) := Dg (s)
+
+Z
+
+> S
+
+h(s′)P πg (d s′ | s) , where P πg (· | s) := 
+
+Z
+
+> A
+
+P (· | s, a )πg (d a | s) .
+
+Then for each g ∈ G , mπg = ( I − γT g )−1rg = P 
+
+> t≥0
+
+γtT tg rg as bounded measurable functions on S.
+
+Proof. We note that the identity mπg = ( I − γT π )−1rg is essentially identical to Blier et al. [29 ,Theorem 2 ], but with a goal-conditioned policy baked in; we include the proof for completeness. First recall the Bellman equations 
+
+V πg (s) = 
+
+Z
+
+> A
+
+Qπg (s, a )π(d a | s, g ) and Qπg (s, a ) = 
+
+Z
+
+> S
+
+mπg (s′)P (d s′ | s, a )
+
+from Definition 2. Substituting, marginalising over π(· | s, g ) and multiplying by Dg (s):
+
+Dg (s)V πg (s) = Dg (s)
+
+Z
+
+> S
+
+mπg (s′)P πg (d s′ | s) = ( Tg mπg )( s) .
+
+Now mπg (s) = rg (s)+ γD g (s)V π (s, g ) = rg +γT g mπg , hence (I −γT g )mπg = rg . Since 0 ≤ D ≤ 1
+
+and P πg (S | s) = 1 , we have ∥Tg h∥∞ ≤ ∥ D∥∞ · ∥ h∥∞ ≤ ∥ h∥∞, so ∥Tg ∥∞→∞ ≤ 1. For any 
+
+γ < 1, this implies that I − γT g is invertible on bounded measurable functions, with Neumann series 
+
+(I − γT g )−1 = P 
+
+> t≥0
+
+γtT tg . Boundedness of rg ensures mπg is bounded. 
+
+Lemma 5 (Determining rewards ⇒ determining Bellman family) . Assume π(· | s, g ) = π(· | s)
+
+and D(s, g ) = D(s) are unconditional. If the family {rg : g ∈ G} is signed-measure-determining (Definition 5), then the Bellman family {mπg : g ∈ G} is measure determining (Definition 4). 
+
+39 Proof. By unconditionality, the Markov operator (Tg h)( s) := Dg (s) R 
+
+> S
+
+h(s′)P πg (d s′ | s) from Lemma 4 is independent from g, so we write T := Tg . Now let μ, ν ∈ ∆( S) satisfy R mπg dμ =R mπg dν for all g, and write η := μ − ν. Define the adjoint T ∗ on finite signed measures by 
+
+(T ∗η)( B) := 
+
+Z
+
+> S
+
+D(s)P π (B | s)η(d s)
+
+for any Borel set B ⊆ S . By Fubini’s theorem [ 59 ], T ∗η is a finite signed measure satisfying, for any bounded measurable function h, the following adjoint relation: 
+
+Z
+
+> S
+
+(T h )d η := 
+
+Z
+
+> S
+
+Z
+
+> S
+
+D(s)h(s′)P π (d s′ | s)η(d s)=
+
+Z
+
+> S
+
+h(s′)
+
+Z
+
+> S
+
+D(s)P π (d s′ | s)η(d s) = 
+
+Z
+
+> S
+
+h(s′)T ∗η(d s′) =: 
+
+Z
+
+> S
+
+hd( T ∗η) .
+
+Moreover, iterating this relation gives R (T th)d η = R hd( T tη) for all t ∈ N. Now ∥T ∗η∥TV ≤∥η∥TV since 0 ≤ D ≤ 1 and P π (S | s) = 1 , which implies γ∥T ∗∥TV < 1, so the resolvent 
+
+˜η := ( I − γT ∗)−1η = X
+
+> t≥0
+
+γt(T ∗)tη
+
+converges in total variation. Now, by Lemma 4, mπg = P 
+
+> t≥0
+
+γtT trg . Interchanging sum and integral (by dominated convergence), applying the adjoint relation and summing the Neumann series gives 
+
+Z
+
+> S
+
+mπg dη = X
+
+> t≥0
+
+γt
+
+Z
+
+> S
+
+(T trg )d η
+
+= X
+
+> t≥0
+
+γt
+
+Z
+
+> S
+
+rg d(( T ∗)tη)=
+
+Z
+
+> S
+
+rg d
+
+ X 
+
+> t≥0
+
+γt(T ∗)tη
+
+
+
+=: 
+
+Z
+
+> S
+
+rg d˜ η . 
+
+Notice the structural reduction from the Bellman family to the reward family: the LHS integrates 
+
+mπg against the original measure η, while the RHS integrates rg against the resolvent measure 
+
+˜η = ( I −γT ∗)−1η. To conclude the proof: by hypothesis, R 
+
+> S
+
+mπg dη vanishes for all g, so R rg d˜ η = 0 
+
+for all g. Since {rg } is determining for finite signed measures, ˜η = 0 . This immediately implies 
+
+η = ( I − γT ∗)˜ η = 0 , so we obtain μ = ν as required. 
+
+Lemma 6. Let μ be a finite signed measure on Rd and φσ (x) := exp( −∥ x∥2/(2 σ2)) with σ > 0.Then g 7 → (μ ∗ φσ )( g) is real-analytic on Rd.
+
+Proof. Write (μ ∗ φσ )( g) = R 
+
+> Rd
+
+φσ (g − s′) μ(d s′). For each s′ ∈ Rd, the map 
+
+z 7 → φσ (z − s′) = exp − 12σ2
+
+> d
+
+X
+
+> k=1
+
+(zk − s′
+
+> k
+
+)2
+
+!
+
+is the composition of polynomials and the exponential function, which are entire (i.e. holomorphic on Cd), so z 7 → φσ (z − s′) is entire for all s′ ∈ Rd. Now for any z = x + iy ∈ Cd with x, y ∈ Rd
+
+and ∥y∥∞ ≤ σ, we have 
+
+Re 
+
+> d
+
+X
+
+> k=1
+
+(zk − s′
+
+> k
+
+)2 =
+
+> d
+
+X
+
+> k=1
+
+(xk − s′
+
+> k
+
+)2 −
+
+> d
+
+X
+
+> k=1
+
+y2 
+
+> k
+
+≥ − 
+
+> d
+
+X
+
+> k=1
+
+y2 
+
+> k
+
+≥ − dσ 2 ,
+
+so |φσ (z − s′)| ≤ ed/ 2 uniformly in s′ ∈ Rd and z ∈ { z | ∥ Im z∥∞ ≤ σ}. The polydisc of radius σ
+
+centred at any g ∈ Rd, {z | | zk − gk| ≤ σ for all k}, lies entirely in the strip {z | ∥ Im z∥∞ ≤ σ},so by Cauchy’s estimate on polydiscs [58], 
+
+sup 
+
+> s′∈Rd
+
+∂αg φσ (g − s′) ≤ α!
+
+σ|α| ed/ 2
+
+40 for every multi-index α ∈ Nd. Since this bound is uniform in s′ and |μ|(Rd) < ∞, dominated convergence justifies differentiating under the integral, giving 
+
+∂αg (μ ∗ φσ )( g) ≤ α!
+
+σ|α| ed/ 2 |μ|(Rd) .
+
+A smooth function whose derivatives satisfy |∂αf | ≤ AB |α|α! uniformly on Rd has a convergent Taylor series at every point, hence is real-analytic on Rd [58]. 
+
+Lemma 7. Let η be a finite signed measure on Rd and φσ (x) := exp( −∥ x∥2/(2 σ2)) with σ > 0. If 
+
+(η ∗ φσ )( g) = 0 for all g ∈ Rd, then η = 0 .
+
+Proof. Taking Fourier transforms 
+
+bη(ξ) := 
+
+Z
+
+> Rd
+
+e−2πiξ ·s′
+
+η(d s′) and cφσ (ξ) = 
+
+Z
+
+> Rd
+
+e−2πiξ ·xφσ (x)d x , 
+
+the convolution theorem [59] gives bη · cφσ = \η ∗ φσ = b0 = 0 on Rd. Now 
+
+cφσ (ξ) = (2 πσ 2)d/ 2e−2π2σ2∥ξ∥2
+
+> 0
+
+for all ξ, so we conclude bη = 0 everywhere. Using the Jordan decomposition η = η+ − η− into finite positive Borel measures η± on Rd, linearity of the Fourier transform gives cη+ = cη− on Rd, so Bochner’s theorem [61] implies η+ = η−, and thus η = η+ − η− = 0 .
+
+Lemma 8. For σ > 0 and ψσ (x) := 1[∥x∥ < σ ] on Rd, the Fourier transform of ψσ is 
+
+cψσ (ξ) = σd/ 2 Jd/ 2(2 πσ ∥ξ∥)
+
+∥ξ∥d/ 2 ,
+
+where Jν denotes the Bessel function of the first kind, and the zero set {ξ ∈ Rd : cψσ (ξ) = 0 } has Lebesgue measure zero. 
+
+Proof. Since ψσ is radial, i.e. depends only on ∥x∥, the Fourier transform cψσ depends only on ∥ξ∥.Writing r = ∥ξ∥, we use the radial Fourier formula [62] 
+
+cψσ (ξ) = 2 πr −(d/ 2−1) 
+
+Z σ
+
+> 0
+
+Jd/ 2−1(2 πrt )td/ 2dt . 
+
+Substituting u = 2 πrt gives dt = d u/ (2 πr ), with t ∈ [0 , σ ] becoming u ∈ [0 , 2πrσ ], and applying the Bessel identity R T 
+
+> 0
+
+uν+1 Jν (u) d u = T ν+1 Jν+1 (T ) with ν = d/ 2 − 1 and T = 2 πrσ :
+
+cψσ (ξ) = 2πrd/ 2−1 × 1(2 πr )d/ 2+1 
+
+Z 2πrσ 
+
+> 0
+
+ud/ 2Jd/ 2−1(u) d u
+
+= 2πrd/ 2−1 × (2 πrσ )d/ 2Jd/ 2(2 πrσ )(2 πr )d/ 2+1 = σd/ 2 Jd/ 2(2 πσr )
+
+rd/ 2 ,
+
+which settles the first claim. First notice that ξ = 0 is not a zero of cψσ , since Jd/ 2(z)/z d/ 2 converges to 1/(2 d/ 2Γ( d/ 2 + 1)) ̸ = 0 as z → 0.a For ξ̸ = 0 , the Bessel function Jd/ 2 has a sequence of strictly increasing positive zeros {ad/ 2,k }k∈N with no finite accumulation point. In particular, cψσ (ξ) = 0 iff 
+
+Jd/ 2(2 πσr ) = 0 , i.e. r = ad/ 2,k /(2 πσ ) for some k ≥ 1. Hence Z is the countable union 
+
+[
+
+> k≥1
+
+{ξ : ∥ξ∥ = ad/ 2,k /(2 πσ )} ,
+
+where each set is a (d − 1) -dimensional sphere in Rd, which has Lebesgue measure zero. Countable unions of measure-zero sets have zero measure, so we are done. 
+
+> aThis is irrelevant for the conclusion of Lebesgue measure zero, but gives a neater characterisation of the zero set.
+
+41 Lemma 9. Let η be a finite signed measure on Rd and ψσ (x) := 1[∥x∥ < σ ] with σ > 0. If 
+
+(η ∗ ψσ )( g) = 0 for all g ∈ Rd, then η = 0 .
+
+Proof. Taking Fourier transforms, the convolution theorem [ 59 ] gives bη · cψσ = \η ∗ ψσ = b0 = 0 on 
+
+Rd. Letting Z = {ξ : cψσ (ξ) = 0 }, it follows that bη(ξ) = 0 for all ξ ∈ Rd \ Z. We claim that bη
+
+is continuous: if ξn → ξ in Rd, then e−2πiξ n·s′
+
+→ e−2πiξ ·s′
+
+pointwise, while |e−2πiξ n·s′
+
+| = 1 is integrable with respect to the finite measure |η|, so dominated convergence gives bη(ξn) → bη(ξ). By Lemma 8, Z has Lebesgue measure zero, so Rd \ Z is dense in Rd (every open ball has positive Lebesgue measure, so meets Rd \ Z). Continuity of bη combined with vanishing on the dense set 
+
+Rd \ Z gives bη ≡ 0 on Rd. As in the proof of Lemma 7, we conclude η = 0 .
+
+# E Reacher and MountainCar Experiments 
+
+In this section we provide additional details for the continuous-control experiments of Section 5. We train goal-conditioned Q-functions with PQN [ 20 ] and HER [ 35 ], then fit a world model Pφ to the converged Q-values via P -learning (Section 3). Throughout, the WM is parameterised as a residual MLP Pφ(s, a ) = s + hφ(s, a ), trained with ℓ1 Bellman residual loss function on independently sampled (s, a, g ) batches. The sampling distribution is given by d = μS ⊗ Unif( A) ⊗ Unif( G), with 
+
+μS and all hyperparameters specified per-environment in Table 3 and Table 4. To train policies on unseen goals using the WM, we run value iteration on ˆP over a discretised grid (resolution 50 for 
+
+Reacher , 200 for MountainCar ) to obtain a WM-derived policy. 
+
+Compute. All experiments were run on a single H100 GPU, leveraging vectorised environments implemented by Gymnax [ 63 ] in JAX [ 64 ]. PQN training takes < 5min per Reacher run and < 2min per MountainCar or FourRooms run; P -learning takes < 10s in all cases. The largest single experiment is the 42 -architecture Reacher sweep (Appendix E.2), totalling ∼35 GPU-hours. 
+
+E.1 Reacher 
+
+The Reacher state (θ1, θ 2, ω 1, ω 2, x, y ) ∈ R6 comprises the two joint angles θi, their angular velocities ωi, and the fingertip position (x, y ) = (cos θ1 + cos θ2, sin θ1 + sin θ2). Since the fingertip is a deterministic function of the joints, training goals only specify (x, y ) and the world model is restricted to the dynamic dimensions (θ1, θ 2, ω 1, ω 2). The state distribution μS used by P -learning is the env reset distribution, θi ∼ U [−π, π ] and ωi ∼ U [−1, 1] . The 2D action space is discretised into 9 actions (3 per joint) in order to train agents with PQN. Full hyperparameters in Table 3. 
+
+E.2 Reacher architecture sweep 
+
+We expand the architecture-capacity analysis behind Figure 4 by sweeping 42 architectures over depths D ∈ { 1, 2, 3, 4, 5, 6} and widths W ∈ { 32 , 64 , 128 , 256 , 512 , 1024 , 2048 }, with 10 seeds each, and record agent return and extracted WM error (MSE) over 20 checkpoints (a total of 420 
+
+Reacher runs and 8400 checkpoints). All hyperparameters match Table 3 apart from the Q-network depth and width, which we vary. We record three quantities: (i) the PQN return averaged over the four training goals, (ii) the WM dynamics MSE on a held-out grid, and (iii) the WM-derived policy return on three unseen goals ( far fingertip , target angle , target velocity ). Figure 6 in the main text shows the results across all 42 architectures at the end of training. Table 2 below reports the final-checkpoint correlations, confirming that more performant goal-conditioned agents tend to have more accurate implicit world models, and that these in turn yield higher zero-shot returns on unseen goals. Table 2: Final-checkpoint correlations across the n = 42 Reacher architectures, among PQN agent return, WM dynamics error, and WM-policy unseen-goal discounted return. 95% confidence intervals in brackets ( 2000 resamples).                 
+
+> Pair Spearman ρPearson r
+> PQN return vs. WM error −0.98 [ −0.99 ,−0.95] −0.82 [ −0.88 ,−0.76]
+> PQN return vs. WM-policy return +0 .95 [+0 .89 ,+0 .97] +0 .95 [+0 .92 ,+0 .97]
+> WM error vs. WM-policy return −0.96 [ −0.98 ,−0.91] −0.82 [ −0.88 ,−0.77]
+
+42 To investigate whether this correlation only holds at the end of training, we plot the PQN return and WM MSE during training in Figure 6, sliced at fixed depth D = 4 with varying W (top) and at fixed width W = 512 with varying D (bottom). The plots visually suggest a strong correlation between agent performance and WM accuracy, not only at the end of training but throughout. This is confirmed numerically by the Pearson and Spearman correlations over time reported in Figure 7.                
+
+> (a) PQN return, slice at D= 4 (one curve per W). (b) WM dynamics MSE (log-y), slice at D= 4 .
+> (c) PQN return, slice at W= 512 (one curve per D). (d) WM dynamics MSE (log-y), slice at W= 512 .
+
+Figure 6: PQN return (left) and WM dynamics MSE (right) vs training step for Reacher , with varying depth (top) / width (bottom) at fixed D = 4 and W = 512 . Mean ± SE over 10 seeds. 
+
+Figure 7: Pearson and Spearman correlations over time between Reacher agent return and WM MSE, across the n = 42 architectures, with 95% confidence intervals shown in shaded regions. 
+
+E.3 MountainCar 
+
+MountainCar has a 2D position-velocity state space S = [ −1.2, 0.6] × [−0.07 , 0.07] and three acceleration actions A = {left , none , right }, with initial position uniform on [−0.6, −0.4] and zero initial velocity. The state distribution μS used by P -learning is uniform over the full state space S.43 We consider two agents that share the hyperparameters listed in Table 4: a position-trained agent with 4 linearly spaced goals gx ∈ {− 1.2, −0.6, 0, 0.6} and indicator reward with σ = 0 .1, matching the original environment-provided goal for gx = 0 .6, and a velocity-trained counterpart Figure 5 with linearly spaced goals gv ∈ {− 0.07 , −0.023 , 0.023 , 0.07 } and threshold σ = 0 .01 to match the approximately 10x smaller velocity state space. All results are provided in the main text. Table 3: Hyperparameters for Reacher .
+
+Group Hyperparameter Value 
+
+Env State / action dims 6 / 9
+
+Number of goals |G| 4 (cardinal (x, y ) targets on unit circle) Reward / radius / termination indicator 1[∥s − g∥ < σ ], σ = 0 .2, terminate on arrival Discount γ / Episode length 0.99 / 100 steps PQN Network MLP, 6 × 2048 , layer norm, sigmoid outputs Backup 1-step TD ( λ = 0 )Optimiser RAdam, global-norm gradient clipping at 10 
+
+Learning rate 10 −4, linear decay Total env steps 10 7 (256 envs × 64 rollout steps × 610 updates) Minibatch / epochs per update 256 / 1
+
+ε-greedy schedule 1.0 → 0.1 over first 50% of training HER / resets k = 4 , “future” strategy; optimistic resets, ratio 16 
+
+WM Network MLP, 2 × 256 , tanh , no layer norm Output residual Pφ(s, a ) = s + hφ(s, a ) (init scale 0.01 )Optimiser Adam, no gradient clipping, weight decay 0
+
+Loss / LR ℓ1; 10 −4, linear decay Batch / training steps 1024 / 1000 
+
+Table 4: Hyperparameters for MountainCar . The velocity-conditioned agent of Figure 5 uses an identical configuration with goals gv ∈ {− 0.07 , −0.023 , 0.023 , 0.07 } and σ = 0 .01 .
+
+Group Hyperparameter Value 
+
+Env State / action dims 2 / 3
+
+Number of goals |G| 4 (x-positions {− 1.2, −0.6, 0, 0.6})Reward / radius / termination indicator 1[∥s − g∥ < σ ], σ = 0 .1, terminate on arrival Discount γ / Episode length 0.99 / 200 steps PQN Network MLP, 4 × 1024 , layer norm, sigmoid outputs Backup 1-step TD ( λ = 0 )Optimiser RAdam, global-norm gradient clipping at 10 
+
+Learning rate 10 −4, linear decay Total env steps 5 × 10 6 (256 envs × 64 rollout steps × 305 updates) Minibatch / epochs per update 256 / 1
+
+ε-greedy schedule 1.0 → 0.1 over first 50% of training HER / resets k = 4 , “random” strategy; optimistic resets, ratio 16 
+
+WM Network MLP, 2 × 256 , tanh , no layer norm Output residual Pφ(s, a ) = s + hφ(s, a ) (init scale 0.01 )Optimiser Adam, no gradient clipping, weight decay 0
+
+Loss / LR ℓ1; 10 −4, cosine decay Batch / training steps 4096 / 20 ,000 
+
+44 F FourRooms Experiments (Stochastic Deterministic) 
+
+Figure 8: Mean return ± SE (10 training seeds), for optimal (R⋆) vs WM-trained (RWM ) policies, on two unseen goals, in each FourRooms variant, for varying number of training goals |G| on the 
+
+x-axis. In the deterministic variant, recovery is exact at every |G| ≥ 1, in line with Theorem 2. In the windy variant, |G| = 4 training goals already drive the WM-derived policy to within ∼ 1% of optimal return. In the teleporting variant, |G| = 20 training goals – well short of the |G| = |S| = 68 
+
+worst case of Theorem 3 – also induce quasi-optimal policies on unseen goals. We complement the continuous-control experiments with a finite-state-space study in FourRooms 
+
+[ 34 ], a 11 × 11 gridworld divided into 4 × 4 rooms by interior walls and connected by single-cell corridors. After removing wall cells, the open state space has |S| = 68 cells, the action space is 
+
+A = {up , right , down , left } with |A| = 4 , and the episode horizon is Tmax = 200 . To cover the regimes of our finite-MDP theory (deterministic in Theorem 2; local in Theorem 5; stochastic in Theorem 3), we instantiate three variants of increasing stochasticity. Across all three, the WM-derived policy reaches near-optimal return on unseen goals from a small fraction of the |S| = 68 candidate training goals: 1 goal for deterministic, 4 for windy, and roughly 20 for teleporting – consistent with our identifiability theory in the first two cases, and exceeding our expectations in the third. To summarise the environments and results: 1. Deterministic (Figures 8 and 9). Each action moves the agent one cell in the chosen cardinal direction; walls keep the agent in place. A single training goal (|G| = 1 ) already drives ˆP to zero world-model MSE within 8M env steps and the WM-derived policy is exactly optimal on both unseen goals, in line with Theorem 2. 2. Windy (Figures 8 and 10). The chosen action is realised w.p. 12 , perturbed 90 ◦ counter-clockwise or clockwise each w.p. 14 . Here, |G| = 4 training goals already drive the WM-derived policy to within ∼ 1% of optimal return on both unseen goals. 3. Teleporting (Figures 8 and 11). Four cells (4 , 4) , (4 , 6) , (6 , 4) , (6 , 6) teleport the agent 
+
+uniformly into the 16 cells of the diagonally opposite 4 × 4 room. Here, |G| = 20 training goals – well short of the |G| = |S| = 68 worst case of Theorem 3 – already drive the WM-derived policy to within ∼ 0.1% of optimal return on both unseen goals. For each variant, the training goals are the first |G| cells of a fixed seeded permutation of the 68 states, so that the goal subsets nest as |G| grows; all experiments use 10 seeds. The reward function differs across variants in line with the regime each one targets: the windy and teleport variants use the indicator reward rg (s) = δgs , while the deterministic variant uses the noise-perturbed form rg (s) = δgs − ξgs with each ξgs ∼ U [0 , 1] drawn i.i.d. at initialisation, instantiating the noise-injection recipe stated as a corollary of Theorem 2. We take negative perturbation in order to guarantee that the optimal policy still seeks the goal, noting that rg (g) ≥ 0 ≥ rg (s) if s̸ = g.We extract ˆP from the trained PQN agent by P -learning via linear programming (LP), as defined in Appendix F.1, which we found to be fastest and most effective in this finite, one-hot-encoded setting, compared with function approximation. For the deterministic variant we use column matching, which is exact under the genericity condition of Theorem 2. As for MountainCar and Reacher , we evaluate ˆP directly via the MSE, and on two unseen goals via value-iteration on ˆP . Final-step returns on unseen goals are summarised in Figure 8, and Table 5 lists the shared hyperparameters. 45 Our results for each variant are shown via a four-panel figure (Figures 9 to 11): the transition MSE over training steps (one curve per |G| , with mean ± SE), the discounted return on each unseen goal over training steps, and a V ⋆ heatmap overlaid with the optimal (dashed red) and WM-derived (solid blue) trajectories at the final checkpoint with |G| = |G| max .
+
+F.1 P -learning via linear programming 
+
+Recall from Equation 2 that for finite MDPs, the P -learning fixed-point equation T πP (Q) = Q
+
+decouples per (s, a ) into the linear system M P (s, a ) = Q(s, a ), with M ∈ R|G|×|S| , Mlk =
+
+r(s′
+
+> k
+
+, g l) + γV (s′
+
+> k
+
+, g l), and unknown row P (s, a ) ∈ ∆|S| . For higher efficiency, we directly solve the per-(s, a ) system with constrained linear programming (LP) via SciPy, instead of using tabular 
+
+P -learning. The full sweep over |S||A| = 272 pairs is computed on a single CPU in < 1 second. 
+
+Local variant. The windy variant is an N -local MDP as defined in 4; we assume this local prior is known in order to illustrate our result for local MDPs, Theorem 5, namely, that N generic goals are sufficient to recover the world model. We therefore restrict the LP support to the cardinal-4
+
+neighbours of s plus s itself, reducing each per-(s, a ) LP from |S| = 68 to 5 unknowns. This is a geometric prior derived from the gridworld topology, which injects no information about the probability masses in the true kernel. 
+
+Deterministic variant. For deterministic FourRooms , we use column matching : ˆP (s, a ) = ek⋆ with 
+
+k⋆ = arg min k ∥M·,k − q∥1. This is the LP above with the simplex constraint replaced by a pure argmin; it is exact when M is column-injective (Theorem 2) and requires no LP solver. In all three cases, the LP solver is a numerical-stability and speed tradeoff over gradient-based 
+
+P -learning, not a methodological one: both target the same Bellman residual ∥T πP (Q) − Q∥2 and inherit the same identifiability guarantees of Appendix C. 
+
+F.2 Deterministic FourRooms          
+
+> (a) Transition MSE vs. training step. (b) Discounted return on one-unsafe .
+> (c) Discounted return on two-unsafe .
+> (d) V⋆heatmap with trajectories of optimal (dashed red) and WM-derived (solid blue) policies on both unseen goals, for an agent trained with |G| = 1 goal.
+
+Figure 9: Deterministic FourRooms : a single generic goal drives the extracted WM to zero error during training, in line with Theorem 2, and training a policy inside of it produces a policy (solid) that is optimal (dashed) on both unseen goals. 46 In the deterministic variant, we use the noise-perturbed reward rg (s) = δgs − ξgs with each ξgs ∼
+
+U [0 , 1] drawn i.i.d. at initialisation, which guarantees column-injectivity of M at any |G| ≥ 1 via Theorem 2. We train PQN on |G| ∈ { 1, 3, 5} goals over 10 seeds, recover ˆP via column matching, and evaluate by training policies in the WM for two unseen goals: one-unsafe (target (9 , 1) with ‘unsafe’ state (5 , 3) that terminates the episode with zero reward) and two-unsafe (target (9 , 9) with two ‘unsafe’ states (3 , 5) and (5 , 3) ). Consistent with Theorem 2, a single training goal already drives 
+
+ˆP to zero world model MSE within 8M env steps (Figure 9), and the WM-derived policy is optimal on both unseen goals for any number of goals |G| ≥ 1 (Figure 8). 
+
+F.3 Windy FourRooms          
+
+> (a) Transition MSE vs. training step. (b) Discounted return on one-unsafe .
+> (c) Discounted return on two-unsafe .
+> (d) V⋆heatmap with trajectories of optimal (dashed red) and WM-derived (solid blue) policies on both un-seen goals, for an agent trained with |G| = 4 goals.
+
+Figure 10: Windy FourRooms : the single-goal regime is no longer sufficient for stochastic dynamics, but |G| = 4 drives the WM-derived policy to within a few percent of the oracle on both unseen goals. The windy variant introduces local stochasticity: the chosen action is realised faithfully with probabil-ity 12 , and rotated 90 ◦ counter-clockwise or clockwise each with probability 14 . This places the variant in the local-stochastic regime of Theorem 5. We train PQN on |G| ∈ { 1, 2, 3, 4} training goals over 
+
+10 seeds, recover ˆP via the local LP, and evaluate on the same two unseen goals as the deterministic variant. As expected for stochastic dynamics, the single-goal regime is under-determined, but |G| ≥ 3
+
+already drives the WM-derived policy to within a few percent of the oracle on both goals (Figure 8). 
+
+F.4 Teleporting FourRooms 
+
+The teleporting variant injects fully-stochastic transitions at four teleport cells 
+
+(4 , 4) , (4 , 6) , (6 , 4) , (6 , 6) , each of which re-emits the agent uniformly into the 16 cells of the diagonally opposite 4 × 4 room; all other transitions are deterministic 4-connected moves. We train PQN on |G| ∈ { 5, 10 , 20 , 68 } goals over 10 seeds, and evaluate on one-unsafe (as before) and 
+
+teleport-unsafe (all four teleport cells “unsafe” giving zero reward and terminating the environment). Surprisingly, |G| ≥ 20 already induces a highly accurate WM, as further validated by a WM-derived policy which matches the optimal policy on both unseen goals to within 0.1% – well below the 
+
+|G| = 68 goals that Theorem 3 provides guarantees for. 47 (a) Transition MSE vs. training step. (b) Discounted return on one-unsafe .
+
+(c) Discounted return on two-unsafe .
+
+(d) V ⋆ heatmap with trajectories of optimal (dashed) and WM-derived (solid) policies on both unseen goals, for an agent trained with |G| = 20 goals. 
+
+Figure 11: Teleporting FourRooms : for |G| = 20 , the extracted WM produces quasi-optimal policies on OOD goals, well below our worst-case theoretical bound |G| ≥ |S| = 68 .Table 5: Hyperparameters shared across the three FourRooms variants. 
+
+Group Hyperparameter Value 
+
+Env State / action dims 68 / 4
+
+Number of training goals |G| {1, 3, 5} det., {1, 2, 3, 4} windy, {5, 10 , 20 , 68 } teleport Reward terminate on arrival; indicator rg (s) = δgs for windy/teleport; else perturbed rg (s) = δgs − ξ with ξ ∼ U [0 , 1] 
+
+Discount γ / Episode length 0.99 / 200 steps PQN Network MLP, 4 × 1024 , layer norm, sigmoid outputs Backup 1-step TD ( λ = 0 )Optimiser RAdam, global-norm gradient clipping at 10 
+
+Learning rate 10 −4, linear decay Total env steps 10 7 (256 envs × 64 rollout steps × 610 updates) Minibatch / epochs per update 256 / 1
+
+ε-greedy schedule 1.0 → 0.1 over first 50% of training HER / resets k = 4 , “future” strategy; optimistic resets, ratio 16 
+
+WM Method (det. / windy / tele.) column matching / local-prior LP / global LP LP norm ℓ1 (per-(s, a ), simplex-constrained) Local prior (windy) cardinal-4 neighbours ∪ { s}
+
+Sampling full sweep of the discrete grid S × A (272 pairs) 
+
+48

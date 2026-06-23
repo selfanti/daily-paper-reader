@@ -6,61 +6,86 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-22
-- 运行时间：2026-06-22 22:41:56 UTC
+- 最新运行日期：2026-06-23
+- 运行时间：2026-06-23 22:28:22 UTC
 - 运行状态：成功
-- 本次总论文数：13
-- 精读区：5
-- 速读区：8
+- 本次总论文数：22
+- 精读区：11
+- 速读区：11
 
 ### 今日简报（AI）
-今日精选13篇强化学习与AI agent论文，精读两篇高分工作聚焦在线目标条件强化学习的方向条件策略与环境多时间尺度抽象。  
-最值得精读《Direction-Conditioned Policies》和《Performance-Driven Environment Abstraction》，前者利用组合性子目标评分提升在线RL效率，后者提出多时间尺度学习实现性能驱动的环境抽象。  
-建议优先精读这两篇高分论文，它们在在线强化学习中的泛化与效率优化上具有直接实用价值。
-- 详情：[/202606/22/README](/202606/22/README)
+今日共收录22篇论文，精读11篇、速读11篇，重点聚焦强化学习与多智能体系统。最值得关注的是《Temporal Self-Imitation Learning》（9.0分）和《BARD-MARL: Byzantine-Agent Detection for Learned Communication》（9.0分），前者探索时间维度上的自我模仿，后者解决多智能体通信中的拜占庭攻击检测问题。建议优先精读这两篇，并延伸关注速读列表中《EvoRubrics》等通过对抗协同设计奖励机制的工作。
+- 详情：[/202606/23/README](/202606/23/README)
 
 ### 精读区论文标签
-1. [Direction-Conditioned Policies via Compositional Subgoal Scoring for Online Goal-Conditioned Reinforcement Learning](/202606/22/2606.16515v1-direction-conditioned-policies-via-compositional-subgoal-scoring-for-online-goal-conditioned-reinforcement-learning)  
+1. [Temporal Self-Imitation Learning](/202606/23/2606.19752v2-temporal-self-imitation-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：基于方向条件的目标导向强化学习
-2. [Performance-Driven Environment Abstraction with Multi-Timescale Learning](/202606/22/2606.17377v1-performance-driven-environment-abstraction-with-multi-timescale-learning)  
+   evidence：时间自我模仿学习用于智能体自我改进
+2. [BARD-MARL: Byzantine-Agent Detection for Learned Communication in Multi-Agent Reinforcement Learning](/202606/23/2606.20701v1-bard-marl-byzantine-agent-detection-for-learned-communication-in-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向决策的强化学习抽象方法
-3. [Steering Generative Reinforcement Learning into Stable Robotic Controller](/202606/22/2606.16572v1-steering-generative-reinforcement-learning-into-stable-robotic-controller)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：面向机器人控制的生成式强化学习
-4. [OpenClaw-Skill: Collective Skill Tree Search for Agentic Large Language Models](/202606/22/2606.16774v1-openclaw-skill-collective-skill-tree-search-for-agentic-large-language-models)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：自主智能体技能树构建用于决策和工具使用
-5. [WAM-RL: World-Action Model Reinforcement Learning with Reconstruction Rewards and Online Video SFT](/202606/22/2606.17906v1-wam-rl-world-action-model-reinforcement-learning-with-reconstruction-rewards-and-online-video-sft)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：世界-动作模型强化学习在线自我改进
+   evidence：面向学习通信的多智能体强化学习的拜占庭智能体检测
+3. [Heterogeneous Policy Networks for Composite Robot Team Communication and Coordination](/202606/23/2606.20962v1-heterogeneous-policy-networks-for-composite-robot-team-communication-and-coordination)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：多智能体强化学习用于异构机器人团队通信与协调
+4. [Sim2O: Efficient Offline-to-Online MARL via Joint Action Composition](/202606/23/2606.21085v1-sim2o-efficient-offline-to-online-marl-via-joint-action-composition)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：离线到在线多智能体强化学习合作
+5. [AdaMem: Learning What to Remember for Personalized Long-Horizon LLM Agents](/202606/23/2606.21144v1-adamem-learning-what-to-remember-for-personalized-long-horizon-llm-agents)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：个性化智能体的自适应记忆
+6. [ARCO: Adaptive Rubric with Co-Evolution for Multi-Step LLM-Based Agents](/202606/23/2606.21262v1-arco-adaptive-rubric-with-co-evolution-for-multi-step-llm-based-agents)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：提出量表与智能体共同进化以实现多步适应
+7. [Backpropagating Through Simulation: Analytic Policy Gradients for Sample and Learning Efficient Differentiable Continuous Control](/202606/23/2606.21525v1-backpropagating-through-simulation-analytic-policy-gradients-for-sample-and-learning-efficient-differentiable-continuous-control)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：提出解析策略梯度，一种策略梯度方法
+8. [Stationary Robust Mean-Field Games under Model Mismatches](/202606/23/2606.22579v1-stationary-robust-mean-field-games-under-model-mismatches)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：模型失配下的鲁棒平均场博弈多智能体强化学习合作
+9. [Scalable Maximum Entropy Reinforcement Learning for Diffusion Policies via Adjoint Matching](/202606/23/2606.22630v1-scalable-maximum-entropy-reinforcement-learning-for-diffusion-policies-via-adjoint-matching)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：扩散策略的策略梯度方法
+10. [Distilling Collaborative Dynamics into Latent Space for Implicit Coordination in Decentralized Multi-Agent Manipulation](/202606/23/2606.22982v1-distilling-collaborative-dynamics-into-latent-space-for-implicit-coordination-in-decentralized-multi-agent-manipulation)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：去中心化多智能体隐式协调方法
+11. [Group-Graph Policy Optimization for Long-Horizon Agentic Reinforcement Learning](/202606/23/2606.22995v1-group-graph-policy-optimization-for-long-horizon-agentic-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向智能体强化学习的组图策略优化
 
 ### 速读区论文标签
-1. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/22/2606.16591v2-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
+1. [Select-to-Act: Hierarchical Reinforcement Learning via Adaptive Language Guidance](/202606/23/2606.22350v1-select-to-act-hierarchical-reinforcement-learning-via-adaptive-language-guidance)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：利用语言指令的层次强化学习
+2. [EvoRubrics: Dynamic Rubrics as Rewards via Adversarial Co-Evolution for LLM Reinforcement Learning](/202606/23/2606.23038v1-evorubrics-dynamic-rubrics-as-rewards-via-adversarial-co-evolution-for-llm-reinforcement-learning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：共同进化强化学习用于动态奖励
+3. [Self-Evolution for Multi-Turn Tool-Calling Agents via Divergence-Point Preference Learning](/202606/23/2606.23112v1-self-evolution-for-multi-turn-tool-calling-agents-via-divergence-point-preference-learning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：多轮工具调用智能体的自我进化
+4. [HoloAgent-0: A Unified Embodied Agent Framework with 3D Spatial Memory](/202606/23/2606.23565v1-holoagent-0-a-unified-embodied-agent-framework-with-3d-spatial-memory)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：具身智能体的3D空间记忆
+5. [Artificial collectives of specialists and generalists excel at different tasks](/202606/23/2606.20877v1-artificial-collectives-of-specialists-and-generalists-excel-at-different-tasks)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：通过工具发现实现自主决策
-2. [When Does Trajectory-Level Supervision Permit Efficient Offline Reinforcement Learning?](/202606/22/2606.18531v1-when-does-trajectory-level-supervision-permit-efficient-offline-reinforcement-learning)  
+   evidence：多代理集体性能研究
+6. [PulseCX: Breaking the Closed-World Assumption in Real-Time CX](/202606/23/2606.21124v1-pulsecx-breaking-the-closed-world-assumption-in-real-time-cx)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：离线强化学习在轨迹级监督下的理论基础
-3. [BRICKS-WM: Building Reusability via Interface Composition Kinetics for Structured World Models](/202606/22/2606.16489v1-bricks-wm-building-reusability-via-interface-composition-kinetics-for-structured-world-models)  
+   evidence：面向对话智能体的自进化记忆
+7. [Horizon Adaptive Offline Policy Learning via Value Stitching](/202606/23/2606.21136v1-horizon-adaptive-offline-policy-learning-via-value-stitching)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：具有动态 horizon 组成的离线策略学习
+8. [Inverting the Bellman Equation: From $Q$-Values to World Models](/202606/23/2606.21173v1-inverting-the-bellman-equation-from-q-values-to-world-models)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：从价值函数提取世界模型的理论
+9. [Towards Scalable Customization and Deployment of Multi-Agent Systems for Enterprise Applications](/202606/23/2606.18502v1-towards-scalable-customization-and-deployment-of-multi-agent-systems-for-enterprise-applications)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：模块化世界模型用于模型基RL，提高可复用性
-4. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/22/2606.16591v1-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
+   evidence：多智能体系统定制化与部署框架
+10. [Reward-free Pretraining for Reinforcement Learning via Occupancy Coverage Maximization](/202606/23/2606.21271v1-reward-free-pretraining-for-reinforcement-learning-via-occupancy-coverage-maximization)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：LLM智能体工具发现用于自主决策
-5. [Reversal Q-Learning](/202606/22/2606.17551v1-reversal-q-learning)  
+   evidence：通过占用覆盖率最大化实现无奖励强化学习预训练
+11. [A Reward-Petri-Net Interpretation of Temporal Behavior Trees](/202606/23/2606.21350v1-a-reward-petri-net-interpretation-of-temporal-behavior-trees)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：基于流匹配和逆向轨迹的新离策略强化学习算法
-6. [Maturing Markov Decision Processes: Decision Making under Increasing Information and Shrinking Action Sets](/202606/22/2606.18820v1-maturing-markov-decision-processes-decision-making-under-increasing-information-and-shrinking-action-sets)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：信息与动作集非对称的决策制定
-7. [Multi-Granular Attention-Driven Reinforcement Learning Framework for Web Intelligent Enhancement Systems](/202606/22/2606.19690v1-multi-granular-attention-driven-reinforcement-learning-framework-for-web-intelligent-enhancement-systems)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：用于自主Web智能体的强化学习，结合注意力与语义图
-8. [A Model-Driven Approach for Developing Families of Reinforcement Learning Environments](/202606/22/2606.20324v1-a-model-driven-approach-for-developing-families-of-reinforcement-learning-environments)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：模型驱动的RL环境族开发
+   evidence：时序行为树的Reward-Petri-Net解释用于强化学习
 
 
 <div class="dpr-home-promo-card">
