@@ -1,0 +1,920 @@
+Title: BiPACE: Bisimulation-Guided Policy Optimization with Action Counterfactual Estimation for LLM Agents
+
+URL Source: https://arxiv.org/pdf/2606.25556v1
+
+Published Time: Thu, 25 Jun 2026 00:42:50 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# BiPACE : Bisimulation-Guided Policy Optimization with Action Counterfactual Estimation for LLM Agents 
+
+## Hanyang Wang 1, † Weijieying Ren 3 Yuxiang Zhang 2 Ding Cao 4
+
+## Zhizhao Zeng 5 Ke Zeng 5 Tianxiang Zhao 2,* 1University of Chicago 2The Hong Kong University of Science and Technology (Guangzhou) 
+
+> 3
+
+## Stanford University 4University of Science and Technology of China 5Meituan 
+
+hanyangw@uchicago.edu wjyren@stanford.edu yxzhang25128@gmail.com caoding@mail.ustc.edu.cn 
+
+{zengzhizhao,zengke02 }@meituan.com tianxiangz@hkust-gz.edu.cn 
+
+> †
+
+First author *Corresponding author 
+
+Abstract 
+
+Stepwise group-based RL is an attractive way to train long-horizon LLM agents without a learned critic: it reuses multiple sampled rollouts to estimate local advantages. Its weakness is less visible but more fundamental: every group-relative estimator assumes that the steps it compares are equivalent for credit assignment. We show that current agentic variants violate this assumption through a state-action credit mismatch . The observation-hash partition is overly fine on the state side, creating singleton groups with zero step-level signal, while a single within-group mean is too coarse on the action side, mixing state-value estimation with action-specific credit. We introduce BiPACE (Bisimulation-Guided Policy Optimization with Action Counterfactual Estimation ), a drop-in advantage estimator that fixes both sides without adding a critic, auxiliary loss, or extra rollouts. BiGPO clusters steps by cosine distance in the actor’s own hidden-state geometry, an empirical, policy-induced proxy for bisimulation that substantially lowers the singleton rate left by observation hashing. PACE then recenters returns within each behavioral cluster using action-conditioned peer baselines; its Q-style instance estimates a local bQ(s, a ) − bV (s) nonparametrically. On ALFWorld /Qwen2.5-7B, BiPACE Q raises overall validation success from GiGPO ’s reported 90 .8 to 
+
+97 .1±0.9 over three seeds, and crosses the 95% threshold on every seed, which GiGPO never does within the same budget. On Qwen2.5-1.5B it reaches 93 .5±1.2 versus GiGPO ’s 86 .7, and on WebShop and 
+
+TextCraft it improves over GRPO and GiGPO at both model scales. The change is small in systems terms: the measured BiPACE-specific share is 11 .3% of a single ALFWorld /Qwen2.5-7B training-step wall time. Yet it changes the estimator’s comparison unit from surface identity to approximate behavioral equivalence plus action-side counterfactuals. The code is available at https://github.com/TianxiangZhao/BiPACE. 
+
+1. Introduction 
+
+Reinforcement learning (RL) post-training of large lan-guage models has recently moved beyond single-turn reasoning into the harder agentic regime: long-horizon, partially observed, multi-turn interaction with tools, web pages, simulated households, and games. The central obstacle is assigning a sparse terminal reward to the in-termediate decisions that made the trajectory succeed or fail [Wang et al., 2025]. Group-based RL methods such as RLOO-style leave-one-out estimators [Kool et al., 2019, Ahmadian et al., 2024] and GRPO [Shao et al., 2024] are appealing because they avoid a learned value network. Recent agentic variants such as GiGPO [Feng et al., 2025] and HGPO [He et al., 2026] push this idea to the step level by comparing rollout steps inside groups. Their performance, however, depends on a choice that is often treated as an implementation detail: which steps are grouped together for that comparison. These estimators share an implicit assumption: if two step records are placed in the same group, then they are interchangeable for credit assignment. In long-horizon agent environments, this assumption fails in two coupled ways. State side: observation identity is a convenient but overly sparse proxy for value equivalence. Group baselines are reliable when grouped states share continuation value, a condition formalized by bisimulation [Givan et al., 2003, 1                                             
+
+> arXiv:2606.25556v1 [cs.CL] 24 Jun 2026 050 100 150 200
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> validation success (%)
+> (a) ALFWorld · Qwen2.5-1.5B
+> GiGPO
+> BiPACE Q(ours)
+> 94.5% (+4.7 pp)
+> 025 50 75 100 125 150
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> (b) WebShop · Qwen2.5-7B
+> 79.7% (+6.2 pp)
+> 020 40 60 80 100
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> (c) TextCraft · Qwen2.5-1.5B
+> 75.0% (+6.2 pp)
+> 50% 60% 70% 80% 90%
+> success threshold
+> 0
+> 50
+> 100
+> 150
+> 200
+> steps to reach
+> 1.33× 1.28× 1.18×
+> 1.27×
+> never→150
+> 40% 50% 60% 70% 75%
+> success threshold
+> 0
+> 50
+> 100
+> 150
+> 1.57× 1.38×
+> 1.55×
+> 1.24×
+> never→140
+> 30% 40% 50% 60% 70%
+> success threshold
+> 0
+> 50
+> 100
+> 1.33×
+> 2.00× 1.20×
+> 1.67× never→90 Figure 1: BiPACE Qvs. GiGPO across benchmarks and model scales. Top: validation success over training; dots and badges mark each method’s peak and BiPACE Q’s gap over GiGPO .Bottom: steps to reach a fixed success threshold (lower is better), with speedups steps GiGPO /steps BiPACE Q; hatched bars mark thresholds never reached. Multi-seed aggregates are in Tables 2 and 3.
+
+Ferns et al., 2004]; observation keys impose a strictly finer equivalence than bisimulation requires, splitting many reusable states into isolated singletons. Action side: 
+
+even when states are comparable, the usual within-group mean assigns the same baseline to all actions, ignoring that different actions from the same state can induce different futures. We call this two-sided failure the state-action credit mismatch .This mismatch is measurable during training via the singleton fraction, independently of the final task reward. In our GiGPO reproduction on ALFWorld , 34 .2% of step groups are singletons at iteration 10 and the fraction remains 20 .7% at iteration 140. Since singleton clusters produce zero step-level advantage, exact observa-tion hashes discard local signal when the policy needs it most. On TextCraft , where observations are sparser, exact hashes isolate even more records and expose fewer matched pairs (detailed in Sec. 4.2). We propose BiPACE (Bisimulation-Guided Policy Optimization with Action Counterfactual Estimation ), a drop-in advantage estimator that treats step-level credit as two local problems: state aggregation and action-conditioned credit assignment. On the state side , BiGPO 
+
+replaces observation hashing with cosine clustering on the actor’s normalized hidden state ϕθ (st) at a fixed late layer (Apps. H and I), an empirical proxy for the be-havioral metrics of Castro et al. [2021]. On the action side , PACE partitions each behavioral cluster by the executed action and augments the cluster-mean baseline with a same-action peer estimate, forming a nonpara-metric bQ(s, a ) − bV (s) advantage inside each cluster. The two halves are coupled: PACE requires behaviorally com-parable state peers, which BiGPO provides. Our main contributions are summarized as follows: 
+
+• Identifying state-action credit mismatch. We show that stepwise group-based RL conflates state aggregation with action-conditioned credit assign-ment, and that exact observation hashing is the wrong state equivalence relation, splitting reusable states into singletons that carry no step-level signal. 
+
+• Proposing a drop-in advantage estimator. We introduce BiPACE , which makes two local replace-ments: BiGPO clusters actor-hidden fingerprints as a policy-induced bisimulation proxy, and PACE adds an action-conditioned peer baseline inside each cluster. 
+
+• Analyzing the estimator. We bound the state-side bias by O(ε) under a MICo -Lipschitz assump-tion, recover GiGPO as the ε= 0 limit, quantify the singleton signal loss, and show Q-style PACE is exact under exact bisimulation. 
+
+• Achieving strong empirical performance. Bi-PACE Q gains +6 .3pp on ALFWorld /Qwen2.5-7B (97 .1±0.9 vs. 90 .8) and +6 .8pp on 1.5B, and improves over GRPO and GiGPO on WebShop 
+
+2and TextCraft at both scales, at only 11 .3% step overhead. 
+
+2. Related Work 
+
+Group-relative RL for LLM agents. BiPACE builds on critic-free group-relative RL, including GRPO [Shao et al., 2024], GiGPO [Feng et al., 2025], and HGPO [He et al., 2026]. These methods compare sampled returns inside groups but keep the state equivalence relation discrete; BiPACE replaces that relation with a policy-induced behavioral partition. The state side follows the value-preserving bisimulation view [Ferns et al., 2004, Castro et al., 2021, Zhang et al., 2020], while PACE gives a nonparametric analogue of action-conditioned counter-factual baselines studied in COMA/CCPO and related work [Foerster et al., 2018, Li et al., 2026b]. Other agent-credit methods alter the learning signal or optimizer [Tan et al., 2026, Liu et al., 2025, Wei et al., 2025, Yu et al., 2025]; BiPACE instead changes which step records are compared. Extended discussion appears in App. A. 
+
+3. Method: BiPACE 
+
+This section first isolates the estimation issue that Bi-PACE targets, then describes the two local replacements that constitute the method. 
+
+3.1 Estimator setup 
+
+For each prompt group p, GRPO samples trajectories 
+
+{τ (g)}Gg=1 and standardizes terminal returns within the group, 
+
+Aep (τ (g)) = R(τ (g)) − μp
+
+σp + δ , μp, σ p over {R(τ (g))}Gg=1 .
+
+(1) 
+
+GiGPO adds a step-level term by collecting all step records in the same prompt group and partitioning them by exact observation hash: Cp =  {i : hash (s(i)) = h} :
+
+h ∈ Hash ({s(i)}i∈p) . For each cluster C ∈ C p, it nor-malizes the return-to-go R(i) 
+
+> t
+
+locally: 
+
+Astep (i) = R(i) 
+
+> t
+
+− μC
+
+σC + δ , i ∈ C. (2) 
+
+BiPACE keeps this training loop intact and replaces only the partition and the local baseline used by Eq. (2). Extra background on the agent decision process, GRPO, and bisimulation appears in App. B. 
+
+3.2 The state-action credit mismatch 
+
+GiGPO improves over trajectory-level GRPO by com-puting a step-level advantage within groups of rollout steps that share the same current observation. This de-sign assumes that two step records in the same group are exchangeable for credit assignment. In agentic tasks, the assumption breaks in two complementary ways. 
+
+State side. Exact observation identity is too strict a proxy for value equivalence: observations that differ only in surface form land in different groups even when they induce the same continuation value. When the exact-key partition produces singleton groups, the within-group baseline in Eq. (2) degenerates to zero and the step contributes no step-level gradient. 
+
+Action side. Even when a group contains behav-iorally comparable states, computing a single cluster mean evaluates every step against the same number, re-gardless of which action was taken. Two actions from the same state neighborhood can lead to different fu-tures, so their advantages should differ; but subtracting a common mean cannot distinguish between them. The desired quantity is the local advantage Q(s, a )−V (s): the cluster mean serves as a state-value estimate V (s), and pooling same-action peers yields an action-value estimate 
+
+Q(s, a ), isolating action-specific credit without changing the state-level baseline. 
+
+BiPACE addresses these two sides jointly. On the state side, BiGPO replaces the observation-hash parti-tion with a behavioral partition derived from the actor’s own hidden states. On the action side, PACE augments the cluster-mean baseline with a same-action peer esti-mate, forming the Q(s, a ) − V (s) advantage inside each cluster. 
+
+3.3 BiPACE overview 
+
+BiPACE in one line. For each prompt group, Bi-PACE first clusters step records by the actor’s own hidden-state geometry ( BiGPO ), then computes the step-level baseline inside each cluster conditional on the executed action (PACE). Everything outside the advantage estimator is identical to GiGPO .
+
+Figure 2 traces the full pipeline; the two components compose rather than simply stack, as PACE’s per-action baseline requires a behaviorally coherent peer pool that 
+
+BiGPO provides. Sections 3.4 and 3.5 detail each in turn. 
+
+3.4 State-side grouping with BiGPO 
+
+The key insight behind BiGPO is that the actor’s own hidden states already encode behavioral similarity: obser-vations the policy processes identically cluster tightly in late-layer representation space, regardless of their surface form. Exact observation hashing ignores this geometry (treating any surface-distinct observations as incompara-ble even when the policy responds to them identically; Sec. 3.2), and routinely discards the local signal that step-level RL is designed to exploit. BiGPO replaces the exact hash with a soft behavioral partition derived from 3Rollout Collection (G=4) BiGPO — Actor -Hidden Clustering PACE — Action -Conditioned Baseline  
+
+> step
+> records clusters
+
+[···] 𝒔 𝒕 
+
+> (𝟏 )
+
+𝑅 (#)
+
+[···] 
+
+[···] 
+
+[···]                                
+
+> 𝑎𝑙𝑙 𝑠 ₜ(ⁱ),𝑎 ₜ(ⁱ),𝑅 ₜ(ⁱ)𝑓𝑟𝑜𝑚 𝑜𝑛𝑒 𝑔𝑟𝑜𝑢𝑝
+> 𝐸𝑥𝑡𝑟𝑎𝑐𝑡 ℎ𝑖𝑑𝑑𝑒𝑛 𝑠𝑡𝑎𝑡𝑒 𝑓 #𝑠 $𝑎𝑡 𝑙𝑎𝑦𝑒𝑟 −8
+> 𝑁𝑜𝑟𝑚𝑎𝑙𝑖𝑧𝑒 :∅#(𝑠 )=𝑓 #𝑠 /∥𝑓 #(𝑠 )∥%
+> 𝐺𝑟𝑒𝑒𝑑𝑦 𝑐𝑜𝑠𝑖𝑛𝑒 𝑐𝑙𝑢𝑠𝑡𝑒𝑟 :𝑗𝑜𝑖𝑛 𝑖𝑓 𝑑 &'( ≤𝜀
+
+C₁ {1,2,3} C₂ {4}                                             
+
+> 12
+> 3
+> 4
+> 𝑑 !"# ≤ε
+> 𝑛𝑜𝑟𝑚𝑎𝑙𝑖𝑧𝑒𝑑 ℎ𝑖𝑑𝑑𝑒𝑛 −𝑠𝑡𝑎𝑡𝑒 𝑠𝑝𝑎𝑐𝑒 (∅$)
+> ①②③④
+> 𝑇𝑎𝑘𝑒 𝑐𝑙𝑢𝑠𝑡𝑒𝑟 𝐶 ∈𝐶ᴮⁱᴳᴾᴼ ,𝑒 .𝑔 .𝐶₁ ={1,2,3}
+> 𝐴𝑐𝑡𝑖𝑜𝑛 𝑘𝑒𝑦 𝑥 (𝑎ᵢ ):𝑓𝑖𝑟𝑠𝑡 −𝑁 −𝑡𝑜𝑘𝑒𝑛 ℎ𝑎𝑠ℎ 𝑜𝑟 <𝑎𝑐𝑡𝑖𝑜𝑛 >𝑡𝑎𝑔
+> 𝒄𝒍𝒖𝒔𝒕𝒆𝒓 𝑪 ₁(𝒃𝒊𝒔𝒊𝒎 −𝒆𝒒𝒖𝒊𝒗𝒂𝒍𝒆𝒏𝒕 𝒔𝒕𝒂𝒕𝒆𝒔 )
+> 𝑪₁⁼⁽ⁱ⁾ ={𝟏 ,𝟐 }
+> 𝑠𝑎𝑚𝑒 𝑎𝑐𝑡𝑖𝑜𝑛 𝑎 ₁
+> 12
+
+R⁽¹⁾ R⁽²⁾       
+
+> 𝑪₁ ≠⁽ⁱ⁾ ={𝟑 }
+> 𝑑𝑖𝑓𝑓 .𝑎𝑐𝑡𝑖𝑜𝑛 𝑎₂
+> 3
+
+R⁽³⁾ 
+
+Q̂ (s,aᵢ) = 𝑚𝑒𝑎 𝑛 { R⁽ʲ⁾ : j
+
+∈ C⁼⁽ⁱ⁾ }
+
+V̂ (2) = 𝑚𝑒𝑎𝑛 {R⁽ʲ⁾ : j
+
+∈ C }}
+
+Â𝒊  
+
+> 𝒔
+
+= Q̂ (s,aᵢ) − V̂ (B)
+
+𝑅 (C)
+
+𝑅 (D)
+
+𝑅 (E)    
+
+> ,𝒂 𝒕
+> (𝟏 )
+> 𝒔 𝒕
+> (𝟑 )
+> ,𝒂 𝒕
+> (𝟑 )
+> 𝒔 𝒕
+> (𝟏 )
+> ,𝒂 𝒕
+> (𝟏 )
+> 𝒔 𝒕
+> (𝟒 )
+> ,𝒂 𝒕
+> (𝟒 )
+
+heat some egg and put it in 
+
+countertop. Figure 2: Method overview. BiPACE makes two local replacements to the GiGPO step-level estimator. Left: A prompt group provides step records ( s(i) 
+
+> t
+
+, a (i) 
+
+> t
+
+, R (i) 
+
+> t
+
+) across G rollouts; chip colors encode bisimulation class. Middle: BiGPO extracts the actor’s normalized hidden state ϕθ (s) at a fixed late layer and clusters by cosine distance, forming behavioral state neighborhoods C1, C2, . . . Right: PACE splits each cluster by the executed action key and computes a per-action peer baseline; the Q-style form estimates bQ(s, a ) − bV (s). Only the step-level advantage changes; the PPO objective is unchanged. 
+
+this representation. Concretely, let fθ : S → RD be the function that maps the current prompt st to the actor LLM’s hidden state at the final prompt token, taken at a fixed late intermediate layer chosen once per backbone (layer −8 for Qwen2.5-7B, −12 for Qwen2.5-1.5B; calibration details in Apps. H and I). We use the normalized representation 
+
+ϕθ (s) = fθ (s)/∥fθ (s)∥2. This representation moves with the policy being optimized and requires no learned critic or auxiliary model; it is obtained via a dedicated actor forward pass with hidden-state extraction enabled, whose cost is measured in Sec. 4.6. For each prompt group p, BiGPO computes the par-tition 
+
+CBiGPO  
+
+> p
+
+= Cluster ε
+
+ {ϕθ (s(i)) : i ∈ p}, d cos 
+
+, (3) where dcos (u, v ) = 1 − u⊤v and Cluster ε is a single-pass greedy procedure: each record joins the nearest existing centroid if its cosine distance is ≤ ε, otherwise it seeds a new cluster, and the joined centroid is updated online; full pseudocode is in App. D. The GiGPO step advantage in Eq. (2) then applies unchanged, with Cp replaced by 
+
+CBiGPO  
+
+> p
+
+. Appendix C bounds the resulting bias: under a MICo -Lipschitz assumption on the embedding, the replacement trades an O(ε) bias for many more non-singleton step groups. 
+
+Relation to prior methods. Setting ε= 0 and using a one-hot observation hash as ϕ exactly recovers GiGPO ;replacing the hash with a history-aware signature re-covers HGPO . The GiGPO /HGPO family thus uses hand-designed discrete fingerprints, while BiGPO uses the policy’s own continuous fingerprint with coarsening controlled by ε.
+
+Embedder design space. The estimator only re-quires a fingerprint ϕ, leaving the embedder open. We examine two backends along an effort/fidelity axis: Hash-Ngram , a zero-dependency character-n-gram hash that groups by lexical surface form, and Actor-Hidden , the policy LLM’s own hidden state. HashNgram is a policy-agnostic control: it isolates whether the gain comes from the policy-induced geometry or merely from coarsening the partition; Actor-Hidden is the main method because it changes with the policy being optimized. 
+
+3.5 Action-conditioned baseline with PACE 
+
+PACE realizes the Q(s, a )−V (s) decomposition identified in Sec. 3.2: within each behavioral cluster, the cluster mean estimates V (s) and a same-action peer mean es-timates Q(s, a ), isolating action-specific credit without changing the state-level baseline. Concretely, PACE splits each behavioral cluster by the executed action. For each action a, let κ(a) ∈ Z be an action key. We use two practical keys: first-token , the hash of the first N =8 response tokens, and action-tag , the hash of the body of <action>...</action> . The latter is semantically cleaner when the environment exposes parseable actions; the former is cheap and robust when parsing is unavailable. Inside a cluster C ∈ CBiGPO  
+
+> p
+
+, write ki = κ(a(i)), 
+
+C=(i) = {j ∈ C : kj = ki}, and C̸ =(i) = C \ C=(i). 4PACE instantiates two nonparametric estimators:                 
+
+> ˆAdiff (i) = R(i)−1
+> |C̸=(i)|
+> X
+> j∈C̸=(i)
+> R(j)(4) ˆAq(i) = bQ(s, a i)−bV(s)(5)
+> bQ(s, a i) = 1
+> |C=(i)|
+> X
+> j∈C=(i)
+> R(j)(6)
+> bV(s) = 1
+> |C|
+> X
+> j∈C
+> R(j).(7)
+
+The diff-peer form compares each action against peers that took a different action from the same state neighbor-hood; the Q-style form directly estimates bQ(s, a ) − bV (s). Fallbacks keep the estimator well-defined. Singleton clusters retain ˆAstep = 0 as in GiGPO . The diff-peer form falls back to RLOO leave-one-out when |C̸ =(i)| = 0; the Q-style form falls back when |C=(i)| = 1. Empirically, the Q-style branch is non-degenerate on ALFWorld 
+
+and gives the best completed variant in Sec. 4.5; in envi-ronments with larger effective action spaces, the diff-peer form is the safer default. Combining with the episode term gives the final per-token advantage 
+
+ABiPACE (i) = Aep (i) + w · ˆAS (i), (8) where ˆAS is the selected step-level estimator and w is the same fixed weight used by GiGPO . The PPO surrogate is unchanged. Implementation details are in App. G and the computational-budget discussion below. 
+
+4. Experiments 
+
+We organize the experiments around four questions: RQ1: 
+
+Does BiPACE improve end-task success under the same rollout budgets and model scales? RQ2: Does the im-provement come with better sample efficiency? RQ3: Do the policy-state groups actually increase usable step-level interactions? RQ4: Is the action-conditioned PACE esti-mator necessary on top of the state-side partition? We present RQ3 (mechanism) before RQ1 (end-task results) to establish the underlying diagnostic before interpret-ing the headline numbers; RQ2 and RQ4 follow. The appendix provides extended related work, background, proofs, reproducibility details, hyperparameters, prompts, calibration scans, diagnostic tables, failure modes, and full per-seed results. 
+
+4.1 Setup Environments. ALFWorld [Shridhar et al., 2020], 
+
+WebShop [Yao et al., 2022], and TextCraft [Prasad et al., 2024]. Models. Qwen2.5-{1.5, 7 }B-Instruct [Yang et al., 2024]. Baselines. GRPO [Shao et al., 2024], PPO with critic [Schulman et al., 2017], GiGPO [Feng et al., 2025], and HGPO [He et al., 2026]; prompting rows from Feng et al. [2025] anchor the benchmark scale. Hardware. 
+
+4×H100 (7B); 2–4 ×H100 (1.5B). Full settings, seeds, Table 1: Singleton fraction on ALFWorld /7B.            
+
+> Method iter 10 iter 75 iter 140
+> GiGPO (obs. hash) 34 .2% 33 .1% 20 .7%
+> BiGPO (Actor-Hidden) 17 .3%17 .2%14 .1%
+
+hyperparameters, and prompt templates are in Apps. I and J. 
+
+4.2 Mechanism: the singleton tax (RQ3) 
+
+GiGPO ’s observation-hash partition leaves many step records in singleton clusters. These records receive zero step-level advantage by construction, so the partition directly controls how much of the step-level gradient can be used. Table 1 shows the mechanism-level change: the policy-induced bisimulation partition starts with a lower singleton fraction than GiGPO has even late in training. Both rows are measured from our training-log diagnostics. 
+
+BiGPO entries are 5-step window means centered at the listed iteration, averaged over the BiPACE Q seeds whose logs cover that window; the partition depends only on the state-side clustering, not on the PACE estimator. 
+
+4.3 End-task performance (RQ1) 
+
+Table 2 is the main result table. The 7B comparison is the cleanest completed setting: over three seeds, BiPACE Q
+
+raises aggregate val @max (binary val/success-rate, count-weighted by the validation set) from GiGPO ’s 90 .8 to 97 .1±0.9, while saturating five of six ALFWorld task families at 100% per-subtask val @max across all seeds. All three BiPACE Q seeds individually reach the 95% threshold (at steps 115–135; App. N); no GiGPO seed does so within the same 150-step budget. The per-subtask cells are diagnostic slices: because each slice takes its own best checkpoint, the aggregate All column is the headline metric. The 1.5B result is a three-seed transfer check; the smaller backbone converges more slowly, so its row is reported at a later checkpoint within our training budget and marked with ⋆ (extended budget). Across three seeds, overall val @max is 93 .5±1.2, with three of six task families saturated at 100% on every seed; per-seed values are reported in App. N. 
+
+TextCraft transfer. TextCraft provides an out-of-domain transfer check with depth-stratified crafting goals (depth-2: short chains; depth-3: longer subplans requiring intermediate reuse; depth-4 omitted due to insufficient validation examples). We apply the same Q-style PACE recipe; the group sizes, training windows, and action-key choices are listed in App. I. Table 3 gives a small out-of-domain check. Prompting alone does not solve the transfer setting ( ≤7% overall), and BiPACE Q is the strongest trained row at both scales. Its largest margins are on depth-3 goals (+7 .8pp over 
+
+GiGPO on 1.5B, +12 .4pp on 7B), where intermediate 5Table 2: Task success rate (%) on ALFWorld (valid-seen , 6 task families) and WebShop (Score / Success ). All is the count-weighted overall val @max on the binary validation success metric. Reference rows are reproduced from Feng et al. [2025] and He et al. [2026]. ⋆ extended training budget (200 steps vs. 150 for 7B); ‡ partial run (fewer completed seeds). 
+
+ALFWorld WebShop 
+
+Type Method Pick Look Clean Heat Cool Pick2 All Score Succ. 
+
+Closed-source prompting (no fine-tuning). 
+
+Prompting GPT-4o 75 .3 60 .8 31 .2 56 .7 21 .6 49 .8 48 .0 31 .8 23 .7Prompting Gemini-2.5-Pro 92 .8 63 .3 62 .1 69 .0 26 .6 58 .7 60 .3 42 .5 35 .9
+
+Qwen2.5-1.5B-Instruct. 
+
+Prompting Qwen2.5 5.9 5.5 3.3 9.7 4.2 0.0 4.1 23 .1 5.2Prompting ReAct 17 .4 20 .5 15 .7 6.2 7.7 2.0 12 .8 40 .1 11 .3Prompting Reflexion 35 .3 22 .2 21 .7 13 .6 19 .4 3.7 21 .8 55 .8 21 .9RL training PPO (w/ critic) 64 .8±3.5 40 .5±6.9 57 .1±4.9 60 .6±6.6 46 .4±4.0 47 .4±1.9 54 .4±3.1 73 .8±3.0 51 .5±2.9RL training GRPO 85 .3±1.5 53 .7±8.0 84 .5±6.8 78 .2±7.9 59 .7±5.0 53 .5±5.6 75 .2±3.8 75 .8±3.5 56 .8±3.8RL training GiGPO 94 .4±5.9 67 .5±4.6 94 .8±3.8 94 .4±7.8 79 .8±4.7 76 .4±5.4 86 .7±1.7 83 .5±1.8‡ 67 .4±4.5‡
+
+RL training HGPO not reported 92 .8±1.1 85 .6±2.9 71 .5±4.0RL training BiPACE Q (ours) ⋆ 100 .0 97 .4±3.8 100 .0 100 .0 96 .5±3.6 92 .0±7.9 93 .5±1.2 85 .8±1.1 71 .9±2.1
+
+Qwen2.5-7B-Instruct. 
+
+Prompting Qwen2.5 33 .4 21 .6 19 .3 6.9 2.8 3.2 14 .8 26 .4 7.8Prompting ReAct 48 .5 35 .4 34 .3 13 .2 18 .2 17 .6 31 .2 46 .2 19 .5Prompting Reflexion 62 .0 41 .6 44 .9 30 .9 36 .3 23 .8 42 .7 58 .1 28 .8RL training PPO (w/ critic) 92 .3±4.0 64 .0±8.4 92 .5±2.4 89 .5±7.0 80 .3±2.0 68 .8±8.3 80 .4±2.7 81 .4±3.1 68 .7±5.1RL training GRPO 90 .8±5.1 66 .1±6.7 89 .3±5.4 74 .7±6.9 72 .5±5.4 64 .7±7.3 77 .6±5.2 79 .3±2.8 66 .1±3.7RL training GiGPO 97 .7±1.6 82 .7±7.9 98 .8±1.6 83 .7±7.2 89 .3±8.2 79 .2±6.6 90 .8±1.3 86 .2±2.6 75 .2±3.8RL training HGPO not reported 95 .4±0.6 89 .0±1.0 78 .5±1.4RL training BiPACE Q (ours) 100 .0 100 .0 100 .0 100 .0 95 .3±3.7 100 .0 97 .1±0.9 89 .6±1.3 79 .7±3.3
+
+Table 3: TextCraft validation success rate (%): peak val success within the stated window.                                               
+
+> Type Method overall depth-2 depth-3
+> Qwen2.5-1.5B-Instruct.
+> Prompting Qwen2.5 4.2±1.55.7±2.00.0±0.0RL training GRPO 43 .8±2.259 .5±1.920 .6±4.2RL training GiGPO 58 .3±7.876 .7±5.421 .8±9.6RL training HGPO 59 .4±8.077 .8±8.617 .6±4.6RL training BiPACE Q(ours) 65 .1±7.084 .9±3.029 .6±12 .0
+> Qwen2.5-7B-Instruct.
+> Prompting Qwen2.5 6.8±2.77.9±2.74.0±2.9RL training GRPO 76 .5±3.190 .3±0.855 .5±10 .0RL training GiGPO 87 .0±2.494 .0±1.675 .0±3.5RL training HGPO 87 .5±2.393 .6±1.885 .0±6.5RL training BiPACE Q(ours) 91 .1±2.495 .7±2.187 .4±13 .4
+
+states can lead to several action-conditioned futures. The 
+
+HGPO rows land in the GiGPO band on overall success at both scales; BiPACE Q outperforms HGPO by +3 .6pp at 7B (91 .1 vs. 87 .5) and +5 .7pp at 1.5B (65 .1 vs. 59 .4). 
+
+Policy-state interaction diagnostics. Figure 3 mea-sures step-record utilization from paired training-log di-agnostics [funnel diagnostic style of He et al., 2026]. On 
+
+ALFWorld /7B, BiPACE wastes fewer records to sin-gletons and clears roughly ×1.3 as many matched pairs. On TextCraft /7B, where exact hashes are sparser, it keeps the singleton share near 20–25% and exposes roughly twice as many matched pairs. The learned ac-tor representation therefore creates larger reusable state pools for PACE’s action-conditioned baseline. 
+
+4.4 Sample efficiency (RQ2) 
+
+Sample efficiency is summarized in Fig. 1: the bottom row reports steps-to-threshold (lower is better) for one seed per method on all three benchmarks, and BiPACE Q
+
+reaches every threshold first. On ALFWorld /1.5B (the smaller backbone is sub-saturated at the 7B budget, so both methods are run for an extended budget; Fig. 1a), 
+
+BiPACE Q is 1 .18–1 .33 × faster across the 50–80% band and is the only method to cross 90% within the budget. The same pattern holds on ALFWorld /7B: BiPACE Q
+
+is 1 .05–1 .25 × faster across the 60–95% band and is the only method to cross 95% within the 150-step budget, at step 100 on the best seed; all three seeds cross within the budget. On WebShop /7B and TextCraft /1.5B (Fig. 1b,c), the speedups reach 1 .57 × and 2 .00 ×, and the top threshold in each panel is reached only by BiPACE Q
+
+within the budget. 
+
+4.5 Action-side ablation: PACE (RQ4) 
+
+The state-only variant isolates BiGPO ’s partition; PACE tests whether action-conditioning within each cluster adds further gain. We compare three variants atop Actor-Hidden clustering on ALFWorld /7B (Fig. 4; full nu-meric table in App. L): first-token (diff-peer mean, 60 25 50 75 100%       
+
+> GiGPO 73% kept 27% →37k
+> BiPACE 82% kept 18% →47k
+> BiPACE ×1.3 usable pairs
+
+ALFWorld           
+
+> 025 50 75 100%
+> share of step records (kept vs. singleton)
+> GiGPO 50% kept 50% →135k
+> BiPACE 78% kept 22% →296k
+> BiPACE ×2.2 usable pairs
+
+TextCraft              
+
+> kept (usable record) wasted (singleton) Figure 3: Step-record utilization on ALFWorld /7B and
+> TextCraft /7B ( kept : multi-member cluster; wasted : singleton).
+> BiPACE yields ×1.3 usable pairs on ALFWorld and ×2.2 on
+> TextCraft ; means over diagnostic seeds, first 130/50 steps.
+
+Table 4: Local checks on ALFWorld /7B with Q-style PACE fixed (embedder: three seeds; radius: seed 0).                
+
+> Check setting A val @max setting B val @max
+> Embedder HashNgram 95 .4±1.2Actor-Hidden 97 .1±0.9
+> Radius ε=0 .05 94 .5ε=0 .10 97 .7
+> ε=0 .15 96 .1ε=0 .20 94 .5
+
+Eq. (4), keyed on the first N =8 tokens), action-tag 
+
+(same estimator, <action> -body key), and Q-style (action-tag key with bQ(s, a )− bV (s), Eq. (5)). Any action-conditioning on top of state-only clus-tering helps (Fig. 4; Look, Cool, and Pick2 are the in-formative margins, with most other families near ceil-ing): first-token PACE reaches 95 .8±0.4% across three seeds, confirming that BiGPO ’s behavioral peers sup-port action-specific credit. Swapping to the <action> -body key with the same diff-peer estimator underper-forms first-token by 2 .8pp (93 .0±1.1%; App. L), suggest-ing that the first ∼8 tokens already disambiguate the command on ALFWorld and that parsing the full ac-tion body adds fragility without benefit. Q-style is the strongest variant (97 .1±0.9%, three seeds): keeping bQ and 
+
+bV in non-overlapping pools recovers a cleaner estimate of A(s, a ) =Q(s, a )−V (s) than diff-peer’s mixed-action baseline. Replacing the Actor-Hidden fingerprint with a policy-agnostic character-n-gram hash, holding the Q-style PACE estimator fixed, yields 95 .4%, which is 2 .4pp above the state-only level but 1 .7pp below Actor-Hidden (Table 4), confirming that the policy-induced geometry contributes gain beyond what lexical coarsening alone provides. The same recipe transfers to Qwen2.5-1.5B (93 .5±1.2Pick      
+
+> Look
+> Clean
+> Heat
+> Cool
+> Pick2
+> 80 85 90 95 100
+> GiGPO
+> State-only
+> PACE first-token
+> PACE action-tag
+> PACE Q-style
+> Figure 4: Matched-seed per-task PACE ablation on ALFWorld /7B (validation peak, %); radial axis truncated to 80–100.
+
+vs. GiGPO ’s 86 .7±1.7, +6 .8pp). The default clustering radius is also not brittle. With Q-style PACE fixed on ALFWorld /7B seed 0, vali-dation success peaks at the ε= 0.10 default but remains within a ∼3pp band over {0.05 , 0.10 , 0.15 , 0.20 } (Table 4). A row-mix diagnostic at the default further confirms that the Q-style estimator is not mostly falling back: 80 .2% of rows enter the PACE branch and multi-member clusters average 2 .76 distinct action keys (App. L). The action side carries most of the gain. Once BiGPO supplies behaviorally comparable peers, the multi-seed PACE variants improve over the GiGPO reimplementation by + 5.0pp (first-token) and + 6.3pp (Q-style) on the aggregate val/success-rate metric; state-only clustering alone contributes + 2.2pp. The same pattern transfers to 1.5B: BiPACE Q gains +6.8pp over GiGPO on over-all val @max (3 seeds; Table 2), consistent with the 7B +6 .3pp gap. 
+
+4.6 Computational budget 
+
+The only additional measured work over the base 
+
+GiGPO /GRPO loop is local to the step-level estima-tor: an actor-hidden forward pass to obtain policy-state fingerprints, followed by lightweight PACE grouping and advantage estimation. Figure 5 shows that the per-iteration budget is still dominated by the shared training loop. Rollout generation alone takes 197 .25s, and the actor update takes 88 .68s, compared with a 361 .27s pure training step. The BiPACE-specific components total 40 .70s, or 11 .3% of a step. Al-most all of this measured addition is the optional actor-hidden extraction forward (40 .21s); the PACE grouping and action-conditioned advantage estimation costs only 0.49s per iteration, 0 .14% of the step budget. Thus the 750         
+
+> 100
+> 150
+> 200 197.25
+> 17.39 17.71
+> 88.68
+> 40.21
+> ALFWorld/Qwen2.5-7B, 4xH100
+> pure-step median = 361.3s
+> BiPACE-specific = 40.69s (11.3%)
+> Rollout
+> Old Prob
+> Ref Prob
+> Reward
+> Update
+> Hidden Fwd
+> PACE
+> 0
+> 1
+> 0.46 0.49
+> Time (s) Figure 5: Per-iteration budget on ALFWorld /Qwen2.5-7B (4 ×H100); blue bars are BiPACE-specific.
+
+estimator changes which step records are compared for credit assignment while leaving the dominant rollout, probability, and policy-update costs intact. To be precise: this forward pass adds computation but no extra envi-ronment interactions (rollouts); the two should not be conflated. The number of records being grouped scales with the rollout budget as O(GT ) for group size G and horizon T , so larger budgets increase the absolute group-ing cost even though the measured constant here is small. 
+
+5. Conclusion and Limitations 
+
+We have presented BiPACE , a drop-in advantage esti-mator for agentic GRPO that addresses the state-action credit mismatch in step-level group-based reinforcement learning. Specifically, BiPACE introduces two local re-placements to the GiGPO estimator: BiGPO , which clusters policy-hidden-state fingerprints as a bisimula-tion proxy to substantially reduce singleton groups, and PACE, which adds action-conditioned peer baselines within each behavioral cluster to recover a local Q−V
+
+advantage, without auxiliary models or extra rollouts. Across three environments and two model scales, Bi-PACE Q consistently outperforms GRPO and GiGPO ,and improves over HGPO on ALFWorld /7B (+1 .7pp) and TextCraft ; all three ALFWorld /7B seeds cross the 95% threshold within the training budget. Several directions remain open. BiPACE is currently evaluated on text-only environments with discrete ac-tion spaces, and extending to vision-based or continuous-action settings is a natural next step. The cosine radius 
+
+ε is also fixed via a one-time calibration scan; allowing it to adapt online as the policy evolves would sharpen the partition over the course of training. Richer action repre-sentations for PACE beyond the action-tag key (such as full-text embeddings) could improve counterfactual con-trast in environments with larger action spaces. Finally, extending the bisimulation-guided grouping to agents that compress history into a memory module (where di-rect observation hashing is intractable) is an interesting avenue for future work. 8References 
+
+Arash Ahmadian, Chris Cremer, Matthias Gall´ e, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet ¨Ust¨ un, and Sara Hooker. Back to basics: Revisiting REINFORCE-style optimization for learning from hu-man feedback in LLMs. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , 2024. Pablo Samuel Castro, Tyler Kastner, Prakash Panan-gaden, and Mark Rowland. MICo: Improved represen-tations via sampling-based state similarity for Markov decision processes. Advances in Neural Information Processing Systems , 34:30113–30126, 2021. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for LLM agent training. Advances in Neural Information Processing Systems , 38:46375–46408, 2025. Norm Ferns, Prakash Panangaden, and Doina Precup. Metrics for finite markov decision processes. In Proceed-ings of the 20th Conference on Uncertainty in Artificial Intelligence (UAI) , pages 162–169, 2004. Jakob Foerster, Gregory Farquhar, Triantafyllos Afouras, Nantas Nardelli, and Shimon Whiteson. Counterfactual multi-agent policy gradients. In Proceedings of the AAAI conference on artificial intelligence , volume 32, 2018. Robert Givan, Thomas Dean, and Matthew Greig. Equiv-alence notions and model minimization in markov deci-sion processes. Artificial intelligence , 147(1-2):163–223, 2003. Shixiang Gu, Timothy Lillicrap, Zoubin Ghahramani, Richard E Turner, and Sergey Levine. Q-Prop: Sample-efficient policy gradient with an off-policy critic. In 
+
+International Conference on Learning Representations ,2017. Yu Han, Kailing Li, Yang Jiao, Yulin Dai, Yuqian Fu, Linhai Zhuo, and Tianwen Qian. 3spo: State-score-supervised policy optimization for llm agents. arXiv preprint arXiv:2606.09961 , 2026. Shuo He, Lang Feng, Qi Wei, Xin Cheng, Lei Feng, and Bo An. Hierarchy-of-groups policy optimiza-tion for long-horizon agentic tasks. arXiv preprint arXiv:2602.22817 , 2026. Wouter Kool, Herke van Hoof, and Max Welling. Buy 4 REINFORCE samples, get a baseline for free! In ICLR Workshop on Deep RL Meets Structured Prediction ,2019. Jiazheng Li, Yawei Wang, Qiaojing Yan, Yijun Tian, Zhichao Xu, Huan Song, Panpan Xu, and Lin Lee Cheong. Salt: Step-level advantage assignment for long-horizon agents via trajectory graph. In Findings of the Association for Computational Linguistics: EACL 2026 , pages 4709–4725, 2026a. Zhongyi Li, Wan Tian, Yikun Ban, Jinju Chen, Huiming Zhang, Yang Liu, and Fuzhen Zhuang. Counterfactual credit policy optimization for multi-agent collaboration. 
+
+arXiv preprint arXiv:2603.21563 , 2026b. Xiaoqian Liu, Ke Wang, Yuchuan Wu, Fei Huang, Yong-bin Li, Junge Zhang, and Jianbin Jiao. Agentic rein-forcement learning with implicit step rewards. arXiv preprint arXiv:2509.19199 , 2025. Chengjun Pan, Shichun Liu, Jiahang Lin, Dingwei Zhu, Jiazheng Zhang, Shihan Dou, Songyang Gao, Zhen-hua Han, Binghai Wang, Rui Zheng, et al. EVPO: Explained variance policy optimization for adaptive critic utilization in LLM post-training. arXiv preprint arXiv:2604.19485 , 2026. Archiki Prasad, Alexander Koller, Mareike Hartmann, Peter Clark, Ashish Sabharwal, Mohit Bansal, and Tushar Khot. ADaPT: As-needed decomposition and planning with language models. In Findings of the Association for Computational Linguistics: NAACL 2024 , pages 4226–4252, 2024. Max-Philipp B. Schrader. gym-sokoban. https://github. com/mpSchrader/gym-sokoban, 2018. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy opti-mization algorithms. arXiv preprint arXiv:1707.06347 ,2017. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junx-iao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Cˆ ot´ e, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. ALFWorld: Aligning text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768 , 2020. Hui-Ze Tan, Xiao-Wen Yang, Hao Chen, Jie-Jing Shao, Yi Wen, Yuteng Shen, Weihong Luo, Xiku Du, Lan-Zhe Guo, and Yu-Feng Li. Hindsight credit assign-ment for long-horizon LLM agents. arXiv preprint arXiv:2603.08754 , 2026. 9George Tucker, Surya Bhupatiraju, Shixiang Gu, Richard E Turner, Zoubin Ghahramani, and Sergey Levine. The mirage of action-dependent baselines in reinforcement learning. In International Conference on Machine Learning , pages 5015–5024, 2018. Hanyang Wang, Lu Wang, Chaoyun Zhang, Tianjun Mao, Si Qin, Qingwei Lin, Saravan Rajmohan, and Dongmei Zhang. Text2grad: Reinforcement learn-ing from natural language feedback. arXiv preprint arXiv:2505.22338 , 2025. Quan Wei, Siliang Zeng, Chenliang Li, William Brown, Oana Frunza, Wei Deng, Anderson Schneider, Yuriy Nevmyvaka, Yang Katie Zhao, Alfredo Garcia, et al. Re-inforcing multi-turn reasoning in LLM agents via turn-level reward design. arXiv preprint arXiv:2505.11821 ,2025. An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, et al. Qwen2.5 technical report. 
+
+arXiv preprint arXiv:2412.15115 , 2024. Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. WebShop: Towards scalable real-world web interaction with grounded language agents. Ad-vances in Neural Information Processing Systems , 35: 20744–20757, 2022. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xi-aochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gao-hong Liu, Lingjun Liu, et al. DAPO: An open-source LLM reinforcement learning system at scale. Advances in Neural Information Processing Systems , 38:113222– 113244, 2025. Amy Zhang, Rowan McAllister, Roberto Calandra, Yarin Gal, and Sergey Levine. Learning invariant representa-tions for reinforcement learning without reconstruction. 
+
+arXiv preprint arXiv:2006.10742 , 2020. 
+
+A. Extended Related Work 
+
+Group-relative RL for LLM agents. GRPO [Shao et al., 2024] drops the critic by baselining against in-group sampled returns. GiGPO [Feng et al., 2025] adds a step-level term keyed on exact observation hashes, and 
+
+HGPO [He et al., 2026] augments that key with history length. DAPO [Yu et al., 2025] and related work tune optimization or reward shaping, but still leave the state equivalence relation discrete, the part BiPACE replaces. Recent step-level alternatives such as SALT [Li et al., 2026a] and 3SPO [Han et al., 2026] are complementary: they modify the learning signal or supervision, whereas 
+
+BiPACE changes the comparison set while reusing sparse returns. 
+
+Bisimulation and representation metrics. On the state side, BiPACE borrows the value-preserving bisim-ulation view: the metric of Ferns et al. [2004], its sample-based MICo approximation [Castro et al., 2021], and its use in shaping deep-RL representations [Zhang et al., 2020]. Unlike auxiliary representation-learning approaches, 
+
+BiGPO uses the actor’s own hidden states as the behav-ioral fingerprint, so the partition moves with the policy being optimized. 
+
+Action-conditioned baselines. On the action side, PACE recovers nonparametrically the action-conditioned baseline that COMA [Foerster et al., 2018] and CCPO [Li et al., 2026b] learn with critics. Classical action-dependent baselines [Gu et al., 2017, Tucker et al., 2018] motivate this direction but are generally biased without correc-tion, so we treat PACE as an estimator design vali-dated by ablation rather than an unbiased-gradient claim. EVPO [Pan et al., 2026] switches between critic and group-mean baselines, a choice complementary to Bi-PACE ’s control of the partition that defines the group mean. 
+
+B. Background Details 
+
+B.1 Multi-turn LLM agent decision process 
+
+We consider an episodic POMDP M = ( S, A, P, r, γ, T )in which an LLM policy πθ (at | st) produces a textual action at given an observation st, and the environment returns a next observation st+1 , a (typically sparse) re-ward rt, and a done flag. Throughout, st denotes the agent-visible observation, which plays the role of state for estimation purposes. We follow Feng et al. [2025] in a 
+
+step-independent input formulation: each step’s prompt is constructed from the current observation and a (possibly summarized) history, enabling horizons of 50+ steps. For each prompt p we sample G trajectories τ (1) , . . . , τ (G)
+
+of (possibly varying) lengths T (g). In the terminal-only reward setting we focus on, the trajectory return is 
+
+R(τ ) = rT −1 (e.g., 1 on success and 0 otherwise on 
+
+ALFWorld ). 
+
+GRPO and GiGPO . The GRPO episode-level advan-tage and the GiGPO step-level advantage are defined in the main paper (Eqs. (1) and (2) and the surrounding discussion in Sec. 3). The two failure modes of exact obser-vation hashing that motivate BiGPO (singleton clusters and paraphrase splitting) are analyzed in Sec. 3.2. 
+
+B.2 Bisimulation and the MICo metric 
+
+A binary relation E on states is a bisimulation if sEs ′
+
+implies r(s, a ) = r(s′, a ) and P 
+
+> s+∈[s+]E
+
+P (s+ | s, a ) = 
+
+P 
+
+> s+∈[s+]E
+
+P (s+ | s′, a ) for all a [Givan et al., 2003]. Aggregating bisimilar states preserves V π (and indeed 
+
+Qπ for every policy); bisimulation is thus a sufficient, 10 if conservative, equivalence for value-preserving state aggregation. Castro et al. [2021] introduce the MICo distance dπ ,a tractable sample-based approximation satisfying the value-difference bound 
+
+V π (s) − V π (s′) ≤ dπ (s, s ′). (B.1) 
+
+BiGPO uses an empirical proxy for dπ derived from the policy’s own hidden representation; Proposition 1 formalizes the resulting bias bound on the step-level advantage estimator. 
+
+C. Bias–Variance Analysis Details 
+
+We analyze the step-level baseline estimator that BiGPO 
+
+and GiGPO share, and isolate the role of the partition. Throughout, fix a prompt-group p and let {(s(i), a (i), R (i))}Ni=1 
+
+denote its step records, with R(i) the discounted return-to-go used by the step estimator in Sec. 3.1. Let C be a partition of {1, . . . , N } defined by some equivalence relation ∼, and let ˆA∼(i) = R(i) − 1
+
+|C(i)|
+
+X
+
+> j∈C(i)
+
+R(j), C(i) ∈ C , i ∈ C(i),
+
+(C.1) denote the within-cluster mean-baseline estimator (mean-norm form; the std-norm form admits a parallel argu-ment). 
+
+C.1 Bias and the MICo bound Proposition 1 (BiGPO step-baseline bias) . Let V π (s) := 
+
+E[R | s, π ] and assume V π is L-Lipschitz in the MICo 
+
+metric dπ . Let ∼ε denote any partition of the step records whose clusters have dπ -diameter at most 2ε, the regime greedy clustering with admission threshold ε (Algorithm 1) targets by bounding each member’s distance to the cluster centroid at admission. Then for every step i,
+
+E
+
+h ˆA∼ε (i) − A⋆(i)
+
+i
+
+≤ 2Lε, (C.2) 
+
+where A⋆(i) := R(i)−V π (s(i)) is the ideal state-conditional advantage. Proof sketch. The estimator’s bias is E[ ˆA∼ε (i)] − A⋆(i) = 
+
+V π (s(i)) − 1
+
+> |C(i)|
+
+P 
+
+> j∈C(i)
+
+V π (s(j)). By the diameter as-sumption, any two members of the same cluster satisfy 
+
+dπ (s(i), s (j)) ≤ 2ε; by Lipschitz continuity each term 
+
+|V π (s(i)) − V π (s(j))| is then bounded by 2 Lε , and so is the cluster average, giving the 2 Lε bound. Full proof in App. E. 
+
+Remark 1 (Empirical proxy) . BiGPO clusters not by 
+
+dπ directly but by cosine distance on ϕθ . Castro et al. [2021] show that representations trained to respect dπ
+
+admit a Lipschitz embedding; we treat the actor’s hid-den state as an empirical surrogate, so Eq. (C.2) holds under a Lipschitz-embedding assumption standard for representation-based aggregation. The mechanism diag-nostics in Sec. 4 measure exactly the quantities the bound predicts should improve (singleton rate and reuse geome-try) and confirm the effect. 
+
+C.2 GiGPO as the degenerate ε=0 limit Corollary 1 (Singleton signal collapse) . Setting ε =0 with the identity embedder (i.e. GiGPO ) yields zero aggregation bias in Eq. (C.2) , but every singleton cluster produces a degenerate estimate: 
+
+ˆA∼0 (i) = 0 deterministically whenever |C(i)| = 1 .
+
+(C.3) 
+
+Hence a fraction p1 of step records (those landing in sin-gleton clusters) carries no step-level gradient (the episode-level term Aep is unaffected), and the usable step-level signal vanishes as p1 → 1.Proof. A singleton cluster has ˆA(i) = R(i) − R(i) = 0 de-terministically, so the PPO surrogate gradient ∇θ log πθ (a(i) |
+
+s(i)) ˆA∼0 (i) is identically zero on every singleton, regard-less of the realized return: the estimate carries no infor-mation about the action taken. The discarded mass is exactly p1. See App. E for the formal restatement. 
+
+Remark 2 (GiGPO ’s singleton tax in numbers) . Our 
+
+GiGPO reproduction diagnostics on ALFWorld show singleton fractions of 34 .2%, 33 .1%, and 20 .7% at itera-tions 10, 75, and 140 respectively. These are singleton-
+
+cluster fractions (the share of clusters of size one), which upper-bound the record-level fraction p1 of Corollary 1; both quantities vanish together, and Corollary 1 trans-lates a high singleton rate directly into wasted step-level signal. Our Sec. 4 reports the corresponding BiGPO 
+
+numbers, which stay below 20% at every measured point of training (Table 1). 
+
+C.3 Variance of the Q-style estimator 
+
+The PACE Q-style form ˆAq(i) = bQ(s, a i) − bV (s) in Eq. (5) is unbiased for Aπ (s, a ) under exact bisimula-tion ( ε=0): both terms are within-class sample means with E[ bQ(s, a )] = Qπ (s, a ) and E[ bV (s)] = V π (s). For 
+
+ε > 0, bV inherits the O(ε) bias of Proposition 1; for 
+
+bQ we additionally assume Qπ (·, a ) is Lipschitz in dπ
+
+for each action a (a strictly stronger requirement than the value-difference bound of Eq. (B.1)), under which ˆAq is O(ε)-biased for Aπ . Its variance decomposes as Var [ ˆAq] = Var [ bQ] + Var [ bV ] − 2 Cov [ bQ, bV ], with bV pool-ing the larger set |C| and therefore reducing the second term. The estimator is well-defined when |C=(i)| ≥ 2; otherwise we fall back to RLOO leave-one-out. The diag-nostics in Sec. 4.5 report the empirical fraction of rows 11 Algorithm 1 Greedy online cosine clustering used by 
+
+BiGPO .
+
+Require: unit vectors {xi}ni=1 ⊂ RD , threshold ε ∈ [0 , 2]  
+
+> 1:
+
+K ← [ ] ▷ cluster centroids  
+
+> 2:
+
+M ← [ ] ▷ cluster members  
+
+> 3:
+
+for i = 1 , . . . , n do  
+
+> 4:
+
+if K = ∅ then  
+
+> 5:
+
+append xi to K; append {i} to M 
+
+> 6:
+
+else  
+
+> 7:
+
+k ← arg max j x⊤ 
+
+> i
+
+Kj 
+
+> 8:
+
+if 1 − x⊤ 
+
+> i
+
+Kk ≤ ε then  
+
+> 9:
+
+Mk ← M k ∪ { i} 
+
+> 10:
+
+Kk ← normalize 
+
+
+
+Kk + 1  
+
+> |M k|
+
+(xi − K k)
+
+ 
+
+> 11:
+
+else  
+
+> 12:
+
+append xi to K; append {i} to M 
+
+> 13:
+
+end if  
+
+> 14:
+
+end if  
+
+> 15:
+
+end for  
+
+> 16:
+
+return M
+
+that enter each branch and confirm the same-action pool is non-degenerate on the benchmarks tested. 
+
+C.4 Choosing ε
+
+Proposition 1 suggests a clear principle: ε should be small enough for the Lipschitz bias to be dominated by within-trajectory return noise, but large enough to defeat the singleton tax of Corollary 1. We provide an adaptive heuristic in App. F that targets a median cluster size of 4–8 by binary search on ε over the first training step; empirically a single static ε = 0 .10 works across all 7B environments tested, and on ALFWorld end-task success is unimodal in ε with a flat ∼3pp plateau around the default (Table 4, Radius check). Smaller backbones have different representation geometry, so we calibrate (ℓ, ε ) once per backbone before training (App. H). 
+
+D. Greedy Clustering Procedure 
+
+Algorithm 1 gives the single-pass greedy clustering used by BiGPO (Eq. (3)). The procedure runs once per prompt-group in O(NpKp) time, where Np is the group’s step-record count and Kp is its cluster count. Records are processed in rollout-major order ( g = 1 , . . . , G ,then t = 1 , . . . , T (g)); results are stable to within-group shuffling. 
+
+E. Proofs 
+
+E.1 Proof of Proposition 1 
+
+Proof. Let C := C(i) and ¯VC := 1
+
+> |C|
+
+P 
+
+> j∈C
+
+V π (s(j)). By the diameter assumption of Proposition 1, any two mem-bers i, j ∈ C satisfy dπ (s(i), s (j)) ≤ 2ε. (Greedy online clustering, Algorithm 1, joins a point to a cluster only when its distance to the current centroid is ≤ ε; we state the proposition for diameter-bounded partitions so the guarantee is independent of subsequent centroid updates.) By Lipschitzness of V π in dπ , for every j ∈ C,
+
+V π (s(i)) − V π (s(j)) ≤ L d π (s(i), s (j)) ≤ 2L ε. 
+
+Averaging over j ∈ C gives |V π (s(i)) − ¯VC | ≤ 2Lε . Sub-stituting into the bias decomposition 
+
+E
+
+h ˆA∼ε (i)
+
+i
+
+− A⋆(i) = V π (s(i)) − ¯VC
+
+yields |E[ ˆA] − A⋆| ≤ 2Lε , which is the claim. 
+
+E.2 Proof of Corollary 1 
+
+Proof. Restricted to {i : |C(i)| = 1 } we have ˆA∼0 (i) = 
+
+R(i) − R(i) = 0 deterministically. The PPO surrogate gradient ∇θ log πθ (a(i) | s(i)) ˆA∼0 (i) is therefore identi-cally zero on every singleton, regardless of the realized return; the singleton carries no learning signal. Summing over step records, a fraction p1 = Pr (|C| = 1) of the step-level gradient is discarded, and the usable signal 
+
+→ 0 as p1 → 1. 
+
+F. Adaptive ε Heuristic 
+
+We target a median cluster size ˜m ∈ [4 , 8] (an empiri-cally healthy range consistent with the singleton rates in Table 1) by binary-searching ε ∈ [0 .02 , 0.40] on the first training step. The heuristic converges in ≤ 6 probe val-ues per environment and produces ε ∈ [0 .07 , 0.13] across all 7B environments tested, suggesting the static default 
+
+ε = 0 .10 is adequate at that scale. Smaller backbones use the per-backbone calibration described in App. H. 
+
+G. Implementation Details 
+
+BiPACE attaches to the existing GiGPO step-advantage path through one driver-side grouping routine and one optional actor-worker hook. The driver routine consumes per-step embeddings and returns cluster UUIDs in the same shape as GiGPO ’s hash-grouping path; greedy clus-tering (Algorithm 1) runs per prompt-group in O(NpKp)time ( Np step records, Kp clusters), a handful of D-dimensional dot products per record dominated in prac-tice by the actor forward pass (measured grouping and advantage-estimation cost: 0 .49s, 0 .14% of a training step; Sec. 4.6). When Actor-Hidden features are used, the worker hook runs a vanilla actor forward with hid-den states enabled, extracts the last non-pad hidden state at the configured layer, ℓ2-normalizes it, and re-turns the tensors to the driver. The complete addition (grouping routine, worker hook, PACE estimator, and the ε= 0 regression test) is under 800 lines. The swap leaves the optimizer-side advantage scale unchanged: on 
+
+ALFWorld /7B, the mean per-token advantage stays in 12 the same −0.03 ± 0.02 band for GiGPO and BiPACE Q
+
+throughout training, so downstream PPO hyperparame-ters need no retuning. 
+
+Code naming note. The released code keeps the histori-cal cacb * config prefix (e.g., cacb enabled , cacb estimator )for backward compatibility; the paper refers to this com-ponent as PACE throughout. 
+
+H. Scale Calibration for Qwen2.5-1.5B 
+
+Bisimulation hyperparameters are tied to representa-tion geometry, so we calibrate ( ℓ, ε ) for Qwen2.5-1.5B a priori, before any training run, rather than reusing the 7B default ( ℓ, ε ) = ( −8, 0.10). The calibration is a lightweight forward-pass scan on a synthetic ALF-World audit set (40 rollouts × 6 task families) over ℓ ∈{4, 8, 12 , 16 , 20 , 24 , 27 }, pooling ∈ { last-token , mean-prompt , attn-weighted },and ε ∈ { 0.05 , 0.10 , 0.15 , 0.20 }. Table H.1 reports the slice used to select the 1.5B default. The selection rule is automatic: pick the layer that maximizes linear-probe task-id accuracy subject to a non-degenerate singleton fraction (neither one giant cluster nor all singletons) and nclusters ≥ 5 so the partition can resolve the six ALFWorld task families. In Table H.1, this rules out Layer 27 ( nclusters = 4, probe acc 0 .812) in favor of Layer 16 ( nclusters =12, probe acc 0 .808): four clusters merge multiple task types and defeat the purpose of behavioral partitioning even though the raw probe accuracy is marginally higher. The threshold ε is then set by the median-cluster-size heuristic of App. F. The whole procedure amounts to a single offline forward pass over a few hundred cached observations (no training, on the order of minutes) and the same released script applies unchanged to a new backbone (e.g., Llama-family models), so the per-backbone calibration is a one-time cost rather than a tuning loop. Intuitively, the optimal layer is late-but-not-final: the last few transformer blocks specialize toward next-token logits and lose the coarser behavioral structure that clus-tering needs. This explains why layer −8 (7B) and −12 (1.5B), rather than the final layer, give the best probe-accuracy vs. singleton-rate trade-off.                                         
+
+> Table H.1: Qwen2.5-1.5B forward-pass scan (last-token pool,
+> ε=0.05). Layer 16 (negative index −12 on the 28-layer backbone) gives the best singleton-vs-probe trade-off and is adopted as the default for all 1.5B runs. layer nclusters singleton% median size probe acc 420.0% 120 .00.717 8425 .0% 17 .50.804 12 30.0% 40 .00.788
+> 16 12 16 .7%15 .00.808
+> 20 933 .3% 17 .00.762 24 40.0% 30 .50.783 27 425 .0% 32 .00.812
+
+Two practical observations follow from the scan. First, the 1.5B representation geometry is more compact than 7B’s: at ε=0.10 the scan yields a single coarse cluster across the tested layer-and-pool combinations, whereas 
+
+ε=0.05 produces a well-resolved partition. Second, last-token is the most robust pooling strategy on this back-bone: mean-prompt and attn-weighted yield at most two clusters on most slices. Both observations reinforce that bisimulation hyperparameters should be calibrated once per backbone before training. 
+
+I. Hyperparameters 
+
+Table I.1 records the script-level settings needed to re-produce the reported runs. Table I.2 lists the non-default trainer and optimizer overrides; all other values inherit from the verl-agent v0.1 defaults. 
+
+J. Prompt Templates 
+
+Each environment wrapper fills a prompt contract online following He et al. [2026]. The first step omits history; all later steps include recent observation–action history. The executed command is the first well-formed body in-side <action>...</action> ; malformed responses receive the environment-specific invalid-action penalty. Table J.1 summarizes the dynamic fields and output contract per environment; full strings are released with the code. The verbatim templates below show the with-history form used at every step after the first. The first-step variant omits the {step count } , {history length } , and 
+
+{action history } fields. 
+
+ALFWorld Prompt Template 
+
+> You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your admissible actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <think> </think> tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
+
+13 Table I.1: Script-level settings for the reported BiPACE runs. TP is the rollout tensor-parallel size; G is the number of sampled trajectories per prompt group.                                              
+
+> Setting ALFWorld 7B ALFWorld 1.5B WebShop TextCraft
+> model / hardware Qwen2.5-7B; 4×H100; TP=2 Qwen2.5-1.5B; 2×H100; TP=1 7B: 4 ×H100, TP=2; 1.5B: 2 ×H100, TP=1 Qwen2.5-{1.5,7 }B; 4×H100; TP=1/2 seeds / window 3seeds; 150 training steps (excl. valida-tion/checkpoint steps) 3 seeds; 200 training steps completed runs; 150 steps (7B) / 200 steps (1.5B) 3 seeds; 100 steps (1.5B) / 50 steps (7B) rollout G=8, horizon 50 G=8, horizon 50 G=12, horizon 15 G=12, horizon 70 state partition Actor-Hidden, layer −8,
+> ε=0 .10 Actor-Hidden, layer −12,
+> ε=0 .05 7B: layer −8, ε=0 .10; 1.5B: layer −12, ε=0 .06 7B: layer −8, ε=0 .10; 1.5B: layer −12, ε=0 .10 PACE key / estimator action tag /q style action tag /q style action tag /q style action tag /q style
+
+Table I.2: Non-default hyperparameters for BiPACE runs. Rows are grouped by config namespace; values marked “see Table I.1” vary by environment. Group Key Value algorithm adv estimator gigpo                                 
+
+> algorithm gamma 0.95 algorithm.gigpo bisim grouping True
+> algorithm.gigpo bisim embedder actor hidden
+> algorithm.gigpo bisim layer see Table I.1 algorithm.gigpo bisim eps see Table I.1 algorithm.gigpo cacb enabled True
+> algorithm.gigpo cacb n action tokens 8algorithm.gigpo cacb action key mode first n /action tag
+> algorithm.gigpo cacb estimator counterfactual /q style
+> algorithm.gigpo step advantage w 1.0actor kl loss coef 0.01 actor optim.lr 5×10 −7
+> rollout tensor model parallel size see Table I.1 trainer n gpus per node see Table I.1
+
+WebShop Prompt Template 
+
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to: {task_description}. Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation}. Your admissible actions of the current situation are: [{available_actions} ]. Now it’s your turn to take one action for the current step. You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <think> </think> tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags. 
+
+Table J.1: Prompt contract per environment. Placeholders (braced tokens) are populated by the wrapper at runtime. Env. Dynamic fields Output contract 
+
+ALFWorld task description, step index, recent history, current observation, admissible actions reason in <think> ;emit exactly one admissible household action in <action> 
+
+WebShop shopping goal, step index, recent history, current page observation, available buttons/search actions reason toward the purchase goal; emit exactly one available WebShop action in 
+
+<action> 
+
+TextCraft episode recipe context, step index, recent history, current observation, inventory choose one grammar-valid action: 
+
+craft ... using ... ,
+
+get ... , or 
+
+inventory ; no chained actions 
+
+TextCraft Prompt Template 
+
+You are an expert agent operating in the TextCraft interactive crafting environment, modeled after Minecraft. Your goal is to craft a target item by combining ingredients along a chain of recipes. Task context (constant across the episode): {task_context} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Current inventory: {inventory} You can issue exactly one action per step, using one of these three formats: - ‘craft <out_count> <out_item> using <in_count_1> <in_item_1>, ...‘ -- apply a recipe (the inputs must already be in your inventory). - ‘get <count> <item>‘ -- fetch a raw (non-craftable) base material directly from 
+
+14 the environment. - ‘inventory‘ -- print what you currently hold. Items are spelled out in lower-case with spaces between words (e.g. ‘oak planks‘, not ‘minecraft:oak_planks‘). Recipe matching rules (important -- follow all of these): - Use ONLY the crafting commands shown in the recipe list; do not invent new recipes. - The target item AND its count must match a recipe line EXACTLY. You cannot use a partial recipe. - The ingredient counts must ALSO match the recipe EXACTLY. - The target item must be a SPECIFIC item (e.g. ‘dark oak sign‘); a generic family name (e.g. just ‘planks‘) is not valid. - If a recipe lists a GENERIC ingredient (e.g. ‘using 4 planks‘), substitute a specific variant from the same family (e.g. ‘using 4 oak planks‘). - It is fine to produce more of the target than the goal requires; repeat the craft in a later step if one craft is not enough. Example of one well-formed turn (format only): Recipes available include: ‘craft 3 dark oak sign using 6 dark oak planks, 1 stick‘, ‘craft 1 fletching table using 4 planks, 2 flint‘. Goal: craft fletching table. Current inventory: 4 oak planks, 2 flint. <think>I need a fletching table. The recipe needs 4 planks (generic) and 2 flint. I have 4 oak planks and 2 flint, so I substitute ‘oak planks‘ for the generic ‘planks‘ and craft directly.</think> <action>craft 1 fletching table using 4 oak planks, 2 flint</action> Now it’s your turn to take one action for the current step. You should first reason step-by-step about the current situation, what intermediate items you already have, and which next recipe step brings you closest to the goal. This reasoning process MUST be enclosed within <think> </think> tags. Once you’ve finished your reasoning, choose an action and present it within <action> </action> tags. Output exactly one action; do not chain multiple actions in one response. 
+
+K. Embedder Ablation: Policy-Induced vs. Lexical Geometry 
+
+BiGPO ’s state-side fingerprint is the actor’s own hidden state. A natural concern is whether the gain is specific to this policy-induced representation, or whether any coars-ening of the singleton-heavy observation-hash partition would suffice. We test this using the HashNgram control introduced in Sec. 3.4: a zero-dependency character-n-gram feature hash that clusters step records by lexical surface form. It is policy-agnostic by construction: the partition does not move as the actor is optimized. Everything except the state-side embedder is held fixed at the 7B Q-style recipe of Table I.1: the same PACE 
+
+action tag key, Q-style estimator, weight w, discount 
+
+γ, learning rate, and training budget. Because cosine geometry differs across embedder backends, the threshold 
+
+ε is re-calibrated for HashNgram using the same median-cluster-size criterion as App. F, yielding ε=0 .25. The result is reported as the Embedder check in Table 4 of the main paper: holding the action-side estima-tor fixed, swapping the policy-induced fingerprint for the lexical hash drops val @max from 97 .1 to 95 .4, a 1 .7pp gap that persists even though both partitions defeat the singleton tax. HashNgram (95 .4) exceeds the state-only baseline (93 .0; Table L.1) by 2 .4pp, indicating that lexical coarsening provides some benefit beyond singleton reduc-tion alone. The remaining 1 .7pp gap over Actor-Hidden is attributable to the policy-induced geometry, which adapts as the actor is optimized and tracks behavioral equivalence more faithfully than a static lexical hash. Extending this comparison to a frozen sentence-encoder variant and to additional environments is left to future work. 
+
+L. PACE Diagnostics 
+
+The main text summarizes the PACE ablation qualita-tively; Table L.1 records the full aggregate validation peaks for each estimator variant.                   
+
+> Table L.1: PACE estimator variants on ALFWorld /Qwen2.5-7B.
+> Peak is the best binary aggregate validation success within the matched training window of Table I.1. Entries report mean ±std over 3 seeds; the best variant per column is bold and the runner-up is underlined. PACE variant Peak (%) Seeds
+> GiGPO 90 .8±1.33
+> State-only 93 .0±1.33first-token 95 .8±0.43action-tag 93 .0±1.13Q-style 97 .1±0.93
+
+Row-mix statistics. We log per-step PACE statistics via the step norm reward cacb hook in the released code. Three quantities are recorded at every training step: (i) the fraction of rows entering the PACE branch (vs. RLOO fallback or singleton), (ii) the fraction of multi-member clusters containing ≥ 2 distinct action keys, and (iii) the mean number of unique action keys per cluster. Table L.2 reports a representative step near itera-tion 150 on ALFWorld /Qwen2.5-7B (180 total clusters); the Q-style same-action pool remains non-degenerate throughout training. The action-tag parse rate (logged at compute action keys.last action match rate ) stays above 0 .99 across all reported runs. 15 Table L.2: Q-style row-mix statistics on ALFWorld /Qwen2.5-7B near iteration 150 (180 total clusters). The same-action pool remains non-degenerate throughout training. Quantity Value Rows entering the PACE branch 80 .2% Rows falling back to RLOO leave-one-out 17 .9% Singleton rows (zero step-level advantage) 1.9% Multi-member clusters with ≥ 2 distinct actions 58 .3% Mean unique action keys per cluster 2.76   
+
+> <action> parse rate (all of training) >0.99
+
+Policy-state interaction diagnostics. Table L.3 ex-pands the main-text diagnostic of Fig. 3. The diagnostic asks specifically whether the actor-hidden policy-state clustering creates larger non-singleton reuse pools than exact observation hashing under the same rollout bud-get (a question distinct from historical-context oracle grouping). On ALFWorld , BiPACE lowers the single-ton cluster fraction by 9 .3pp and increases mean group size by 1 .6×. On TextCraft , where exact observation hashes are especially sparse, the effect is larger: singleton clusters fall by 27 .9pp and mean group size triples. The matched-pair volume grows by 1 .3× on ALFWorld and 2.2× on TextCraft , providing PACE with more peer records for its per-action baseline.                                                    
+
+> Table L.3: Policy-state reuse diagnostics from training logs.
+> TextCraft uses the same 7B window as Table 3; ALFWorld uses the first 130 steps so all three BiPACE diagnostic seeds are present. All entries are means over completed seeds. Lower singleton rate means more rows receive nonzero step-level signal; larger group size and pair volume indicate more reusable peers for the PACE estimator. Setting Grouping Window Singleton Avg size P90 size Pairs/step Mean ∆ t
+> ALFWorld -7B GiGPO (obs. hash) 130 27 .3% 7.516 .337k 15 .4
+> ALFWorld -7B BiPACE (actor-hidden) 130 18 .0%11 .726 .748 k14 .7
+> TextCraft -7B GiGPO (obs. hash) 50 50 .3% 7.116 .1143k 20 .8
+> TextCraft -7B BiPACE (actor-hidden) 50 22 .4%21 .653 .0314 k21 .2
+
+M. Failure-Mode Analysis 
+
+We catalog two regimes where BiGPO provides limited improvement. 
+
+(F1) Highly uniform observation distributions. 
+
+When every state visually resembles every other state (e.g., a synthetic Sokoban [Schrader, 2018] variant with nearly identical grid layouts), ϕθ collapses to a single tight cluster. In this degenerate case BiGPO reduces to a batch-level baseline, matching GRPO without step-level factorization. The failure is detectable before training via the singleton-fraction diagnostic: a partition producing one giant cluster indicates that the hidden-state geom-etry does not resolve behavioral differences among the observed states. 
+
+(F2) Pre-RL initialization. At training step 0, the actor’s hidden state reflects the base LM’s pre-training biases rather than task-specific value geometry. Clusters at this point are therefore coarser than they will become during RL training, but this is not catastrophic: the adap-tive ε heuristic (App. F) is run on the first training step rather than at initialization, so the radius is calibrated once task-relevant geometry has begun to emerge. 
+
+N. Full Results Tables 
+
+This section collects compact per-seed numbers; full per-step learning curves and SwanLab logs are linked from the project page. 
+
+Q-style on Qwen2.5-7B (ALFWorld). Val @max across three seeds: 97 .7%, 96 .1%, 97 .7% (peak steps 135, 115, 120); mean ±std = 97 .1 ± 0.9%. All three seeds reach 
+
+≥95% on at least 3 of 30 validation checkpoints; the three first-token seeds reach it on at most 2. 
+
+Q-style on Qwen2.5-1.5B (ALFWorld, ε=0.05 , layer 
+
+−12 ). The smaller backbone converges more slowly than 7B, so val @max is taken over the full 200-step training window. Val/success-rate (binary aggregate, |V| = 128) across three seeds: 93 .8%, 92 .2%, 94 .5%; mean ±std = 93 .5±1.2% (reported as 93 .5 in the All column of Table 2). Versus the cited GiGPO result of 86 .7±1.7, the gap is +6 .8pp. Per-subtask val @max (3-seed mean with within-seed spread): pick 100 .0, look 97 .4±3.8, clean 100 .0, heat 100 .0, cool 96 .5±3.6, pick2 92 .0±7.9. Q-style also shortens episodes relative to GiGPO late in training (mean episode length 17 .1 vs. 21 .0 steps). 
+
+O. Reproducibility 
+
+A regression test in the released code certifies that setting bisim grouping=True , embedder=identity , and 
+
+ε=0 produces a partition equivalent to vanilla GiGPO 
+
+bit-for-bit (up to UUID relabeling). Configs, random seeds, and SwanLab training logs accompanying the com-pleted tables are linked from the project page. 
+
+Baseline provenance. GiGPO and HGPO numbers on ALFWorld and WebShop are cited directly from the respective papers (Feng et al. [2025], He et al. [2026]) and were not re-run under our codebase; the prompting rows (GPT-4o, Gemini-2.5-Pro, ReAct, Reflexion) are likewise from Feng et al. [2025]. All TextCraft rows (including the GRPO, GiGPO , and HGPO baselines) are run by us under the same codebase, seeds, and evaluation protocol as BiPACE . PPO-with-critic rows are likewise cited from Feng et al. [2025]. 16

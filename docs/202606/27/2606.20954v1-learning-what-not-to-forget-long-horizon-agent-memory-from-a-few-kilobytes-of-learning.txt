@@ -1,0 +1,1394 @@
+Title: Learning What Not to Forget: Long-Horizon Agent Memory from a Few Kilobytes of Learning
+
+URL Source: https://arxiv.org/pdf/2606.20954v1
+
+Published Time: Tue, 23 Jun 2026 00:21:06 GMT
+
+Number of Pages: 26
+
+Markdown Content:
+# Learning What Not to Forget: Long-Horizon Agent Memory from a Few Kilobytes of Learning 
+
+Nusrat Jahan Lia 
+
+Institute of Information Technology University of Dhaka, Dhaka, Bangladesh 
+
+bsse1306@iit.du.ac.bd 
+
+Aritra Mazumder 
+
+University of Utah Utah, USA 
+
+aritra.mazumder@utah.edu 
+
+Abstract 
+
+Long-running language-model systems accu-mulate interaction history that outgrows the context window, so they must continually evict. When an eviction policy drops a load-bearing detail, for example an access token issued at lo-gin or a path the next call needs, the action fails. We present LRE (Learned Relevance Eviction), a few kilobytes, CPU-only, language-model-free scorer that learns which units of history are load-bearing and keeps them by verbatim extraction. Under a matched-budget compari-son, in our experiment, no baseline dominates LRE on the accuracy-cost plane. On agents, LRE matches the accuracy of keeping the en-tire history overall. On the simplest tasks, it ex-ceeds that no-eviction baseline by 27% , while requiring zero compressor calls and reducing peak context size by up to 52% . A controlled study trace shows LRE completes tasks where the others loop, finishing one such task in 37% 
+
+fewer calls than keeping everything and solving 
+
+14 tasks where no other run policy does. On conversational memory, LRE outranks dense and token-pruning encoders at zero neural cost. In downstream evaluation, LRE gives the best budgeted answer quality on LoCoMo reading 
+
+68% fewer tokens. Its supervision can also be annotation-free: training only on the system’s own behavior recovers 95% of the supervised scorer’s effectiveness. We argue that, because memory eviction in LLM agents is a fidelity problem, it requires a deployable proactive pol-icy where the future query is unavailable and exact state is decisive, and that cheap learned relevance can be sufficient. 
+
+1 Introduction 
+
+Large language models act as long-horizon agents and assistants that plan and act over extended inter-actions. A tool-using agent accumulates hundreds of action and observation steps, and a conversa-tional assistant accumulates dialogue across dozens 0k 3k 6k 9k 12k 0 10 20 30 40 50 58 Agent step Input tokens 
+
+> 12,576
+> still growing
+> Task complete
+> in 19 steps FIFO & ACON loop to the cap No compression FIFO (recency) ACON (LLM compress) LRE (ours)
+
+Figure 1: How an agent evicts decides whether it fin-ishes. Context tokens per generation on one AppWorld task ( d194965_2 ) under four policies at a 2048 -token budget. No-compression grows unbounded ( ∼12 .6ktokens); FIFO and LLM compression (ACON) stay bounded but lose the load-bearing content. ACON does 49 llm + 8 compressor calls. LRE keeps the relevant turns verbatim with a few kilobyte CPU scorer and com-pletes in 19 calls, 37% fewer than no-compression’s 30. 
+
+of sessions. In both cases the history outgrows the context window. The memory and compute cost of attention grows with context length, making long histories expensive to serve. Overly long contexts dilute relevant information, distract the model with stale detail, and degrade decision quality (Liu et al., 2024). The system must therefore evict : choose, within a token budget, the subset of history that pre-serves downstream quality. When eviction drops a load-bearing detail, the action fails even if the context is accurate. Eviction is different from retrieval, in a way that rules out the standard solution. A retriever runs at query time and conditions on the query (Karpukhin et al., 2020; Lewis et al., 2020); an eviction pol-icy which runs at write time must decide what to keep before the query or action that needs it exists. The decision is proactive and query-blind, which excludes query-conditioned retrieval and explains why deployed systems fall back on reactive heuris-tics such as recency or decay (Xiao et al., 2023; 1                     
+
+> arXiv:2606.20954v1 [cs.CL] 18 Jun 2026 Step types ◆THINK ● ACT ■ CALL ▲ OBS status: ✓kept ✕evicted (dashed border, dimmed hue) ◷last-k (always kept)
+> Domain A — Agent loop (AppWorld): think → act → call → observe, over time
+> agent step →
+> ◆THINK · step 1
+> "Starting task…"
+> LRE ranks 0.81 / 1
+> ▲ OBS · step 3
+> email =
+> eri_powe@gmail.com
+> ■ CALL · step 5
+> api_docs()
+> ▲ OBS · step 7
+> paginate results
+> LRE ranks 0.51 / 1
+> ● ACT · step 10
+> order_id =
+> ORD-2023
+> ◆THINK · step 13
+> plan next
+> ▲ OBS · step 15
+> list items
+> budget B exceeded → evict older
+> ● ACT · step 17
+> login(email)
+> — needs step 3
+> ▲ OBS ·
+> step 18
+> auth ok
+> reused by step 17
+> ✓LRE keeps the load-bearing turns (3, 10) verbatim — even though they scrolled far behind the budget cursor
+> ✕recency / FIFO keep only the last-k window · summarization paraphrases contents→ login fails
+> ◆same LRE core — features & self-supervised labels differ by domain, the selector is identical ◆
+> Domain B — Conversation (LoCoMo conv. 1): dialogue turns across 19 sessions / 419 turns
+> session / turn →
+> ◖Session 1 (8 May 2023)
+> Session 19
+> ◗
+> LRE keeps · gold evidence (y = 1)
+> TURN D1:5 · Caroline
+> "The transgender stories were so
+> inspiring… thankful for all the
+> support"
+> D1:8
+> weather chat
+> D3:2
+> weekend plans
+> D5:7
+> movie talk
+> D9:3
+> recipe swap
+> D14:6
+> small talk
+> D18:4
+> chit-chat
+> ❓QUESTION · after 419
+> turns
+> "What is Caroline's identity?"
+> → "Transgender woman"
+> answers, 400+ turns later
+> ✓LRE keeps the turn-5 identity fact (1 of 419) — recency would evict it >400 turns before the question is asked
+
+Figure 2: Top (agent, AppWorld). Across a think/act/call/observe loop, a credential observed at step 3 and an identifier produced at step10 scroll far behind the budget cursor. LRE ranks them load-bearing and keeps them verbatim, so the login at step 17 succeeds. Bottom (conversation, LoCoMo conv). An identity fact stated at turn 5 of a 419 -turn, 19 -session history answers a question asked more than 400 turns later. LRE keeps that evidence turn. 
+
+Zhong et al., 2024). One way is calling a language model to compress history (Jiang et al., 2023; Pan et al., 2024; Kang et al., 2025) which comes with non-deterministic behavior and paraphrasing chal-lenges. Some methods learn what to retain rather than relying on heuristics (Chung et al., 2024; Bui et al., 2025), but score each unit with a forward pass or distilled gates tied to specific layers and heads, so retention still costs a neural evaluation and stays coupled to the host model. We argue the right primitive for eviction is a learned relevance estimate: cheap enough to run at every write, and faithful enough to keep verbatim what matters. We instantiate it as LRE (Learned Relevance Eviction), a scorer over cheap causal features that assigns each unit a keep-probability, retaining the highest-scoring units within budget via verbatim selection. The scorer can be trained on already logged data, on the order of a kilobyte (the agent scorer is 1.7 KB for our experiment), runs on CPU with no neural forward pass and no language-model call at compression time, and scores 1,181 units per second where a dense en-coder manages 103 and an LLM token-pruner 36 
+
+(11 .5× and 32 .8× slower respectively; Table 13). On agents at a 2048 -token budget, LRE com-pletes tasks in 19 steps where the compressor loops to 49 (Figure 1) and reaches 41 .1% task success against full history’s 44 .0% while needing zero compressor calls (Table 2). On conversational memory the scorer ranks evidence at 0.829 macro-AUC on LoCoMo and 0.708 on LongMemEval S
+
+without ever seeing the question, above dense (0.643 ) and token-pruning ( 0.402 ) encoders that each spend a forward pass (Table 3). A natural question is that supervision for “relevance” requires expensive annotation. We show it does not: a self-supervised label derived from the system’s own later behavior recovers about 95% of the super-vised model’s signal beyond random ordering (Ta-ble 4). The signal a deployed system needs to learn proactive retention, is already present in its logs. We present: • LRE, a learned query-blind eviction pol-icy. We present a few kilobytes, CPU-only, language-model call-free scorer method that learns which units of history are load-bearing and keeps them by verbatim extraction, with one design serving both conversational mem-ory and long-horizon agents. • Pareto efficiency in both domains. Under matched budgets, LRE is an efficient and cheaper baseline that preserves or exceeds per-formance gains. On agent tasks, it matches the success rate achieved by retaining the en-tire history, while reducing context token size by as much as ∼52% (details in Section H); on conversational memory, in retaining useful content, it outranks dense encoders without a forward pass of its own (Table 3). • Fidelity, not just retrieval, is what evic-tion needs. A controlled study traces LRE’s 2agent advantage to verbatim fidelity: extrac-tion keeps the load-bearing context a task needs in the future while compression or re-cency loses them, leaving fourteen tasks that could be solved by LRE alone (Section 5.2). 
+
+2 Related Work 
+
+Memory architectures for conversational and agentic LLMs. LLM memory systems decide both what to write to long-term store and what to 
+
+keep active. MemGPT (Packer et al., 2023) bor-rows virtual-memory paging to move content be-tween context and external storage, while Memo-ryBank (Zhong et al., 2024) folds both decisions into a time-based exponential decay model. On the write side, prior works have organised history into episodes, reflections, or linked notes that are periodically consolidated (Park et al., 2023; Xu et al., 2026; Chhikara et al., 2025; Nan et al., 2025), and event-centric variants decompose dialogue into propositions to keep recall non-lossy (Zhou and Han, 2025). These mechanisms improve what is stored, but retention within a tier defaults to re-cency, decay, or a further LLM call. 
+
+Reactive eviction under a fixed budget. A par-allel line of work evicts directly from a size-capped buffer using cheap, query-blind signals. StreamingLLM (Xiao et al., 2023) retains a few initial attention-sink tokens alongside a recency window; H 2O and SnapKV (Zhang et al., 2023; Li et al., 2024) keep the tokens that have received the most attention so far. They score a unit by how it has already been attended to rather than whether a later step may need it, and they operate on attention statistics at the token level inside a forward pass. 
+
+Learned retention. Recent work learns what to keep rather than relying on attention heuris-tics. Selection-p (Chung et al., 2024) learns self-supervised, task-agnostic token retention, and TRIM-KV (Bui et al., 2025) learns a per-token re-tention gate at creation time that decays over the trajectory and evicts under a budget. Both confirm that learned retention can beat hand-designed de-cay. Their signal is produced inside the model, by forward passes or distilled gates tied to specific layers and heads, so each unit still costs a neural evaluation. We address whether such predictive principle holds for content units at zero added infer-ence cost, with a scorer external to and independent of the generating model. 
+
+LLM-based compression and its cost. At the expensive end, the model itself does the scoring. LLMLingua and LLMLingua-2 (Jiang et al., 2023; Pan et al., 2024) train a token classifier for com-pression rather than for any downstream task. In the agentic setting, context-management methods issue an LLM call to summarise or curate the accu-mulated history (Kang et al., 2025), adding latency on the critical path. Such summaries are typically conditioned on the current task, the query-aware advantage makes them a strong upper bound but not a deployable peer for a policy that can decide before the task context exists. 
+
+Related directions. Adjacent work studies proac-tive computation prediction (Pan et al., 2026; Zheng et al., 2026; Ye et al., 2025), systems-level context management (Kwon et al., 2023), and annotation-free supervision (Andrychowicz et al., 2017; Izacard et al., 2021); we discuss these con-nections further in Appendix A. Along the cost axis, prior work spans zero neu-ral cost (recency, MemoryBank, StreamingLLM), one neural pass per unit (dense and lexical salience, H2O, SnapKV, Selection-p, TRIM-KV), and one or more LLM calls per decision (LLMLingua, ACON, AgentFold). Along deployability, it splits into query-blind and query-aware scoring, and along timing, into reactive and proactive eviction. We therefore bridge that gap with a learned , query-blind , extractive scorer that anticipates which past content a future query will need, at zero added in-ference cost and independent of the host model, evaluated on both agentic (Trivedi et al., 2024) and conversational (Wu et al., 2024; Maharana et al., 2024) memory with downstream gains. 
+
+3 Methodology 
+
+3.1 Framework: Score, Retain, Evict 
+
+A long-running system holds a history H =[u1, . . . , u t] of units, where a unit is a dialogue turn or an agent action-observation step. LRE assigns each unit a relevance score, retains the highest-scoring units under a budget, and evicts the rest. Let 
+
+ϕ : ( ui, u ≤i) → Rd
+
+be a feature map whose value at unit i depends only on the prefix u≤i, never on u>i and never on any test-time query. This causality invariant makes the inference representation identical to the training representation which rules out evaluation leakage 3Require: {ui}ti=1 , {pi}, {ci}, B, Rk 
+
+> 1:
+
+S ← Rk; used ← 0 ▷ used tracks only older selected units; Rk is uncapped  
+
+> 2:
+
+for i in order of decreasing pi/c i do  
+
+> 3:
+
+if ui ∈ Rk then continue  
+
+> 4:
+
+end if  
+
+> 5:
+
+if used + ci ≤ B then  
+
+> 6:
+
+S ← S ∪ { ui}; used ← used + ci 
+
+> 7:
+
+end if  
+
+> 8:
+
+end for  
+
+> 9:
+
+return sort time (S)
+
+Figure 3: LRE: budgeted extractive eviction. The cap B
+
+applies to the older selected units S⋆; the recent window 
+
+Rk (and the system prompt and task, omitted here) are appended without competing for B. Older units are added in decreasing value density pi/c i, skipping any that overflow. The two domains instantiate (ci, B, R k)
+
+as in Table 1. 
+
+at the feature level. The scorer is 
+
+pi = fθ(ui) = σ θ⊤ϕ(ui, u ≤i),
+
+an L2-regularized logistic regression with parame-ters θ ∈ Rd fit on logged data, where pi denotes the estimated relevance of unit ui. Given per-unit costs 
+
+ci, a budget B on the evictable older history, and an always-retained recent window Rk ⊆ H that is protected and concatenated on top (along with the system prompt and task), LRE selects 
+
+S⋆ = arg max 
+
+> S⊆H\Rk
+
+X
+
+> ui∈S
+
+pi,
+
+s.t. X
+
+> ui∈S
+
+ci ≤ B, (1) 
+
+ˆH = sort time (S⋆ ∪ Rk).
+
+The cap B applies to S⋆ only; Rk, the sys-tem prompt, and the task are emitted unchanged, so the total context size is tokens( system ) + tokens( task )+ P 
+
+> u∈S⋆
+
+cu +P 
+
+> u∈Rk
+
+cu in the worst case. Equation (1) is a 0/1 knapsack. Algorithm 3 uses the standard greedy value-density heuristic; when ci ≡ 1 this reduces to the exact top-K opti-mum. The scoring stage, value-density ordering, extrac-tive emission, and chronological output are shared across domains; only (ci, B, R k) and the feature map differ. The scorer is a small model over cheap features (Section B) that adds no LLM call and no neural forward pass at serve time, so the policy’s 
+
+Label extraction: “a unit is relevant if the system later used it”           
+
+> Both domains derive the training target from the system’s own behavior
+> Agent (AppWorld 771d8fc_2 ): a unit is positive if an identifier it first introduces is reused by ≥3later steps (load-bearing state).
+> step 1 "...delete messages from the number 9294880327..." # introduces id -> reused at steps 3, 7, 8... (breadth >= 3) => y = 1
+> Conversation (LoCoMo): a turn is positive if its content tokens overlap an eventual answer ( recall ≥0.4); the gold-evidence label agrees on the same turn.
+> turn D2:8 Caroline: "Researching adoption agencies - it 's been a dream to have a family..." answer ("Adoption agencies") tokens overlap >= 0.4 AND is gold evidence for Q "What did Caroline research?" => y = 1
+
+Figure 4: The self-supervised label in each domain, on one real example. The agent label fires on an identifier reused by ≥ 3 later steps; the conversational label fires on a turn whose content is answered later (and coincides with the human gold-evidence label). Choice of values are justified in Section D. 
+
+marginal cost is a CPU dot product. Emission is verbatim: nothing is summarized or rewritten, so exact identifiers, values, and code survive. 
+
+3.2 Agent Instantiation (Domain A) 
+
+For agentic settings, each unit corresponds to a single (action , observation ) step in the execu-tion trajectory. LRE represents each unit with a ten-dimensional causal feature vector and an L2-regularized logistic regression; the full feature defi-nitions are given in Appendix Table 6. Retention follows Section B.3 with the Domain A instantia-tion of Table 1. 
+
+3.3 Conversational Instantiation (Domain B) 
+
+For conversational memory, LRE operates on dialogue-level units, where each unit corresponds to either a dialogue turn or a retrieved session. Across both datasets, LRE uses standardized tra-jectory features, fit only on training folds (Sec-tion B.1). With ci ≡ 1 and Rk = ∅, Equation (1) reduces to plain top-K retention with K = ⌈b n ⌉.Benchmark-specific strategies, deduplication, and 4Symbol Domain A Domain B                                    
+
+> citokens( ui)1(unit count)
+> B2048 tokens ⌈b n ⌉,b∈ { 0.1,0.2,0.4}
+> Rklast 5units ∅(no last-kcarve-out)
+> Table 1: Domain-specific instantiations of Algorithm 3.
+> Bis the budget for the evictable older history S⋆only; in Domain A, the system prompt, task, and last 5steps (Rk) are concatenated on top without competing for B,so the total prompt size is tokens( system +task ) + B+tokens( Rk)at the cap. In Domain B, Rk=∅and Bis the unit-count cap, so the total equals B.
+
+labeling are described in Section B. 
+
+3.4 Self-supervised relevance labels 
+
+Supervised labels require annotation that a deploy-ment may lack. We therefore derive the label from the system’s own behavior. One principle generates both domain labels: ui is positive iff later behavior reuses something ui contributed, 
+
+yself  
+
+> i
+
+= ⊮[ r(ui, u >i ) ≥ η ] , (2) where r is a domain-specific reuse measure and η
+
+its threshold(Figure 4). 
+
+4 Experimental Setup 
+
+4.1 Benchmarks 
+
+We evaluate LRE on AppWorld (Trivedi et al., 2024), LoCoMo (Maharana et al., 2024), and LongMemEval S (Wu et al., 2024). AppWorld evaluates long-horizon agent execution under hidden-unit-test evaluation, while LoCoMo and LongMemEval S evaluate conversational memory retention under query-agnostic and multi-session settings respectively. Detailed benchmark descrip-tions, splits, labeling strategies, pseudocode and evaluation protocols are reported in Appendix B. 
+
+4.2 Baseline taxonomy 
+
+We compare against a range of memory retention baselines, including simple heuristics (Recency / FIFO and exponential decay MemoryBank (Zhong et al., 2024)), content-based scoring (TF-IDF cen-troid salience), and dense embedding similarity methods (frozen BGE encoder (Xiao et al., 2024)) and LLMLingua-2 (Pan et al., 2024). For agentic evaluation, we compare against a no-compression upper bound, FIFO (First-In-First-Out) retention, and ACON (in-fork) (Kang et al., 2025). ACON demonstrates competitive performance across a range of practical baselines; we therefore include     
+
+> 3,000 4,000 5,000 6,000
+> 20
+> 30
+> 40 No-comp
+> FIFO
+> ACON
+> LRE
+> Peak input tokens / request (lower is cheaper)
+> Average TGC (%)
+> Figure 5: Task success versus peak input tokens on AppWorld; LRE attains the highest deployable accuracy at a bounded budget and zero compressor calls
+
+ACON as a representative adaptive in-fork com-pression method for comparison under the agentic setting. For downstream performance evaluation on AppWorld, LoCoMo, and LongMemEval S , we use GPT-4.1-mini as the base model and GPT-4o as the judge model (Hurst et al., 2024). Baseline implementation details, along with pseudocodes are in Section C. 
+
+5 Results and Findings 
+
+5.1 LRE is Pareto-efficient on long-horizon agents 
+
+LRE achieves task accuracy comparable with re-taining full history while operating under a strict context budget (Table 2, Figure 5). On Easy tasks, it exceeds the unbounded baseline corresponding to a +27% relative gain over full-context setting, and remains competitive on Medium tasks where it out-performs both recency ( +38 .1% ) and compression (+124% ). This is achieved with zero compressor calls and with a peak prompt that is 25% lower than full context on average, rising to a 35% reduction under Hard settings ( 7.79 k vs. 11 .95 k). FIFO keeps the budget but discards load-bearing state, so the agent loops, spending +40% more steps per task compared to LRE (30.6 vs. 21.8, and up to 33.5 for ACON). LLM-based compression retains salient content but incurs an inference over-head of 5.45 × model calls per task on average (ris-ing to 7.37 on Hard) while yielding substantially lower task accuracy (if not optimized iteratively). This can be attributed to the loss of execution iden-tifiers during summarization (§5.2). 5Average (168) Easy (57) Medium (48) Hard (63) Method Acc ↑ Stp ↓ Pk ↓ cL ↓ Acc ↑ Pk ↓ cL ↓ Acc ↑ Pk ↓ cL ↓ Acc ↑ Pk ↓ cL ↓                                                    
+
+> No compression †44.0 19.1 9.23 0.00 57.9 6.51 0.00 43.8 8.89 0.00 31.7 11.95 0.00 FIFO (recency) 34.5 30.6 5.65 0.00 59.6 4.98 0.00 27.1 5.20 0.00 17.5 6.58 0.00 ACON (in-fork) 26.2 33.5 5.12 5.45 57.9 4.67 3.19 16.7 4.92 5.62 4.8 5.68 7.37
+> LRE (ours) 41.1 21.8 6.91 0.00 73.7 5.97 0.00 37.5 6.87 0.00 14.3 7.79 0.00
+
+Table 2: AppWorld test_normal across difficulty levels: Task Goal Completion (Acc, %), mean trajectory steps (Stp), peak context tokens in thousands (Pk), and compressor LLM calls per task (cL). Best deployable value per column in bold; the highlighted row is LRE (ours) .                           
+
+> Macro-AUC Method LongMemEval SLoCoMo NC ↓
+> Recency / FIFO 0.527 0.478 0MemoryBank (decay) 0.527 0.478 0Content salience 0.752 0.414 0LLMLingua-2 0.402 –1Dense salience (BGE, frozen) 0.643 –1LRE-content 0.686 0.782 0LRE-self-sup 0.698 0.769 0
+> LRE-supervised 0.708 0.829 0
+
+Table 3: Conversational relevance, macro-AUC, deploy-able (query-blind) methods; NC is neural forward pass-es/unit. Metric details in Section E. 
+
+5.2 Why it works: load-bearing state survives under extraction 
+
+The aggregate numbers leave open why extraction ,specifically, is what helps. We isolate the mecha-nism on a single task (full logs in Section G): a re-quest to build a Spotify playlist from songs the user jotted in Simple Note. Because the task chains two apps, it hinges on several pieces of load-bearing state that must all be present when the playlist is assembled. Extractive LRE ranks the note-content turn and both login turns high and keeps them ver-batim , so it creates the playlist with the exact token in hand and adds the songs, completing in 19 steps. Recency scrolls the note and the login state out of its window, so the agent re-fetches the note it already read and re-authenticates in a loop, running all the way to the cap without finishing. Abstractive compression preserves the plan but also summa-rizes by paraphrasing and likewise loops to the cap. LRE thus completes the task, finishes in 37% fewer generation calls than the no-compression (Figure 1). A further example is shown in Section F. The pat-tern holds in aggregate; fourteen of the test tasks are properly completed by LRE alone (Table 11, Table 10). 
+
+5.3 A query-blind scorer that rivals dense retrievers 
+
+The same scorer is a strong ranker on conversa-tional memory, where it must decide what to keep without ever seeing the question (Table 3). Macro-AUC captures how well a method orders units by relevance: it is the probability that a randomly cho-sen gold-evidence turn is scored above a randomly chosen non-evidence one, so 1.0 is a perfect rank-ing. By this measure, recency and time-decay, are essentially uninformative, because in these long-session dialogue benchmarks, what is relevant is uncorrelated with what is recent. LRE ranks gold evidence far above them and is the stronger method on LoCoMo. The two baselines that pay a neural forward pass per unit, a frozen dense encoder and a token-pruning compressor, are both outranked by LRE on LongMemEval S . LRE uses no forward pass at all: a few kilobyte CPU scorer beats GPU encoders. Overall, an observation is that learned relevance is a stable signal under domain shift, and it can be deployed in practice without any neural passes or expensive inference overhead (Table 13). 
+
+5.4 Eviction preserves downstream answer quality 
+
+Relevance ranking only matters if it improves the final task outcome. Figure 13 in appendix I evalu-ates each policy by feeding its retained context to the same QA model under a fixed 20% retention budget. We see that more memory is not always better. On LongMemEval S , retaining the full con-text produces the worst downstream score (poten-tially a lost-in-the-middle effect (Liu et al., 2024)). LRE translates proactive relevance prediction into substantially better budgeted QA performance on LoCoMo. LRE-supervised achieves the strongest score among deployable policies while reducing context size ( 68% fewer tokens than full context) (Figure 13, Table 12). 610 20 30 40    
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> Retention budget (% kept)
+> Gold recall (%)
+> LoCoMo (token-F1 gold)
+> Recency
+> Content salience
+> LRE-self-sup
+> LRE-supervised
+> 10 20 30 40
+> 0
+> 20
+> 40
+> 60
+> 80
+> Retention budget (% kept)
+> Gold recall (%)
+> LongMemEval_S
+
+Figure 6: Gold recall versus retention budget on both benchmarks. On LoCoMo, LRE retains more gold evidence than every baseline at every budget; on LongMemEval S LRE tracks just below content salience but reaches it at a higher budget.             
+
+> Metric LongMemEval SLoCoMo
+> Self-sup (log label) 0.698 0.769 Supervised (gold) 0.708 0.829 Gap 0.010 0.060 Recovery 95% 82%
+> Agent-reuse (transfer) 0.527 0.620
+
+Table 4: Self-supervised versus supervised relevance (macro-AUC vs. gold). Recovery of above-chance skill 
+
+is the fraction of the supervised model’s discrimina-tion above the 0.5 chance floor that the log-derived label retains, (self -sup − 0.5) /(supervised − 0.5) :LongMemEval S (0 .698 − 0.5) /(0 .708 − 0.5) = 95% 
+
+and LoCoMo (0 .769 − 0.5) /(0 .829 − 0.5) = 82% .
+
+5.5 The supervision is already in the logs 
+
+We further examine whether self-supervision for LRE is possible. We replace the human gold la-bel with one the system can produce from its own behavior/log. The log-derived label recovers 95% 
+
+of the supervised scorer’s above-chance discrimi-nation on LongMemEval S and 82% on LoCoMo (Table 4). We also report a negative transfer result. We also report an honest negative. In agents, a unit is labeled relevant when an identifier or entity it first introduces is later re-referenced by several sub-sequent units. Such reuse label does not transfer to dialogue, falling near chance on conversational benchmarks. The two domains therefore share a common principle, learning from what the system later used, rather than a single reusable label. The supervision needed for proactive retention is al-ready present in the system’s logs. 
+
+6 Conclusion 
+
+We presented LRE, a learned relevance eviction policy that retains future-useful history through ver-batim extraction with a small CPU scorer. Across both agentic and conversational memory settings, no evaluated baseline is simultaneously more ac-curate and cheaper. LRE approaches full-history performance under a fixed budget, requires no com-pressor calls or neural inference, and can be trained from the system’s own later behavior without an-notation. These results suggest that cheap learned rele-vance is sufficient for proactive retention. A de-ployed system can learn what to keep from its own behavior, preserving load-bearing context with-out neural retention models or repeated language-model compression. 
+
+7 Limitations 
+
+LRE predicts future utility from signals available at write time. When future dependencies are weakly expressed or absent from the observed trajectory, the scorer can evict information that later becomes important. This limitation is inherent to proactive eviction and applies even with perfect training data. We evaluate on long-horizon agents and conver-sational memory, but not on multimodal memory, collaborative multi-agent systems, or environments with rapidly changing external state. Whether the same relevance signal transfers to these settings remains an open question. Additional discussion of evaluation, benchmark coverage, feature depen-dence, supervision choices, and deployment con-siderations appears in Appendix J. 7References 
+
+Marcin Andrychowicz, Filip Wolski, Alex Ray, Jonas Schneider, Rachel Fong, Peter Welinder, Bob Mc-Grew, Josh Tobin, OpenAI Pieter Abbeel, and Woj-ciech Zaremba. 2017. Hindsight experience replay. 
+
+Advances in neural information processing systems ,30. Ngoc Bui, Shubham Sharma, Simran Lamba, Saumitra Mishra, and Rex Ying. 2025. Cache what lasts: To-ken retention for memory-bounded kv cache in llms. 
+
+arXiv preprint arXiv:2512.03324 .Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. 2025. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 .Tsz Ting Chung, Leyang Cui, Lemao Liu, Xinting Huang, Shuming Shi, and Dit-Yan Yeung. 2024. Selection-p: Self-supervised task-agnostic prompt compression for faithfulness and transferability. In 
+
+Findings of the Association for Computational Lin-guistics: EMNLP 2024 , pages 11057–11070. Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, and 1 others. 2024. Gpt-4o system card. arXiv preprint arXiv:2410.21276 .Gautier Izacard, Mathilde Caron, Lucas Hosseini, Se-bastian Riedel, Piotr Bojanowski, Armand Joulin, and Edouard Grave. 2021. Unsupervised dense in-formation retrieval with contrastive learning. arXiv preprint arXiv:2112.09118 .Huiqiang Jiang, Qianhui Wu, Chin-Yew Lin, Yuqing Yang, and Lili Qiu. 2023. Llmlingua: Compressing prompts for accelerated inference of large language models. In Proceedings of the 2023 conference on empirical methods in natural language processing ,pages 13358–13376. Minki Kang, Wei-Ning Chen, Dongge Han, Huseyin A Inan, Lukas Wutschitz, Yanzhi Chen, Robert Sim, and Saravan Rajmohan. 2025. Acon: Optimizing context compression for long-horizon llm agents. 
+
+arXiv preprint arXiv:2510.00615 .Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen-tau Yih. 2020. Dense passage retrieval for open-domain question answering. In Proceedings of the 2020 conference on empirical methods in natural language processing (EMNLP) , pages 6769–6781. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th symposium on operating systems principles , pages 611–626. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-rich Küttler, Mike Lewis, Wen-tau Yih, Tim Rock-täschel, and 1 others. 2020. Retrieval-augmented gen-eration for knowledge-intensive nlp tasks. Advances in neural information processing systems , 33:9459– 9474. Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. Snapkv: Llm knows what you are looking for before gener-ation. Advances in Neural Information Processing Systems , 37:22947–22970. Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language mod-els use long contexts. Transactions of the association for computational linguistics , 12:157–173. Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang. 2024. Evaluating very long-term conversational memory of llm agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 13851– 13870. Henry B Mann and Donald R Whitney. 1947. On a test of whether one of two random variables is stochasti-cally larger than the other. The annals of mathemati-cal statistics , pages 50–60. Jiayan Nan, Wenquan Ma, Wenlong Wu, and Yize Chen. 2025. Nemori: Self-organizing agent mem-ory inspired by cognitive science. arXiv preprint arXiv:2508.03341 .Charles Packer, Vivian Fang, Shishir_G Patil, Kevin Lin, Sarah Wooders, and Joseph_E Gonzalez. 2023. Memgpt: towards llms as operating systems. Zaifeng Pan, AJJKUMAR DAHYALAL PATEL, Yipeng Shen, Zhengding Hu, Yue Guan, Wan-Lu Li, Lianhui Qin, Yida Wang, and Yufei Ding. 2026. Kvflow: Efficient prefix caching for accelerating llm-based multi-agent workflows. Advances in Neural Information Processing Systems , 38:126246–126265. Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Menglin Xia, Xufang Luo, Jue Zhang, Qingwei Lin, Victor Rühle, Yuqing Yang, Chin-Yew Lin, and 1 others. 2024. Llmlingua-2: Data distillation for efficient and faithful task-agnostic prompt compression. In 
+
+Findings of the Association for Computational Lin-guistics: ACL 2024 , pages 963–981. Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Mered-ith Ringel Morris, Percy Liang, and Michael S Bern-stein. 2023. Generative agents: Interactive simulacra of human behavior. In Proceedings of the 36th an-nual acm symposium on user interface software and technology , pages 1–22. 
+
+8Harsh Trivedi, Tushar Khot, Mareike Hartmann, Ruskin Manku, Vinty Dong, Edward Li, Shashank Gupta, Ashish Sabharwal, and Niranjan Balasubramanian. 2024. Appworld: A controllable world of apps and people for benchmarking interactive coding agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 16022–16076. Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. 2024. Longmemeval: Benchmarking chat assistants on long-term interac-tive memory. arXiv preprint arXiv:2410.10813 .Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2023. Efficient streaming language models with attention sinks, 2024. URL https://arxiv. org/abs/2309.17453 , page 1. Shitao Xiao, Zheng Liu, Peitian Zhang, Niklas Muen-nighoff, Defu Lian, and Jian-Yun Nie. 2024. C-pack: Packed resources for general chinese embeddings. In 
+
+Proceedings of the 47th international ACM SIGIR conference on research and development in informa-tion retrieval , pages 641–649. Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. 2026. A-mem: Agentic memory for llm agents. Advances in Neural Informa-tion Processing Systems , 38:17577–17604. Rui Ye, Zhongwang Zhang, Kuan Li, Huifeng Yin, Zhengwei Tao, Yida Zhao, Liangcai Su, Liwen Zhang, Zile Qiao, Xinyu Wang, and 1 others. 2025. Agentfold: Long-horizon web agents with proactive context management. arXiv preprint arXiv:2510.24699 .Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Ré, Clark Barrett, and 1 oth-ers. 2023. H2o: Heavy-hitter oracle for efficient generative inference of large language models. Ad-vances in Neural Information Processing Systems ,36:34661–34710. Haoyu Zheng, Fangcheng Fu, Jia Wu, Binhang Yuan, Yongqiang Zhang, Hao Wang, Yuanyuan Zhu, Xiao Yan, and Jiawei Jiang. 2026. Effi-cient serving for dynamic agent workflows with prediction-based kv-cache management. arXiv preprint arXiv:2605.06472 .Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. 2024. Memorybank: Enhancing large language models with long-term memory. In Pro-ceedings of the AAAI conference on artificial intelli-gence , volume 38, pages 19724–19731. Sizhe Zhou and Jiawei Han. 2025. A simple yet strong baseline for long-term conversational memory of llm agents. arXiv preprint arXiv:2511.17208 .
+
+9A Extended Related Work 
+
+Anticipating future need. The cost of mispredicting need is compute heavy: under recency or LRU, entries are discarded shortly before reuse and must be recomputed (Pan et al., 2026). This has motivated 
+
+proactive systems. At the serving level, KVFlow and PBKV (Pan et al., 2026; Zheng et al., 2026) predict which agent or cache block will fire next from workflow structure and prefetch accordingly; at the agent level, AgentFold (Ye et al., 2025) learns to fold and consolidate its own trajectory as it runs. These establish that anticipation beats reaction, but they anticipate computation from workflow graphs, or rewrite history through further LLM calls. We work along anticipating which past content an upcoming query will require, cheaply and without invoking an LLM. 
+
+Systems-level context management. KV systems such as PagedAttention (Kwon et al., 2023) remove memory fragmentation and enable cross-request reuse, raising throughput. Such caching lowers the cost of re-processing a seen context, but doesn’t relieve the cost of attending to that context, which becomes error-prone once critical content is buried within a long window (Liu et al., 2024). 
+
+Self-supervised relevance without labels. Training a scorer cheaply requires supervision that costs nothing to obtain. Hindsight relabeling (Andrychowicz et al., 2017) reuses a failed trajectory by relabeling it with the goal it did reach for RL, and contrastive pretraining (Izacard et al., 2021) learns dense retrievers with no relevance labels at all. We draw on this idea to derive retention labels directly from what later turns reused, at no annotation cost. 
+
+B Benchmark Utility 
+
+B.1 LoCoMo: Query-Agnostic Conversational Eviction 
+
+LoCoMo(Maharana et al., 2024) serves as the primary benchmark for evaluating query-agnostic relevance prediction in conversational context eviction. The dataset contains 5,882 dialogue turns across 10 conversations, where each conversation forms a distinct evaluation group. 
+
+1. Data structure. Each sample corresponds to a dialogue turn ui, and all turns within a conversation form a group g ∈ { 1, . . . , 10 }. The task is to assign a relevance score to each turn without conditioning on a specific downstream query. About 24% of dialogue turns are considered truly relevant (gold evidence across questions) 
+
+2. Label construction. We consider two labeling regimes. In the supervised setting, a turn is labeled positive ( yi = 1 ) if it appears in the gold evidence set of any question associated with its conversation. Because these labels are pooled across all the questions tied to the conversation, it yields a query-agnostic relevance signal. The model learns to identify turns that are generally load-bearing or informative for the conversation, rather than those that just match a specific query. In the self-supervised setting, a turn is labeled positive if it shares at least 40% token overlap with an eventual answer for training without explicit annotations. The choice of token overlap percentile is discussed in Section D.1 
+
+3. Splitting and leakage-free training. We use a Leave-One-Group-Out (LOGO) protocol over the 10 conversations. In each fold, one full conversation is held out for evaluation while the remaining nine are used for training. To prevent information leakage, the vectorizer and StandardScaler are fitted strictly on training data within each fold. A deduplication guard removes any exact-text overlaps between training and test folds. In LoCoMo, this has minimal effect, removing only 8 training instances corresponding to 3 generic utterances (e.g., “Bye!”, “Take care!”). 
+
+4. Feature representation and scoring. Each unit is mapped to a feature vector combining: (i) a TF-IDF representation of the text, and (ii) six trajectory features: position, recency, length, digit count, question-marker presence, and capitalized-word count (Table 6). A logistic regression model is trained to estimate relevance scores pi = P (yi = 1 | ui) using these features. At inference time, the model scores all units in the held-out conversation without access to downstream queries. 
+
+5. Evaluation and downstream usage. The model is evaluated both intrinsically and extrinsically. For intrinsic evaluation, we compute ROC-AUC over held-out folds (Section E). For extrinsic evaluation, retained dialogue turns are passed verbatim into a downstream QA model. Performance is measured using token-level F1, as suggested by Maharana et al. (2024). 10 Require: LoCoMo dataset D = {(ui, y i, g i)}
+
+Require: TF-IDF vectorizer ϕ, scaler σ, classifier f
+
+Require: Label mode L ∈ { supervised , self-supervised } 
+
+> 1:
+
+Dataset structure:  
+
+> 2:
+
+ui: dialogue turn; gi: conversation group  
+
+> 3:
+
+Label construction:  
+
+> 4:
+
+If supervised: yi = 1 if ui appears in gold evidence set  
+
+> 5: 6:
+
+If self-supervised: yi = 1 if token-overlap (ui, answer ) ≥ 0.4 
+
+> 7:
+
+for each LOGO fold (Dtrain , Dtest ) do  
+
+> 8:
+
+Leakage control  
+
+> 9:
+
+Fit ϕ, σ on Dtrain only  
+
+> 10:
+
+Apply transformations to both train and test  
+
+> 11:
+
+if dedup enabled then  
+
+> 12:
+
+Remove exact-text overlaps:  
+
+> 13:
+
+Dtrain ← D train \ D test  
+
+> 14:
+
+end if  
+
+> 15:
+
+Feature construction  
+
+> 16:
+
+xlex i ← ϕ(ui) 
+
+> 17:
+
+xtr i ← [fpos , f rec , f len , f dig , f q, f cap ] 
+
+> 18:
+
+˜xtr i ← σ(xtr i ) 
+
+> 19:
+
+xi ← [xlex i ; ˜ xtr i ] 
+
+> 20:
+
+Model training  
+
+> 21:
+
+Train logistic regression f (·) on (xi, y i) 
+
+> 22:
+
+Inference  
+
+> 23:
+
+Compute pi = f (xi) for ui ∈ D test  
+
+> 24:
+
+end for  
+
+> 25:
+
+Evaluation  
+
+> 26:
+
+ROC-AUC over folds  
+
+> 27:
+
+QA evaluation with token-F1 on compressed context  
+
+> 28:
+
+return scorer f (ui) → pi
+
+> Figure 7: LoCoMo evaluation pipeline for query-agnostic context eviction in LRE.
+
+B.2 LongMemEval S : Scalable Session-Level Eviction 
+
+LongMemEval S (Wu et al., 2024) evaluates session-level context eviction under large-scale, query-dependent retrieval settings. Unlike LoCoMo, which operates over dialogue turns, LongMemEval S
+
+defines each eviction unit as a full session within a question-specific haystack. 
+
+1. Data structure and eviction units. The dataset (longmemeval_s) contains up to 500 questions, where each question defines an independent group. Each group consists of approximately 50 sessions forming a retrieval haystack. The task is highly sparse, with only 5% of sessions are actually relevant per question (much more sparse / harder retrieval problem). 
+
+2. Label construction. 
+
+In the supervised setting, a session is labeled positive ( yi = 1 ) if its session ID appears in the question-specific answer_session_ids . In the self-supervised setting, a proxy label is assigned if the session contains at least 40% token overlap with the eventual answer for evaluating training performance without annotations (Section D.1). 
+
+3. Splitting and leakage prevention. We use grouped K-fold cross-validation with k = 5 due to the 11 Require: LongMemEval S dataset D = {(ui, y i, g i)} with up to 500 questions 
+
+Require: TF-IDF vectorizer ϕ, scaler σ, classifier f
+
+Require: Dedup flag dedup  
+
+> 1:
+
+Dataset structure  
+
+> 2:
+
+Each group gi is a question with ∼50 session-level candidates  
+
+> 3:
+
+Label construction  
+
+> 4:
+
+if supervised then  
+
+> 5:
+
+yi = 1 if session ID ∈ answer_session_ids (gi) 
+
+> 6:
+
+else  
+
+> 7:
+
+yi = 1 if token-overlap (ui, answer ) ≥ 0.4 
+
+> 8:
+
+end if  
+
+> 9:
+
+for each grouped K-fold split (Dtrain , Dtest ) with k = 5 do  
+
+> 10:
+
+Leakage control  
+
+> 11:
+
+Fit ϕ, σ on Dtrain only  
+
+> 12:
+
+if dedup enabled then  
+
+> 13:
+
+Remove all training sessions whose text appears in Dtest  
+
+> 14:
+
+end if  
+
+> 15:
+
+Feature construction  
+
+> 16:
+
+Compute TF-IDF: xlex i ← ϕ(ui) 
+
+> 17:
+
+Compute trajectory features:  
+
+> 18:
+
+xtr i = [ fpos , f rec , f len , f dig , f q, f cap ] 
+
+> 19:
+
+Normalize: ˜xtr i ← σ(xtr i ) 
+
+> 20:
+
+Concatenate: xi ← [xlex i ; ˜ xtr i ] 
+
+> 21:
+
+Training  
+
+> 22:
+
+Train logistic regression f (x) on (xi, y i) 
+
+> 23:
+
+Inference  
+
+> 24:
+
+Compute pi = f (xi) for test fold sessions  
+
+> 25:
+
+Evaluation  
+
+> 26:
+
+Compute ROC-AUC  
+
+> 27:
+
+Run downstream QA: gpt-4.1-mini  
+
+> 28:
+
+Score outputs using LLM judge (gpt-4o)  
+
+> 29:
+
+end for  
+
+> 30:
+
+return scorer f (ui) → pi 
+
+> Figure 8: LongMemEval Sevaluation pipeline for session-level context eviction under query-dependent retrieval.
+
+high computational cost of full leave-one-group-out evaluation over 500 questions. A critical challenge in LongMemEval S is cross-question session reuse. To address this, we apply a deduplication guard that removes any training session whose exact text appears in the held-out question’s haystack. This eliminates over 51,000 duplicate training instances and prevents memorization-based leakage. 
+
+4. Feature representation and scoring. Each session is represented using a fusion of: (i) TF-IDF lexical features, and (ii) six standardized trajectory features. A logistic regression model outputs relevance scores pi = P (yi = 1 | ui) without access to the downstream question context. 
+
+5. Evaluation protocol. LongMemEval S is evaluated on both retrieval quality and downstream task performance.For relevance prediction, we compute ROC-AUC. For downstream evaluation, retained sessions are passed to a QA model (gpt-4.1-mini), and responses are scored using a stronger LLM judge (gpt-4o). 12 B.3 AppWorld: Agentic Long-Horizon Evaluation AppWorld is a long-horizon tool-use benchmark in which an agent writes Python against application APIs (Venmo, Spotify, Gmail, and others) to complete a natural-language task, graded by hidden unit tests. We evaluate on the test_normal split (168 tasks: 57 Easy, 48 Medium, 63 Hard), following (Kang et al., 2025) and train the agent scorer on the 90 tasks of the disjoint train split. The agent and, where applicable, the compressor are gpt-4.1-mini. 
+
+1. Trajectory generation and training data. We first execute an unevicted baseline agent ("nocomp") on the AppWorld training split consisting of 90 tasks. This produces full execution trajectories containing interleaved Python code actions and environment observations, which are used as training data for the LRE scorer. 
+
+2. Self-supervised labeling via quotation reuse. Since no human relevance annotations are available, we construct a zero-supervision label using a hindsight reuse criterion. Let zi denote an identifier introduced at step i. The label is defined as: • yi = 1 if zi is reused in at least 3 subsequent steps, • otherwise yi = 0 .This identifies load-bearing identifiers that persist across the execution trajectory. 
+
+3. Scorer training. The logistic regression scorer ( s90 ) is evaluated under a Leave-One-Task-Out (LOGO) protocol. 
+
+4. Inference and eviction loop. During evaluation on test task splits, the agent operates in a ReAct-style loop. When the context length exceeds the token budget ( B = 2048 ), the eviction module is triggered. LRE performs CPU-based scoring of historical units. Units are ranked by score-per-token and retained greedily. This ensures chronological and verbatim reconstruction of the compressed context and preserves exact API identifiers and execution-relevant symbols. 
+
+5. Evaluation and Task Goal Completion (TGC). AppWorld evaluates success using Task Goal Completion (TGC), computed via hidden unit tests that operate on the final environment state. A known failure mode is self-reported success bias , where task success is determined from the agent’s own completion signal rather than from the environment state. This is problematic because the agent can declare success without having actually produced a state that satisfies the underlying task constraints, leading to an empirical inflation of success rates by approximately 2× (table 5).                      
+
+> Policy
+> Self-reported success (%) True TGC (replay, %) Inflation (self / TGC) No compression 98.8 44.0 2.24 ×
+> FIFO (recency) 60.7 34.5 1.76 ×
+> ACON (in-fork) 60.1 26.2 2.30 ×
+> LRE (ours) 89.3 41.1 2.17 ×
+> Pooled (all four) 77.2 36.5 2.12 ×
+> Table 5: Self-reported success versus true TGC (recovered by replaying logged actions into a fresh AppWorld environment and running the hidden unit tests). Across all four policies, self-report overstates success by 1.76 –
+> 2.30 ×(pooled 2.12 ×), confirming the ≈2×inflation and motivating our replay-based evaluation protocol.
+
+To eliminate this source of error, we adopt an evaluation protocol based on deterministic replay. Instead of using any agent-generated success signal, we reconstruct the final environment state from the recorded interaction trace. See the process in Figure 12. 13 Feature Definition (over prefix u≤i) Domain 
+
+fpos relative position in sequence / trajectory A, B 
+
+floglen log(1 + tokens ) A, B 
+
+fnum _digit digit-character count A, B 
+
+fcaps _words capitalized-word count A, B 
+
+frecency distance to most recent query context B
+
+fhas _q presence of question marker / WH pattern B
+
+ftfidf TF-IDF lexical representation (10 4 cap) B
+
+flen _tok token length B
+
+fhas _error error / exception / traceback indicator A
+
+fis _code code-token presence indicator A
+
+frare _density mean local inverse document frequency A
+
+fsim _prev Jaccard similarity with previous step A
+
+furl _or _id URL / hex ≥8 / digit ≥4 / handle presence A
+
+Table 6: Unified feature space used by LRE across agentic execution traces (Domain A: AppWorld) and conversa-tional QA (Domain B: LoCoMo and LongMemEval S ). The model shares a small set of causal structural features across domains, while augmenting them with domain-specific lexical, conversational, or code-execution signals. All features are computed over prefix histories u≤i to ensure strict causality during training and inference. The feature set is constructed as a minimal causal representation of interaction structure, motivated by observed failure modes across domains. 
+
+14 Require: AppWorld environment with 90 training tasks 
+
+Require: Agent policy (gpt-4.1-mini), LRE scorer f
+
+Require: Token budget B = 2048  
+
+> 1:
+
+1. Trajectory generation  
+
+> 2:
+
+for each training task T do  
+
+> 3:
+
+Run unevicted agent ("nocomp")  
+
+> 4:
+
+Log full trajectory τ = {(ai, o i)} 
+
+> 5:
+
+end for  
+
+> 6:
+
+2. Self-supervised labeling  
+
+> 7:
+
+for each step i in trajectory do  
+
+> 8:
+
+Extract identifier zi 
+
+> 9:
+
+if zi reused ≥ 3 times in future steps then  
+
+> 10:
+
+yi ← 1 
+
+> 11:
+
+else  
+
+> 12:
+
+yi ← 0 
+
+> 13:
+
+end if  
+
+> 14:
+
+end for  
+
+> 15:
+
+3. Scorer training  
+
+> 16:
+
+Train logistic regression s90 on (xi, y i) 
+
+> 17:
+
+Validate via Leave-One-Task-Out (LOGO), compute AUC  
+
+> 18:
+
+4. Online agent loop  
+
+> 19:
+
+for each evaluation task do  
+
+> 20:
+
+while agent is executing do  
+
+> 21:
+
+Observe new step (at, o t) 
+
+> 22:
+
+Append to history H 
+
+> 23:
+
+if tokens (H) > B then  
+
+> 24:
+
+Compute scores pi = f (ui) for ui ∈ H 
+
+> 25:
+
+Rank units by pi/c i 
+
+> 26:
+
+Retain top-scoring units  
+
+> 27:
+
+Emit compressed history verbatim (chronological order)  
+
+> 28:
+
+end if  
+
+> 29:
+
+Continue ReAct execution (gpt-4.1-mini)  
+
+> 30:
+
+end while  
+
+> 31:
+
+end for  
+
+> 32:
+
+5. Evaluation  
+
+> 33:
+
+Run hidden unit tests to compute TGC  
+
+> 34:
+
+return Outcome 
+
+Figure 9: AppWorld: agentic evaluation of LRE under token budget constraints and Pareto efficiency criteria. 
+
+15 Require: History H = [( a1, o 1), . . . , (at, o t)] , budget B, keep-last k 
+
+> 1:
+
+recent ← H[t−k+1 : t] ▷ last-k steps: always kept, uncapped  
+
+> 2:
+
+older ← H[1 : t−k] 
+
+> 3:
+
+if tokens(system) + tokens(task) + tokens( H) ≤ B then  
+
+> 4:
+
+return system ∥ task ∥ H ▷ trigger not reached  
+
+> 5:
+
+end if  
+
+> 6:
+
+older _kept ← HANDLE OLDER (older , B ) ▷ only per-baseline step  
+
+> 7:
+
+return system ∥ task ∥ older _kept ∥ recent  
+
+> 8:
+
+Per-baseline HANDLE OLDER (older , B ): 
+
+> 9:
+
+No-compression: return older ▷ B =∞, never triggers  
+
+> 10:
+
+FIFO: return [ ] ▷ drop older; last-k only  
+
+> 11:
+
+ACON: return [ LLM SUMMARIZE (older) ] ▷ +1 compressor call, lossy  
+
+> 12:
+
+LRE: return LRE KNAPSACK (older , B ) ▷ verbatim, learned  
+
+> 13:
+
+function LRE KNAPSACK (older , B ) 
+
+> 14:
+
+units ← pair each step into one (ai, o i) unit  
+
+> 15:
+
+for u ∈ units do  
+
+> 16:
+
+pu ← f (features( u)) ▷ scorer predict_proba ; 10 causal feats  
+
+> 17:
+
+end for  
+
+> 18:
+
+sort units by pu/cost( u) descending ▷ value density  
+
+> 19:
+
+kept ← ∅ , used ← 0 
+
+> 20:
+
+for u ∈ units in sorted order do  
+
+> 21:
+
+if used + cost( u) ≤ B then  
+
+> 22:
+
+kept ← kept ∪ { u}; used ← used + cost( u) 
+
+> 23:
+
+end if  
+
+> 24:
+
+end for  
+
+> 25:
+
+return [ u ∈ units : u ∈ kept ] ▷ verbatim, chronological  
+
+> 26:
+
+end function 
+
+> Figure 10: Domain A (agent): shared eviction trigger; methods differ only in H ANDLE OLDER . No-compression keeps everything (unbounded), FIFO drops the older steps, ACON replaces them with one abstractive LLM summary, and LRE keeps the highest learned-relevance-per-token steps verbatim.
+
+C Baseline mechanisms and implementation 
+
+This appendix specifies, for every baseline in both domains, the exact eviction mechanism we implemented, so the comparisons in §5 are reproducible. 
+
+C.1 Agent domain 
+
+All agent methods share one eviction interface (Algorithm 10): the system prompt, the task, and the last k
+
+steps are always kept uncapped, and the methods differ only in how the older steps are handled once the history crosses the token budget B.
+
+Notes. No-compression is the “keep everything” upper bound (prompt grows with the horizon). FIFO is verbatim but importance-blind: any load-bearing fact past the last-k window is lost. ACON adds one compressor LLM call and uses ACON’s native preserve _last _k=1 (the default in (Kang et al., 2025)), whereas FIFO and LRE use k=5 . LRE is bounded, importance-aware, verbatim, and language-model-free. The scorer is a learner over causal features (Table 6). 
+
+ACON compression prompt. We use ACON’s shipped (not iteratively optimized) compression prompt verbatim (the system prompt and the prompt_history_v2 ), changing only the budget to B=2048 . The 16 code for ACON was kept unmodified and used just as shipped 1.
+
+ACON compression SYSTEM prompt 
+
+# ACON compression SYSTEM prompt (context_opt/system_prompt.jinja): You are an agent tasked with extracting and refining a concise and optimized version of the context based on the user instruction and other provided information. # ACON history-compression GUIDELINE (context_opt/prompt_history_v2.jinja): You are maintaining a structured context-aware summary for a productivity agent. You will be given the user instruction for the agent, a list of interactions corresponding to actions taken by the agent, and the most recent previous summary if one exists. Produce the following: ### REASONING Summarize key progress, decisions made, important observed outcomes, and rationale behind actions taken so far. Include how earlier steps influenced later ones and why certain data is retained in the summary. ### COMPLETED List completed subtasks or successful outcomes, with brief results if applicable. ## [Information Source] ### USER INSTRUCTION {{ task }} ## [PREVIOUS SUMMARY] (if any) {{ prev_summary }} ## [HISTORY OF INTERACTIONS] {{ history }} ## PRIORITIZE 1. Keep all sections relevant and concise. 2. Use reusable structured formats when summarizing artifacts. 3. Ensure agent can resume task with no loss of information. 4. Include key info from errors or failed attempts to prevent repeated mistakes. 5. Preserve all essential artifacts and data needed to complete the task. ### [Output Format] Do not include the input or any additional explanation. Only return the formatted summary. 
+
+C.2 Conversational domain 
+
+Every conversational method reduces to a per-unit keep-score (higher means retain) over the units of one group (a conversation in LoCoMo, a question’s haystack in LongMemEval S ); retention keeps the top budget-fraction. Algorithm 11 gives the shared loop and every baseline’s score. 
+
+Notes. MemoryBank (Zhong et al., 2024) is the Ebbinghaus curve R = exp( −t/S ) with S=1 , t =age ;with no access stream it is strictly age-monotone and therefore induces the same ranking as recency .Content and dense salience score typicality relative to the group centroid, not relevance to any query (query blind). LLMLingua-2 (Pan et al., 2024) runs the pretrained llmlingua-2-bert token classifier 2
+
+and is task-agnostic (it never reads a question); its generic LABEL_0/1 keep-class is calibrated empirically against information-dense probes. Dense embeddings use a frozen BGE encoder 3.
+
+LRE variants. All three share one model (an L2 logistic regression with balanced class weights, vectorizer and scaler fit per fold on training units only) and the inference si = P (relevant | ui) with no neural pass. They differ only in label and features: • LRE-supervised . Label: human gold evidence already given in the benchamark. • LRE-self-sup (zero-annotation). Label: the response-overlap proxy (a turn is positive if its content tokens cover ≥ 0.4 of some eventual answer’s), derived from later responses with no annotation 
+
+> 1
+
+Forked from https://github.com/microsoft/acon at commit d63f9ae .
+
+> 2
+
+LLMLingua-2 model: https://huggingface.co/microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank 
+
+> 3
+
+BGE model: https://huggingface.co/BAAI/bge-small-en-v1.5 
+
+17 Require: Group of units U = {u1, . . . , u n}, score function score( ·), budget fraction b
+
+Require: score is query-blind or reads the question (reference)  
+
+> 1:
+
+Scoring  
+
+> 2:
+
+for each unit ui ∈ U do  
+
+> 3:
+
+si ← score( ui, U ) ▷ per-baseline; cases below  
+
+> 4:
+
+end for  
+
+> 5:
+
+Retention  
+
+> 6:
+
+K ← ⌈ b n ⌉ 
+
+> 7:
+
+keep ← indices of the K highest si 
+
+> 8:
+
+return [ ui : i ∈ sort(keep) ] ▷ verbatim, chronological  
+
+> 9:
+
+Per-baseline score( ui, U ): 
+
+> 10:
+
+Recency: si ← 1/(1 + age i) 
+
+> 11:
+
+MemoryBank: si ← exp( −10 age i/(n−1)) ▷ monotone in age ⇒ recency  
+
+> 12:
+
+Content salience: si ← cos  tfidf( ui), ¯cU
+
+ ▷ centroid typicality  
+
+> 13:
+
+Dense salience: si ← cos  emb( ui), ¯eU
+
+ ▷ 1 encoder pass / unit  
+
+> 14:
+
+LLMLingua-2: si ← mean t∈ui P (keep | t) ▷ calibrated keep-class  
+
+> 15:
+
+LRE: si ← P (relevant | ui) ▷ logistic regression; no neural pass 
+
+Figure 11: Domain B (conversational): shared score-then-retain eviction, with each baseline’s per-unit score. age i
+
+is distance from the most recent unit; ¯cU , ¯eU are the group TF-IDF / embedding centroids; query-aware references read the question and are upper bounds, never competitors. 
+
+needed. Section D.1 shows the justification for the choice of token coverage value. • LRE-content (ablation). Label: human gold evidence (same as LRE-supervised). Features: the TF-IDF text vector alone , with the six trajectory features removed. This isolates the contribution of the trajectory block: the gap between LRE-supervised and LRE-content on a given dataset is what those six features add over text-only scoring. 
+
+D Justification of Self-Supervised Label Design Choices 
+
+We evaluate label quality using two quantities: (i) AUC-vs-gold , which measures how well self-supervised labels align with human-annotated gold relevance labels (higher is better; 0.5 corresponds to random alignment), and (ii) positive rate , which denotes the fraction of units labeled as positive under a given rule. For agentic settings, we additionally report LOTO AUC (Leave-One-Task-Out AUC), which measures how well a classifier trained on these labels generalizes to unseen tasks. 
+
+D.1 Conversational Overlap Threshold ( τ = 0 .4)
+
+For conversational self-supervision, a turn is labeled positive if its content overlaps with a down-stream response above a threshold τ . We select τ = 0 .4 based on a joint sweep across LoCoMo and LongMemEval S , evaluating AUC-vs-gold and label sparsity. Table 7 summarizes the results.                               
+
+> τLoCoMo AUC LongMemEval SAUC LoCoMo + LongMemEval S+0.2 0.742 0.647 0.94 0.47 0.3 0.754 0.686 0.85 0.38
+> 0.4 0.769 0.698 0.66 0.29 0.5 0.764 0.682 0.61 0.22 0.6 0.758 0.679 0.39 0.13 0.8 0.754 0.652 0.30 0.11
+
+Table 7: Sweep over response-overlap threshold τ .
+
+Why τ = 0 .4 is chosen: First, it is the joint maximizer of AUC-vs-gold across both datasets. Second, 18 it lies in a flat optimum region ( τ ∈ [0 .3, 0.5] ), where performance varies by at most 0.016 AUC. This indicates stability. 
+
+Why not other values: Lower thresholds ( τ = 0 .2, 0.3) produce excessively high positive rates on LoCoMo ( 0.85 –0.94 ). This collapses the ranking problem into near-uniform positives and weakens discrimination. Such a near-degenerate label distribution does not reflect real-world deployment nuances. Higher thresholds ( τ ≥ 0.5) reduce coverage too aggressively (down to 0.11 –0.61 positive rate) and degrade alignment with gold annotations. 
+
+D.2 Agentic Reuse Breadth ( b = 3 )
+
+For agentic trajectories, a step is labeled positive if an identifier it introduces is reused at least b times in subsequent steps. We evaluate b ∈ { 1, 2, 3, 4, 5} using Leave-One-Task-Out evaluation.                     
+
+> bPos-rate # Positives LOTO AUC 10.811 1269 0.878 20.582 911 0.830
+> 30.432 676 0.828
+> 40.335 524 0.835 50.271 424 0.847
+> Table 8: Sweep over reuse breadth bfor agentic self-supervision.
+
+LOTO AUC (Leave-One-Task-Out Area Under the ROC Curve) measures how well a classifier trained on these labels ranks truly relevant steps above irrelevant ones in unseen tasks. A value of 0.5 corresponds to random ranking, while 1.0 corresponds to perfect separation. 
+
+Why b = 3 is chosen: Unlike the conversational case, LOTO AUC is relatively flat across all values (0.83 –0.88 ). We therefore select b = 3 based on semantic and operational criteria. First, b = 1 is overly permissive, marking 81% of steps as positive. This collapses the eviction task into a near-majority-class problem, where ranking becomes dominated by trivial structural correlations rather than load-bearing utility. Second, b = 3 yields a moderate positive rate ( ≈ 0.43 ), which aligns with the expected compression domain (Kang et al., 2025) in which only a subset of trajectory state can be retained. 
+
+Why not other values: Values b ≥ 4 become too selective, reducing the positive set to 27 –34% , which harms coverage of reusable context. b ≤ 2 over-labels transient identifiers that are only briefly reused. We choose a parameter value that reflects real deployment nuances and therefore fix b = 3 , a semantic choice that captures repeatedly-reused, load-bearing state while maintaining a stable and informative training signal. 
+
+E Metrics: definitions and recovery 
+
+This appendix defines every reported score in both domains, then describes how the agent metric and its costs are recovered honestly. 
+
+E.1 Conversational relevance scores ROC-AUC (per group). Each method assigns a real-valued keep-score si to every unit ui of a group, scored against the binary gold label yi ∈ { 0, 1}. Let P = {i : yi=1 } and N = {i : yi=0 } be the relevant and irrelevant units, with P = |P| , N = |N | . The area under the receiver-operating-characteristic curve equals the probability that a random relevant unit outscores a random irrelevant one, computed exactly as the normalized Mann–Whitney statistic (Mann and Whitney, 1947) 
+
+AUC = 1
+
+P N 
+
+X
+
+> i∈P
+
+X
+
+> j∈N
+
+
+
+1[ si > s j ] + 12 1[ si = sj ]
+
+
+
+.
+
+AUC = 1 is a perfect ranking (every relevant unit above every irrelevant one), 0.5 is chance (random ordering), and a value < 0.5 means the score is anti -correlated with relevance. AUC is threshold-free and 19 invariant to the positive rate, so it measures the ranking quality an eviction policy needs (what to keep first) without committing to a budget. A group is scored only if it contains at least one relevant and one irrelevant unit (otherwise AUC is undefined). 
+
+Macro-AUC. The per-group AUCs are averaged with equal weight, macro-AUC = 1
+
+> |G|
+
+P 
+
+> g∈G
+
+AUC g,so a large group cannot dominate a small one; the groups are conversations on LoCoMo and questions on LongMemEval S .
+
+Recall@budget. A retention policy keeps the K = ⌈b n ⌉ highest-scoring of the n units at budget fraction b ∈ { 0.1, 0.2, 0.4}. Recall@ b = |kept ∩ P| /P is the fraction of relevant units that survive, averaged over groups. 
+
+Budget@recall (iso-accuracy efficiency). The inverse statistic: the smallest budget fraction b at which recall@ b reaches a target (e.g. 0.8), averaged over groups, reported as the saving relative to recency at the same recall. 
+
+E.2 Conversational answer-quality scores (downstream) Token-F1 (LoCoMo). With the answerer reading only the retained context, we compare its answer A to the gold answer G as bags of normalized content tokens. With prec = |A∩G|/|A| and rec = |A∩G|/|G|,token-F1 = 2 prec · rec prec + rec ,
+
+the standard extractive-QA overlap, averaged over questions. 
+
+LLM-judge (LongMemEval S ). Free-form answers are graded by a model stronger than the answerer (gpt-4o judging gpt-4.1-mini, to avoid self-grading): the judge sees the question, the gold answer, and the candidate, and returns a binary correct/incorrect vote; the score is the fraction judged correct. The judge was validated on crafted correct, wrong, and paraphrase cases. 
+
+E.3 Conversational serving-cost scores Throughput, neural calls, dollar cost. Units per second is the measured rate at which a loaded scorer scores resident units (hardware recorded). Neural forward passes per unit counts the encoder or classifier passes a method performs per scored unit. 
+
+E.4 Agent scores Task Goal Completion (TGC). The all-or-nothing success metric on AppWorld: a task scores 1 only if 
+
+every hidden unit test passes (partial credit such as 3 of 4 tests counts as 0), and TGC % over a difficulty bucket is the mean over its tasks. How we recover true TGC (rather than the inflated self-report) is in §E.5. 
+
+Cost axes. cLLM is compressor language-model calls per task (the number of compression events). 
+
+Input tokens per request (in/req) is the mean prompt size per generation, our peak-token proxy since the true per-step peak is not logged. Total tokens per task sums agent and recovered compressor tokens. 
+
+E.5 Recovering the agent metric and costs Recovering true TGC by replay. The agent framework ships with its environment evaluation disabled, so the run’s self-reported completion flag overstates success and is not Task Goal Completion. We recover true TGC at zero model cost: because a freshly constructed environment resets task state, we replay each task’s logged action sequence into a fresh environment and then call the environment’s evaluation, which passes only when all hidden unit tests pass. The replay reconstructs the final state deterministically rather than reporting the empty-environment artifact. All reported TGC values use this recovered metric, never the self-report. Algorithm 12 gives the procedure. 20 Require: Task id T , logged action sequence (the agent’s code blocks) 
+
+1: world ← APP WORLD (T ) ▷ fresh env: resets to T ’s initial state 
+
+2: for each action in the logged sequence do 
+
+3: world .execute  clean _code(action)  ▷ replay to rebuild final state; errors swallowed 
+
+4: end for 
+
+5: r ← world .evaluate() ▷ run hidden unit tests on the reconstructed state 
+
+6: tgc ←  r. num _passes = r. num _tests  ∧  r. num _failures = 0  ▷ all-or-nothing 
+
+7: return tgc ▷ written to tgc.json ; never the agent self-report 
+
+Figure 12: Recovery of true TGC by replay ($0, no LLM call): replay_eval.py . A fresh environment resets to the initial state, so we replay the logged actions to reconstruct the agent’s final state before evaluating. 
+
+F Qualitative case study: Venmo request 
+
+This appendix gives the full qualitative example summarized in §5.2: an outcome (Example A) and the controlled mechanism (Example B), both drawn from AppWorld task 024c982_2 .
+
+Qualitative example A: only LRE completes the task 
+
+Task (024c982_2 ): “Request $28 privately on Venmo from my roommate, Melissa, with a note, ‘For the movie tickets’.”                    
+
+> Policy Steps TGC Failure mode
+> No compression 13 ✗self-completes but fails 1 of 7 hidden tests (6/7) FIFO (recency) 49 (cap) ✗loses login state →re-authenticates in a loop (33/49 login steps); 0/7 ACON (LLM compression) 49 (cap) ✗summary drops the token →re-authenticates (34/49 login steps); self-reports done but 6/7
+> LRE (ours) 18 ✓completes correctly, all 7 tests pass (7/7)
+
+Qualitative example B: why the load-bearing credential survives only under LRE 
+
+The task hinges on one load-bearing identifier : the Venmo access_token obtained at login, required by every subsequent API call. How each policy treats it under the same B=2048 budget: 
+
+LRE (extractive) : the scorer ranks the login turn high and keeps it verbatim within budget, so the exact token is still present at step 17, which creates the request directly: 
+
+# step 17: I will now create a private payment request of $28 to her # with the note "For the movie tickets" using the access token. payment_request = apis.venmo.create_payment_request(access_token=..., amount=28, description="For the movie tickets", private=True) -> {"message": "Payment request created.", "payment_request_id": 6097} # then complete_task() 
+
+FIFO (recency) : preserve_last_k=5 scrolls the login turn out as history grows, so the agent “forgets” it already authenticated and re-logs-in. It spends 33 of 49 steps on login/token actions before hitting the step cap: 
+
+# (repeated) I have the Venmo password. I will now login to Venmo using ... -> {"access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."} # re-issued, never used to finish 
+
+ACON (abstractive) : its LLM summary preserves the reasoning but drops the exact token (the lossy-compression failure mode). It too re-authenticates ( 34 of 49 steps); it eventually self-reports completion but still fails a hidden test: 
+
+### REASONING The agent 's objective is to request $28 privately on Venmo from Melissa with the note "For the movie tickets." ... identified the correct API endpoint (create_payment_request) ... retrieved the Venmo password from stored credentials ... # keeps "$28", "Melissa", "create_payment_request"; # NO access_token -> the agent must re-authenticate 
+
+Takeaway. The task turns on an exact opaque credential. Extractive eviction (LRE) preserves it bit-for-bit; recency (FIFO) scrolls it out; abstractive compression (ACON) paraphrases it away. Only LRE still holds the value the final action depends on. 21 G Qualitative case study: Simple Note playlist 
+
+This appendix gives the full qualitative example summarized in §5.2: an outcome (Example A) and the controlled mechanism (Example B), both drawn from AppWorld task d194965_2 .
+
+Qualitative example A: only LRE completes the task 
+
+Task (d194965_2 ): “I jotted down some songs in Simple Note recently. Make a playlist titled ‘Songs from Simple Note’ out of it.”                    
+
+> Policy Steps TGC Failure mode
+> No compression 30 ✗self-completes but fails 1 of 6 hidden tests (5/6) FIFO (recency) 49 (cap) ✗loses the note and login state →re-fetches and re-authenticates in a loop (34/49 login steps); 3/6 ACON (LLM compression) 49 (cap) ✗summary drops the tokens and song list →re-authenticates (31/49 login steps); 3/6
+> LRE (ours) 19 ✓completes correctly, all 6 tests pass (6/6)
+
+Qualitative example B: why the load-bearing state survives only under LRE 
+
+This task chains two apps and a data hand-off, so it hinges on several load-bearing identifiers that must all be in context at the playlist-assembly step: the Simple Note access_token , the song list 
+
+extracted from the note, the Spotify access_token , and the playlist_id . How each policy treats them under the same B=2048 budget: 
+
+LRE (extractive) : the scorer ranks the note-content turn and both login turns high and keeps them 
+
+verbatim , so at step 13 the exact Spotify token is still present and the playlist is created directly (then its songs are added): 
+
+# step 13: logged in to Spotify; create the playlist using this access token. spotify_access_token = spotify_login_response["access_token"] create_playlist_response = apis.spotify.create_playlist(access_token=spotify_access_token, title="Songs from Simple Note") -> {"message": "Playlist created.", "playlist_id": 654} 
+
+FIFO (recency) : preserve_last_k=5 scrolls the note content and login state out as history grows, so the agent “forgets” both — it re-fetches the note it already read and re-logs-in, spending 34 of 49 
+
+steps on login/token actions before the cap: 
+
+# (repeated) I have the content of the note which contains the songs. I will parse ... # (repeated) The Spotify login API requires both username and password. I will try to login ... 
+
+ACON (abstractive) : its LLM summary preserves the plan (read the note, build the playlist) but 
+
+drops the exact tokens and the song list (the lossy-compression failure mode). It too re-authenticates (31 of 49 steps) and never assembles all the state at once, hitting the cap and failing: 
+
+### REASONING The agent 's objective is to create a Spotify playlist titled "Songs from Simple Note" from songs noted in Simple Note ... located the relevant note ... logged in to retrieve credentials ... # keeps the plan and titles; # NO access_token, NO verbatim song list 
+
+Takeaway. The task turns on exact opaque state (two access tokens, the playlist id, and the verbatim song list) that a paraphrase cannot reconstruct. Extractive eviction (LRE) preserves it bit-for-bit; 
+
+recency (FIFO) scrolls it out; abstractive compression (ACON) paraphrases it away. Only LRE still holds the values the final actions depend on. 
+
+H Additional AppWorld Results 
+
+H.1 Peak Prompt Tokens 
+
+Table 9 reports per-task peak prompt statistics on AppWorld test_normal . This table shows the corre-sponding minimum, maximum, mean, and median values. LRE has the lowest maximum peak among the evaluated policies. FIFO and ACON keep a bounded working context, but failed runs can still reach larger task-level peaks because they continue to the step cap. 22 Method Min peak Max peak Mean Median Peak saving (vs worst max) No compression 3,250 25,043 9,230 7,592 21.5% FIFO (recency) 3,287 28,565 5,646 5,155 10.5% ACON (in-fork) 3,643 31,918 5,121 4,832 —     
+
+> LRE (ours) 3,545 15,388 6,912 6,640 52%
+
+Table 9: Per-task peak prompt tokens on AppWorld test_normal . FIFO and ACON loop to the step cap, so their max peak exceeds full context; LRE is the only bounded method whose max peak falls below it, saving as much as 
+
+52% against the worst-case peak (ACON’s). 
+
+H.2 Hidden Unit-Test Failures 
+
+Table 10 reports hidden unit-test failure rates. The pattern is similar to Task Goal Completion: FIFO and ACON fail substantially more tests overall, while LRE remains closer to the no-compression baseline.                      
+
+> Unit-test failure rate (%, ↓)Method Avg Easy Med Hard No compression †27.0 17.6 22.3 33.9 FIFO (recency) 51.6 18.1 52.7 64.8 ACON (in-fork) 58.7 19.9 58.3 74.9
+> LRE (ours) 36.0 8.8 28.3 52.2
+
+Table 10: Unit-test failure rate on AppWorld test_normal by difficulty: the fraction of hidden unit tests that fail (lower is better), the partial-credit complement to the all-or-nothing TGC of Table 2. Tests per split: Easy 216 ,Medium 336 , Hard 525 (1,077 total) 
+
+H.3 Tasks solved only by LRE 
+
+Table 11 lists the AppWorld test_normal tasks solved only by LRE.                                                                            
+
+> Task Diff. No-comp FIFO ACON LRE
+> 024c982_2 E6/7 0/7 6/7 7/7
+> 09b0ee6_1 E1/2 1/2 1/2 2/2
+> 552869a_2 E1/2 1/2 1/2 2/2
+> 59fae45_3 E2/6 4/6 5/6 6/6
+> 0d01c76_3 M2/6 1/6 1/6 6/6
+> 270f1ff_3 M1/11 0/11 1/11 11/11
+> 3aa1a22_1 M6/7 2/7 2/7 7/7
+> 3d9a636_1 M2/5 0/5 1/5 5/5
+> d194965_2 M5/6 3/6 3/6 6/6
+> d6ac34d_2 M8/9 7/9 2/9 9/9
+> ff58e36_1 M2/6 1/6 1/6 6/6
+> 2c544f9_3 H2/6 1/6 2/6 6/6
+> 9016950_3 H3/7 3/7 2/7 7/7
+> f323bae_2 H1/9 0/9 1/9 9/9
+
+Table 11: The 14 AppWorld test_normal tasks (seed 1) solved by LRE alone: hidden unit-test pass counts (passed/total) per policy. LRE passes all tests on every task, while no-compression, FIFO, and ACON each leave at least one test failing. 
+
+I Additional Conversational Results 
+
+I.1 Retention and Downstream Performance 
+
+Figure 13 reports downstream QA performance under fixed retention budgets. On LongMemEval S , the deployable policies cluster more closely and content salience remains slightly ahead of LRE.Content salience leads on this benchmark, because its topically distinctive sessions make centroid typicality a strong proxy for relevance but that advantage is local , not general: the same method 23 5 10 15 20 
+
+0
+
+5 · 10 −2
+
+0.1
+
+0.15 
+
+0.2
+
+0.25 
+
+Context tokens / question ( ×10 3, ↓)
+
+> Answer token-F1 ( ↑)
+
+LoCoMo (token-F1) 
+
+> Full context †
+> Recency
+> Content salience
+> LRE-self-sup
+> LRE-supervised
+
+30 40 50 
+
+0
+
+0.1
+
+0.2
+
+0.3
+
+0.4
+
+Context tokens / question ( ×10 3, ↓)
+
+> Judge correctness ( ↑)
+
+LongMemEval_S (LLM-judge) 
+
+Figure 13: Downstream answer quality versus token cost under a 20% retention budget (Full context † = no eviction). The comparison set is minimal and deployment-oriented: recency is the production default, content salience the strongest non-neural query-blind competitor, and the LRE variants test whether proactive relevance transfers to QA; MemoryBank (ranking-equivalent to recency) and the neural salience baselines (dominated by content salience) are omitted. 
+
+LoCoMo (token-F1) LongMemEval S (LLM-judge) Policy Acc ↑ ctx tok ↓ Acc ↑ ctx tok ↓
+
+Full context † 0.233 18.8k 0.242 50.0k Recency 0.100 3.6k 0.276 26.1k 
+
+Content salience 0.081 4.0k 0.338 36.5k LRE-self-sup 0.160 6.5k 0.280 38.9k 
+
+LRE-supervised 0.177 6.0k 0.296 38.8k 
+
+Table 12: Downstream answer quality at a 20% retention budget. On LoCoMo (token-F1) the full context is best but token-heavy, and LRE leads the budget-constrained policies; on LongMemEval S (LLM-judge) the full context is worst and the deployable policies cluster. 
+
+drops to near chance on LoCoMo, where LRE dominates. Even in this harder setting, however, LRE remains competitive. 
+
+I.2 Serving Cost and Self-Supervision 
+
+Table 13 reports serving cost and iso-recall budget savings. Table 4 compares the self-supervised and supervised variants. Hardware: LoCoMo on Apple M2 (8-core arm64); LongMemEval S on Modal Linux (8 vCPU x86_64 + NVIDIA T4 16 GB). LRE methods run CPU-only on both; dense and LLMLingua use the T4 on LongMemEval S . Within-dataset throughput ratios are hardware-controlled; cross-dataset comparisons should not be made because unit sizes differ. 
+
+Data Method 
+
+neural calls/unit units/sec (CPU) budget@80% (saved vs rec.) LoCoMo Recency 0 7,444,187 0.834 (–) LoCoMo Content salience 0 57,152 0.839 ( −0.6% )LoCoMo LRE-sup 0 129,081 0.411 ( 50 .8% )
+
+LongMemEval S LRE-sup 0 1,181 0.364 ( 41 .5% )LongMemEval S Dense salience (BGE) 1 103 0.449 ( 27 .9% )LongMemEval S LLMLingua-2 1 36 0.690 ( −10 .9% )
+
+Table 13: Conversational serving cost and iso-recall budget saving. LRE does zero neural forward passes and scores resident units on a CPU, whereas the dense and LLMLingua-2 encoders pay one forward pass per unit ( 10 2–10 3×
+
+slower). At iso-recall ( 80% gold recall) LRE reaches the target at roughly half the budget of recency. 
+
+24 J Extended limitations 
+
+This appendix expands the limitations stated in the main text. We group them by scope: evaluation, method, supervision, measurement, and generalization. Each limitation lists what we did to mitigate it and, where relevant, what a deployment would need to verify before relying on LRE. 
+
+Single-seed agent comparison. The AppWorld results are reported at one seed ( s1 ). The host agent (gpt-4.1-mini) is non-deterministic, so per-task outcomes carry run-to-run noise that a single seed cannot characterize. 
+
+In-fork ACON baseline. ACON’s published fork ships the unoptimized compression prompt and we used it as it is. The fair comparison that licenses our claim is the matched in-fork one (identical agent, identical seed, identical evaluation harness). 
+
+Benchmark coverage. We evaluate on three benchmarks: LoCoMo and LongMemEval S for conversa-tional memory, AppWorld for long-horizon agents. These cover dialogue and tool-use coding agents but do not include web-browsing agents, multimodal agents, or open-domain coding agents (e.g., SWE-bench). The Pareto-efficiency claim is supported within these regimes. 
+
+Subset of AppWorld used. We evaluate on test_normal (168 tasks). We do not evaluate on 
+
+test_challenge (417 tasks). 
+
+Budget-bounded performance. On tasks whose required state exceeds the operating budget (AppWorld Hard at B = 2048 being the clearest case) no-compression wins because retaining everything is the only way to keep state that does not fit. LRE therefore complements, rather than replaces, unbounded retention when the deployment can afford it. The right deployment question is whether the budget is binding; where it is, LRE is Pareto-efficient. 
+
+Eviction unit granularity. Our agent unit is the (action, observation) pair; our conversational unit is the dialogue turn or session. We do not evict at the token level inside a single forward pass, which is what KV-cache methods such as H 2O (Zhang et al., 2023), SnapKV (Li et al., 2024), Selection-p (Chung et al., 2024), and TRIM-KV (Bui et al., 2025) do. Token-level methods are complementary: they operate inside the model and require model-internal signals; LRE operates outside the model and requires only logged behavior. A deployment could plausibly combine them (LRE for unit-level retention, token pruning inside each retained unit), but we do not evaluate that combination here. 
+
+Host-model coupling of training data. We do not test transfer to other host models (different tokenizers, different action styles, different failure modes). The scorer is small enough to retrain per host model in minutes from logged behavior, so the limitation is operational rather than fundamental, but a deployment switching host models should retrain. 
+
+Feature-set dependence. The learned scorer operates on a compact set of causal features that we designed to be inexpensive, model-agnostic, and available at decision time. While these features transfer across the benchmarks studied here, we do not claim that they are universally optimal. Different deploy-ments may expose different signals, interaction patterns, memory units, or notions of future utility. In practice, a production system should treat our feature set as a reference implementation rather than a fixed specification, and should measure and validate its own candidate features from logged behavior before deployment. The broader claim of LRE is that future utility can be learned from causal signals available at write time, not that any particular feature set is universally sufficient. 
+
+Fixed self-supervised threshold. The conversational self-supervised label uses a fixed answer-recall threshold of τ = 0 .4, jointly optimal on LoCoMo and LongMemEval S . In deployment, however, the right rule is to set τ implicitly (through a target positive rate on a sample of logged exchanges) rather than to inherit our value. The τ = 0 .4 choice is justified empirically (Table 7); we do not claim it is universal. 25 No multimodal or extended unit types. The eviction unit is text. Multimodal agents whose load-bearing state includes images, audio, or large code blobs would require the unit representation and the token-cost function to be extended; we have not done so. 26
