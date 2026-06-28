@@ -1,0 +1,721 @@
+Title: RMTL: Reinforced Micro-task Learning for Long-Horizon Manipulation with VLM Rewards
+
+URL Source: https://arxiv.org/pdf/2606.26175v1
+
+Published Time: Fri, 26 Jun 2026 00:02:29 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# RMTL: Reinforced Micro-task Learning for Long-Horizon Manipulation with VLM Rewards 
+
+Anıl Can Ate¸ s∗
+
+Istanbul Technical University 
+
+atesa19@itu.edu.tr 
+
+Orhan Kahraman 
+
+Istanbul Technical University 
+
+kahramano20@itu.edu.tr 
+
+Cihan Topal 
+
+Istanbul Technical University 
+
+cihantopal@itu.edu.tr 
+
+(a) Single global prompt 
+
+> env step
+> VLM reward  near-flat early
+> (no useful gradient)
+> "a robot gripper lifting a red cube"
+
+(b) RMTL (ours): per-micro-task prompts   
+
+> env step
+> approach align grasp
+> piecewise-monotone signal
+
+Figure 1: RMTL at a glance. A single task-level VLM prompt can produce a nearly flat reward over early parts of a long-horizon manipulation trajectory. RMTL instead decomposes the task into stage-specific language prompts and evaluates the agent using only the currently active micro-task prompt. This produces more progress-aligned reward variation within each stage. 
+
+Abstract 
+
+Reinforcement learning (RL) for robotic manipulation often requires manually designing a dense reward function, which is difficult to tune and often fragile, or learning a reward from human demonstrations or preferences, which can be expensive. A recent line of work uses pretrained vision-language models (VLMs) as zero-shot reward models, replacing these costs with a single text prompt. However, we argue that a single global prompt is too coarse for long-horizon manipulation tasks with randomized initial conditions. The single-prompt VLM reward is near-flat for much of the trajectory, making early progress hard for the agent to detect. We propose Reinforced Micro-Task Learning (RMTL), an approach that decomposes a manipulation task into a small set of language-described micro-tasks and trains the agent to switch between them. At each step, the agent receives a multi-view VLM reward computed using the prompt of the currently active micro-task and averaged across multiple camera views to reduce the effect of view-specific occlusions. A reverse curriculum gradually exposes the agent to harder initial conditions, while a PPO worker is first trained with a fixed distance-based rule that selects the active micro-task. We then replace this rule with a learned hierarchical manager, turning rule-based phase selection into a fully learned hierarchical policy. We instantiate RMTL on the Fetch manipulation environment using three short stage-specific prompts and without additional prompt tuning. Experiments show that RMTL provides more informative reward signals than single-prompt VLM rewards, enabling faster learning. These results suggest that decomposing VLM rewards into micro-task-specific language prompts can substantially improve the scalability of language-guided reinforcement learning for robotic manipulation. 
+
+> ∗Corresponding author. Preprint.
+> arXiv:2606.26175v1 [cs.RO] 24 Jun 2026
+
+1 Introduction 
+
+Designing a dense reward function for a long-horizon manipulation task is notoriously hard. Hand-engineered shaping signals are brittle and rarely transfer across embodiments or tasks; reward learning from human demonstrations or preferences is expensive and difficult to scale. A recent line of work circumvents both options by using a frozen pretrained vision-language model (VLM) as a zero-shot reward model [ 16 , 19 , 10 ]. The agent receives, for each rendered frame, a similarity score between the frame’s image embedding and a short natural-language description of the desired outcome. 
+
+The single-prompt failure mode. While appealing, a single global prompt that describes the final 
+
+goal state is poorly suited to long-horizon control with randomized initial conditions. Empirically the language reward is near-flat for most of the trajectory: the gripper spends many steps far from any frame configuration that the prompt describes, so the embedding similarity changes only marginally as it moves. At the same time, any one camera is hostage to gripper- and cube-induced occlusion: a perspective that conveniently shows the cube one moment can be entirely blocked by the gripper the next. Both effects waste signal. 
+
+Contributions. We propose Reinforced Micro-task Learning (RMTL) , a pipeline that decom-poses a manipulation task into a small set of language-described micro-tasks and trains an agent to switch between them, with VLM rewards aggregated over multiple camera views and a reverse curriculum on initial conditions (Figure 1). Concretely, we contribute the following: 1. We show that decomposing the VLM reward into three short, stage-specific language prompts (approach , align , grasp ) turns a near-flat single-prompt signal into a piecewise-monotone signal that PPO can climb, on the same environment and same VLM (§3.3, 4.2; Figure 5). 2. We show that a small learned hierarchical manager , BC-warmstarted from a rule-based selector and refined by REINFORCE over a frozen PPO worker, matches or exceeds the rule while remaining stable (§3.6, 4.2; Figure 7). 3. We show that multi-view aggregation of per-camera VLM scores reduces per-view occlu-sion noise and yields a smoother training signal than any single view, with no gradient-shape penalty (§3.2; Figures 3 and 8). 4. We show that a reverse curriculum is the necessary glue: without it the language reward is too uninformative at the random-init endpoint to bootstrap PPO (§3.4, 4.2; Figure 6). The remainder of the paper introduces related work (§2), develops the method (§3), presents experi-ments (§4), and discusses limitations and future work (§5, 6). 
+
+2 Related work 
+
+RL for robotic manipulation. Reinforcement learning in simulation has produced standard bench-marks for contact-rich manipulation. The Fetch family of mobile-manipulator tasks introduced by Plappert et al. [13] highlights the recurring difficulty of reward formulation: in pick-and-place, agents typically rely on dense hand-designed geometric rewards or on sparse binary success signals. Sparse rewards demand excessive exploration, while dense geometric shaping is sensitive to local minima and assumes access to privileged simulator state. Our work removes this privileged state from the reward path and instead derives a dense reward purely from rendered visual observations. 
+
+Pixel-based and visual RL. Moving from state to pixel observations introduces a sample-efficiency gap that has been partially closed by representation learning. RAD [ 7] shows that diverse image augmentations alone let pixel-based RL match state-based methods, and CURL [ 6] achieves the same with contrastive self-supervision. These methods improve the encoder of the policy but still rely on environment-provided task rewards. We are orthogonal: the environment provides no intrinsic task reward and the visual observation is the reward, computed by an external frozen VLM. 
+
+VLMs as reward models. A growing body of work uses pretrained vision-language models to score RL trajectories. Rocamonde et al. [16] introduce VLM-RMs, a family of zero-shot rewards that contrast a target prompt against a baseline using CLIP [ 14 ]; we build directly on this projected scorer and extend it to per-micro-task prompts and multi-view aggregation. Sontakke et al. [19] use 2a video-text encoder for one-shot imitation. Ma et al. [10] treat the VLM as a code generator for hand-shaped reward functions. Other lines pretrain representations whose embeddings double as rewards: VIP [ 8] derives a value-implicit embedding from human videos, LIV [ 9] adds language-image rewards from action-free video, and Fan et al. [4] train an internet-scale contrastive reward model for language-conditioned tasks in Minecraft. Across all of these the reward is conditioned on a 
+
+single, global language prompt describing the final goal, which is the regime in which we identify the near-flat-reward failure mode and which our micro-task decomposition is designed to address. 
+
+Hierarchical RL and task decomposition. Hierarchical methods that decouple high-level skill selection from low-level control are a long-standing line of research; the options framework of Sutton et al. [20] formalises the multi-level control structure, and option-critic [ 2] provides an end-to-end gradient. For continuous control, HIRO [ 12 ] successfully applies a goal-conditioned two-level hierarchy. A long-standing open question in this line is how to discover sub-goals automatically. Our RMTL manager grounds sub-goals directly in language: a small ( ≈ 2k-parameter), discrete-action manager selects a micro-task prompt and is trained with REINFORCE on segment returns. Stage 1 supplies the manager with a rule-based teacher; Stage 2 replaces that rule with the learned manager itself, turning heuristic phase selection into a fully learned policy. 
+
+Language-conditioned policies vs. language as reward. Beyond reward generation, language has been used directly to condition control policies and ground robotic affordances. RT-1 [ 3] tokenises language instructions and camera images and outputs motor commands; SayCan [ 1 ] grounds the semantic knowledge of LLMs in pretrained robotic skills so that high-level planners can sequence them. These methods rely heavily on demonstration datasets and imitation learning. Our setting is purely RL: language is used only as a supervisory signal for the reward, and policies are trained from scratch in simulation without expert demonstrations. 
+
+Curriculum and reverse curriculum learning. Reverse curricula [ 5] schedule the distribution of initial conditions from easy to hard. We adopt a scalar form: a single difficulty knob d ∈ [0 , 1] 
+
+interpolates the gripper between an "above-cube" trivial start and a fully randomized workspace init, and is gated by per-stage success thresholds. 
+
+Imitation-warmstarted policies. Behaviour cloning followed by RL is a common recipe [ 17 ]; we use it for the manager (not the worker), with rule-based teacher labels available essentially for free. 
+
+3 Method 
+
+We organize the method around the data flow shown in Figure 2: at each step the environment renders a small bank of camera views, a frozen VLM scores each view against the prompt of the currently active micro-task, the per-view scores are mean-aggregated into a scalar reward, and a PPO worker uses that reward to update its policy. The active micro-task is selected either by a fixed distance-based rule (Stage 1) or by a learned manager (Stage 2). A reverse curriculum schedules the distribution of initial gripper configurations. 
+
+3.1 Preliminaries and problem formulation 
+
+We formulate robotic manipulation as an episodic finite-horizon reinforcement-learning problem. The interaction between the robot and the environment is modelled as a Markov decision process 
+
+M = ( S, A, P, ρ 0, H, γ ), with state space S, continuous action space A, transition dynamics 
+
+P (st+1 | st, a t), initial-state distribution ρ0, horizon H, and discount factor γ. At each time step the agent observes ot = O(st), samples at ∼ πθ (· | ot) and receives a scalar reward rt. The policy is trained to maximize the expected discounted return: 
+
+J(θ) = Es0∼ρ0, a t∼πθ
+
+"H−1X
+
+> t=0
+
+γtrt
+
+#
+
+. (1) In manipulation, specifying rt is the main bottleneck. Hand-designed dense rewards are brittle and require privileged simulator states, while sparse success rewards make exploration unfeasible in long-horizon tasks where terminal states are rarely reached by an untrained policy. 3appr., align, grasp  
+
+> Reward Shaping
+> action PPO worker
+> (MLP [256, 256])
+> Reverse Curriculum
+> six views
+> MuJoCo Env.
+> (Fetch v4)
+> Manager
+> Text Encoder Prompts Image Encoder
+> Reward Vector
+> Cosine Similarity
+> ...  ...
+
+Figure 2: RMTL data flow. Solid arrows are data; dashed arrows are selection/control. The phase-aware scorer chooses which target embedding to use based on the active micro-task, supplied either by a distance-based rule (Stage 1) or by a learned manager (Stage 2). We instead consider rewards derived from a frozen pretrained vision-language model. Let It = R(st)
+
+denote a rendered image of the environment state (or a tuple of such images, one per camera view), and let Fψ (It, p ) be the scalar compatibility score assigned by a VLM with fixed parameters ψ to image It and text prompt p. The policy parameters θ are optimized; ψ is never updated. In our implementation Fψ is instantiated as a CLIP-style projected-embedding reward (§3.3), but the rest of the method only assumes access to a scalar image-text alignment score. A direct approach is to use a single global prompt pG describing the final task outcome, 
+
+rGt = Fψ (It, p G). (2) For example, pG may describe a robot gripper lifting a cube. This formulation is simple, but it assumes that similarity to the final goal prompt provides a meaningful dense measure of progress 
+
+throughout the trajectory. In long-horizon manipulation that assumption is violated: the robot must pass through qualitatively different stages (reaching, aligning, grasping, lifting), and early states— necessary for eventual success—may have weak semantic similarity to the final goal prompt. The single-prompt reward then becomes nearly flat over large portions of the trajectory, leading to poor credit assignment and weak exploration guidance, especially under randomized initial conditions where most early interactions otherwise carry no learning signal. The problem we address is therefore: given a manipulation MDP, a frozen VLM, and natural-language task descriptions, define a reward that is visually grounded, language-conditioned, and sensitive to intermediate task progress across the full trajectory. 
+
+3.2 Aggregate multi-view semantic scoring 
+
+Manipulation scenes are often partially occluded or ambiguous from a single viewpoint: the gripper may hide the cube, a close-up may omit global pose context, and a wide view may sacrifice fine contact detail. We therefore compute the VLM score independently for each of V =6 fixed viewpoints and take the arithmetic mean as the scalar reward fed to PPO. This aggregate score is a simple way to trade off complementary visual evidence without fusing pixels beforehand. Figure 3 makes the disagreement concrete on one frame: all six cameras see the same instantaneous state, yet their active-micro-task scores differ substantially. The mean smooths these per-view fluctuations while preserving the coarse semantic trend toward the prompt. Over full episodes, two 4wide view 
+
+> VLM = -0.464
+> front
+> VLM = -0.504
+> front side
+> VLM = -0.359
+> isometric
+> VLM = -0.328
+> side
+> VLM = -0.350
+> close up
+> VLM = -0.715
+> Mean VLM reward = -0.453
+
+Figure 3: Per-view vs. aggregate reward on one frame. Six viewpoints of the same scene yield different VLM scores; their mean is the training signal. independent rollouts in Figure 8 show the same pattern: the multi-view mean tracks a smoother trajectory than any single camera. 
+
+3.3 Phased VLM reward 
+
+We score images using the projection-style scorer of Rocamonde et al. [16] adapted to per-micro-task targets. Let E denote the (fixed) image encoder and T the text encoder of a VLM. We encode two groups of prompts once per training run: • a baseline prompt b (a frame with no task progress, e.g. "a robot gripper and a red cube on a table"), • a set of K micro-task target prompts {τi}Ki=1 (one per micro-task, e.g. "a robot gripper pinching a red cube between two fingers"). Their ℓ2-normalised text embeddings are denoted eb = T (b) and eτi = T (τi). For micro-task i, the direction di = eτi − eb identifies the semantic axis from "no progress" to "micro-task i satisfied"; the projection 
+
+Pα(di) = α did⊤
+
+> i
+
+∥di∥22
+
++ (1 − α) I, (3) trades off between rewarding only motion along that axis ( α → 1) and unrestricted cosine similarity to eτi (α → 0). For each camera view v we compute a per-view image embedding xv = E(Iv ) and score 
+
+r(i) 
+
+> v
+
+= 1 − 12 (xv − eτi ) Pα(di) 22, (4) and aggregate over views by the mean 
+
+r(i) 
+
+> t
+
+= 1
+
+V
+
+> V
+
+X
+
+> v=1
+
+r(i) 
+
+> v
+
+. (5) 5We use PE-Core-bigG-14-448 [ 11 ] as the VLM, with α = 0 .9; the analysis that motivates this choice is given in Section C. The scorer in Rocamonde et al. [16] also admits an optional negative -prompt term that subtracts cosine similarity to a distractor prompt; we did not find it necessary in the final configuration. 
+
+3.4 Reverse curriculum 
+
+Training directly under the hardest randomised resets is brittle: the gripper can start far enough from meaningful scene structure that the VLM provides almost no similarity gradient, so exploration never connects to success. We therefore adopt a reverse curriculum that gradually widens the distribution of initial gripper (and finger) poses from an “easy” region (near the object, structured approach) toward the full randomised workspace draw used at convergence. The schedule is organised into five difficulty levels ; each level exposes strictly more challenging initial conditions than the previous one. Progression is governed by online success statistics so that the agent is only exposed to the next level once it reliably solves the current one. Formally, this is the same reverse-curriculum principle as Florensa et al. [5] , specialised to randomised grippers in manipulation. Full numeric defaults (stage ranges, gating statistics, minimum dwell time) are listed in Section A. 
+
+3.5 Stage 1: PPO worker with rule-based micro-task switching 
+
+We instantiate RMTL with K = 3 micro-tasks aligned with the phases of pick-and-place: approach ,
+
+align , and grasp , each associated with one short target prompt (full prompt text in Section A). At every step a deterministic rule selects the active micro-task; the phase-aware scorer indexes the corresponding τit in Eq. (4) , and the worker receives the VLM reward of the currently active micro-task only — never a sum or average across the three. The worker is trained with PPO [ 15 , 18 ]; full hyperparameters are listed in Table 1. 
+
+3.6 Stage 2: learned hierarchical manager 
+
+Stage 2 replaces the rule-based selector of §3.5 with a learned manager πM (ϕ | s): a small MLP with a K-way softmax over the same three micro-tasks, shared across all parallel environments. At every H = 3 environment steps the manager takes one decision ϕ ∈ { 0, 1, 2}, which is broadcast to the worker as a phase-onehot input and to the reward pipeline as the index for τϕ in Eq. (4) . The manager is BC-warmstarted from rule-based labels and then refined by REINFORCE on segment returns; the worker is loaded from a Stage-1 PPO checkpoint and its actor is frozen for the first 50 ,000 
+
+environment steps to stabilise the manager’s REINFORCE target during the most non-stationary phase of training, then thawed at a reduced learning rate. The full procedure (BC warmstart, REINFORCE objective, KL anchor, ε-greedy exploration, freeze schedule, and the Stage-2 data-flow diagram) is given in Section A, with hyperparameters in Table 2 and the end-to-end algorithm in Algorithm 1. Joint manager-and-worker training from scratch is left to future work (§6). 
+
+4 Experiments 
+
+4.1 Setup Environment. We instantiate RMTL on the FetchPickAndPlace-v4 environment from Gymnasium-Robotics [ 13 ], a 7-DoF Fetch arm tasked with picking up a cube and holding it sta-bly with the gripper closed; physics is simulated by MuJoCo [ 21 ]. The environment exposes a 25-dimensional state observation st comprising gripper pose, cube pose, finger opening, and goal location. Actions are 4-dimensional: gripper ∆xyz plus finger opening. Episode success is detected geometrically once the gripper has stably grasped and lifted the cube above the table (full criterion in Section A). Episodes are at most 40 steps long. Object, goal, and gripper positions are randomized within workspace bounds at every reset; the gripper’s initial spatial spread is then modulated by the reverse curriculum (§3.4). 
+
+Visual domain. Pretrained VLMs are trained primarily on natural images and read raw MuJoCo renderings poorly: low-texture surfaces, ambiguous object colors and visual artefacts make image-text alignment unreliable. To narrow this domain gap we apply a high-fidelity rendering setup: the 6Figure 4: Visual-domain modifications applied to the FetchPickAndPlace-v4 renderer. The manipulated cube is rendered in saturated red, the table is given a wooden material, and the back-ground is set to neutral grey, with lighting tuned for contrast. manipulated cube is rendered in a saturated red, the table is given a wooden appearance, the floor and background are set to neutral grey tones, and lighting and material parameters are tuned for contrast and object separation (Figure 4). These changes do not alter the task dynamics or success condition; they only make the rendered scene more semantically legible to the frozen VLM. The rendering setup is identical across all methods we compare. 
+
+Compute. We train every variant on a single NVIDIA A100 GPU with 16 parallel CPU environ-ments per learner. Stage-1 runs typically converge near 600k environment steps; Stage-2 manager runs are trained for an additional 200k environment steps starting from a loaded Stage-1 checkpoint. The complete training setup for the Stage-1 PPO worker is summarised in Table 1; Stage-2 hyper-parameters specific to the learned hierarchical manager are listed in Table 2. Hyperparameters not repeated in Table 2 (environment, multi-view rendering, VLM scorer, reward shaping, RC, PPO worker) are inherited unchanged from Table 1. 
+
+4.2 Results 
+
+We report all curves as eval success rate against environment steps. 
+
+Micro-task vs. single-prompt baseline. Figure 5 compares RMTL (three per-micro-task prompts + multi-view) against two strict counterparts that share the exact same RL hyperparameters and only disable the contribution under test: single global prompt + multi-view and single global prompt + single view . Decomposing the global prompt into three micro-task prompts is the dominant gap: the single-prompt variants fail to converge on the randomised protocol, whereas the per-micro-task variant passes the rule-based PPO baseline. 
+
+Reverse-curriculum progression. Figure 6 shows env steps spent in each RC level and the rolling per-level success rate during Stage-1 training. The pattern that the agent dwells the longest at 0k 60k 120k 180k 240k 300k 
+
+> Environment steps
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Success rate
+> 3 Micro-task prompts
+> Single prompt
+
+Figure 5: Micro-task prompts vs. single-prompt ablation. Success rate for full RMTL, multi-task prompts + multi-view, and single global prompt + multi view, with all other RL settings held fixed. 70k 4k 8k 12k 16k 
+
+Training step 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Success rate
+> Rolling success rate
+> Difficulty
+> S0 (0.0)
+> S1 (0.15)
+> S2 (0.4)
+> S3 (0.65)
+> S4 (1.0)
+
+Curriculum stage 
+
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> Training step  (×10 3)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Difficulty
+
+Figure 6: Reverse-curriculum progression : env steps per level and rolling per-level success rate during Stage-1 training. the hardest levels indicates the randomised-init regime is the binding difficulty rather than any intermediate one. 
+
+Behavioural comparison: rule vs. learned manager. Figure 7 compares four policies on Fetch under random initial conditions. The two hierarchical columns share the same worker checkpoint and differ only in the phase signal — a distance-based rule vs. the learned manager — which isolates the effect of the manager from any change in the worker. The full RMTL stack with the learned manager attains ∼98% success, up from 94% for the rule-based selector and 89% for the non-hierarchical PPO worker, while a single-prompt PPO baseline at the same compute fails entirely ( 0% ). The learned manager agrees with the rule on 73% of its decisions, yet still outperforms it: the rule is therefore not optimal but a useful inductive bias, and using it as a BC teacher (Section A) lets the manager reach an end policy that clears the rule’s ceiling at a fraction of the training cost required to learn phase selection from scratch. 0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5 20.0     
+
+> Environment step
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Gripper cube distance (cm)  (b) Distance trajectory (mean ± 1 std)
+> PPO
+> HRL (rule)
+> HRL (learned)
+> PPO (1-task)
+> PPO
+> HRL (rule)
+> HRL (learned)
+> PPO (1-task)
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Success rate (%)  89% 94% 98%
+> 0%
+> (a) Grasp success
+> PPO
+> HRL (rule)
+> HRL (learned)
+> PPO (1-task)
+> 0
+> 10
+> 20
+> 30
+> 40
+> Min distance reached (cm)  (c) Closest approach (per episode)
+
+Behavioural comparison random initialization test manager rule agreement = 73% 
+
+Figure 7: Behavioural comparison on FetchPickAndPlace-v4 (1000 paired-seed episodes, ran-dom init). (a) Grasp-detection success rate; (b–c) behavioural breakdown over the same episodes. Manager–rule agreement: ~ 73% .81.0                      
+
+> 0.8
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> Shaped VLM reward
+> (a) Shaped VLM reward [1, 0] multi-view mean vs single view
+> shaped reward multi-view mean
+> shaped reward wide view
+> grasp confirmed
+> active task
+> approach
+> align
+> grasp
+> 1.0
+> 0.8
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> Reward [  1, 0]
+> (b) Dense distance reward vs VLM similarity (episode range normalised)
+> raw VLM sim (ep. min-max scaled) [ 1, 0]
+> dense grip cube (ep. min-max scaled) [ 1, 0]
+> 0246810 12 14 16
+> Environment step
+> 0.64
+> 0.66
+> 0.68
+> 0.70
+> Raw VLM sim.  obs. min = 0.635 obs. max = 0.708 = 0.073
+> (c) Raw VLM similarity
+> raw VLM sim. (mean over views)
+
+(a) Episode 1. 1.0                     
+
+> 0.8
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> Shaped VLM reward
+> (a) Shaped VLM reward [1, 0] multi-view mean vs single view
+> shaped reward multi-view mean
+> shaped reward wide view
+> grasp confirmed
+> active task
+> approach
+> align
+> grasp
+> 1.0
+> 0.8
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> Reward [  1, 0]
+> (b) Dense distance reward vs VLM similarity (episode range normalised)
+> raw VLM sim (ep. min-max scaled) [ 1, 0]
+> dense grip cube (ep. min-max scaled) [ 1, 0]
+> 0246810 12
+> Environment step
+> 0.64
+> 0.66
+> 0.68
+> 0.70
+> Raw VLM sim.  obs. min = 0.634 obs. max = 0.704 = 0.070
+> (c) Raw VLM similarity
+> raw VLM sim. (mean over views)
+
+(b) Episode 2. 
+
+Figure 8: Multi-view reward over two episodes. Each sub-figure shows, top to bottom: multi-view mean vs. single wide_view baseline; episode-rescaled VLM similarity vs. a dense −∥ g − o∥ reward; raw VLM similarity. 
+
+Multi-view vs. single-view properties. Figure 8 traces the multi-view mean reward against a single-view baseline ( wide_view ) over two independent eval rollouts. In both episodes the multi-view mean is smoother than any single view and preserves information about gripper configuration that a hand-engineered dense distance reward does not. 
+
+5 Discussion and limitations 
+
+Benefits of RMTL. Three components account for most of the improvement over a single-prompt VLM-RL baseline. (i) The micro-task decomposition converts a near-flat single-prompt VLM signal into a piecewise-monotone signal that PPO can climb (Figure 5). (ii) Multi-view aggregation reduces per-view occlusion noise and yields a smoother training signal than any single view (Figure 8). (iii) 
+
+The reverse curriculum bridges the easy-init and random-init regimes where the language reward alone is insufficient to bootstrap exploration. The behavioural ablation in Figure 7 further isolates the contribution of the learned manager: replacing the distance-based rule with a learned policy lifts random-init grasp-detection success from 84% to ∼98% .
+
+Limitations. The reward signal inherits the perceptual capabilities and limitations of the underlying VLM: scenes whose lighting, shading, or close-up texture fall outside the VLM’s training distribution can yield noisy similarity scores, and current VLMs exhibit limited fine-grained spatial reasoning that can make per-step reward ambiguous in contact-rich phases. The grasp prompt also naturally saturates once the cube is firmly held, reducing gradient signal near the goal. We address the visual gap with a high-fidelity rendering setup (Figure 4) and the saturation issue with light reward post-processing (Section A); improving robustness to varied visual conditions and stronger VLM spatial reasoning remain open challenges. 
+
+6 Future work 
+
+The most promising next step is to remove the last manual element in RMTL by pairing it with an LLM-based micro-task disassembler : given a high-level natural-language task description, an LLM would automatically propose the stage-aligned prompt set and a candidate phase-selection rule, replacing today’s three hand-written prompts and making the pipeline applicable to new tasks without manual prompt engineering. We also plan to expand the evaluation to additional manipulation tasks. 9References 
+
+[1] Michael Ahn, Anthony Brohan, Noah Brown, Yevgen Chebotar, Omar Cortes, Byron David, et al. Do as i can, not as i say: Grounding language in robotic affordances. arXiv preprint arXiv:2204.01691 , 2022. [2] Pierre-Luc Bacon, Jean Harb, and Doina Precup. The option-critic architecture. In AAAI Conference on Artificial Intelligence (AAAI) , 2017. [3] Anthony Brohan, Noah Brown, Justice Carbajal, Yevgen Chebotar, Joseph Dabis, Chelsea Finn, et al. RT-1: Robotics transformer for real-world control at scale. arXiv preprint arXiv:2212.06817 , 2022. [4] Linxi Fan, Guanzhi Wang, Yunfan Jiang, Ajay Mandlekar, Yuncong Yang, Haoyi Zhu, Andrew Tang, De-An Huang, Yuke Zhu, and Anima Anandkumar. MineDojo: Building open-ended embodied agents with internet-scale knowledge. Advances in Neural Information Processing Systems (NeurIPS) , 35:18343–18362, 2022. [5] Carlos Florensa, David Held, Markus Wulfmeier, Michael Zhang, and Pieter Abbeel. Reverse curriculum generation for reinforcement learning. In Conference on Robot Learning (CoRL) ,2017. [6] Michael Laskin, Aravind Srinivas, and Pieter Abbeel. CURL: Contrastive unsupervised rep-resentations for reinforcement learning. In International Conference on Machine Learning (ICML) , pages 5639–5650, 2020. [7] Misha Laskin, Kimin Lee, Adam Stooke, Lerrel Pinto, Pieter Abbeel, and Aravind Srinivas. Reinforcement learning with augmented data. Advances in Neural Information Processing Systems (NeurIPS) , 33:19884–19895, 2020. [8] Yecheng Jason Ma, Shagun Sodhani, Dinesh Jayaraman, Osbert Bastani, Vikash Kumar, and Amy Zhang. VIP: Towards universal visual reward and representation via value-implicit pre-training. arXiv preprint arXiv:2210.00030 , 2022. [9] Yecheng Jason Ma, Vikash Kumar, Amy Zhang, Osbert Bastani, and Dinesh Jayaraman. LIV: Language-image representations and rewards for robotic control. In International Conference on Machine Learning (ICML) , pages 23301–23320, 2023. [10] Yecheng Jason Ma, William Liang, Guanzhi Wang, De-An Huang, Osbert Bastani, Dinesh Jayaraman, Yuke Zhu, Linxi Fan, and Anima Anandkumar. Eureka: Human-level reward design via coding large language models. arXiv preprint arXiv:2310.12931 , 2024. [11] Meta AI. PE-Core-bigG-14-448: Perception encoders for vision-language modelling, 2025. Open weights, distributed via the OpenCLIP API; available at https://huggingface.co/ facebook/PE-Core-bigG-14-448 .[12] Ofir Nachum, Shixiang Shane Gu, Honglak Lee, and Sergey Levine. Data-efficient hierarchical reinforcement learning. Advances in Neural Information Processing Systems (NeurIPS) , 31, 2018. [13] Matthias Plappert, Marcin Andrychowicz, Alex Ray, Bob McGrew, Bowen Baker, Glenn Powell, Jonas Schneider, Josh Tobin, Maciek Chociej, Peter Welinder, Vikash Kumar, and Wojciech Zaremba. Multi-goal reinforcement learning: Challenging robotics environments and request for research. 2018. [14] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agar-wal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning transferable visual models from natural language supervision. In Interna-tional Conference on Machine Learning (ICML) , 2021. [15] Antonin Raffin, Ashley Hill, Adam Gleave, Anssi Kanervisto, Maximilian Ernestus, and Noah Dormann. Stable-Baselines3: Reliable reinforcement learning implementations. Journal of Machine Learning Research (JMLR) , 2021. 10 [16] Juan Rocamonde, Victoriano Montesinos, Elvis Nava, Ethan Perez, and David Lindner. Vision-language models are zero-shot reward models for reinforcement learning. In International Conference on Learning Representations (ICLR) , 2024. [17] Stéphane Ross, Geoffrey J. Gordon, and J. Andrew Bagnell. A reduction of imitation learning and structured prediction to no-regret online learning. In International Conference on Artificial Intelligence and Statistics (AISTATS) , 2011. [18] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [19] Sumedh Sontakke, Jesse Zhang, Sébastien M. R. Arnold, et al. RoboCLIP: One demonstration is enough to learn robot policies. arXiv preprint arXiv:2310.07899 , 2023. [20] Richard S. Sutton, Doina Precup, and Satinder Singh. Between MDPs and semi-MDPs: A framework for temporal abstraction in reinforcement learning. Artificial Intelligence , 112(1–2): 181–211, 1999. [21] Emanuel Todorov, Tom Erez, and Yuval Tassa. MuJoCo: A physics engine for model-based control. In IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) , 2012. 11 A Implementation details 
+
+Algorithm. The RMTL algorithm is given below. 
+
+Algorithm 1 Stage-2 HRL Learned Manager with a Frozen-then-Unfrozen PPO Worker 
+
+Require: Pretrained PPO worker policy πθ , untrained manager policy πψ , rule classifier πrule , VLM encoders E, T .
+
+Require: Hyperparameters: BC epochs UBC , manager horizon H, exploration rate ε, freeze duration 
+
+Tfreeze , learning rates ηBC , η M , η ′
+
+> w
+
+.
+
+Ensure: Trained manager policy πψ and fine-tuned worker policy πθ .
+
+Offline Behavior Cloning (BC) Warmstart  
+
+> 1:
+
+Initialize BC dataset DBC ← ∅  
+
+> 2:
+
+Roll out πθ guided by πrule , record transitions (st, ρ t = πrule (st)) into DBC . 
+
+> 3:
+
+for u = 1 , . . . , U BC do  
+
+> 4:
+
+Sample batch (s, ρ ) ∼ D BC  
+
+> 5:
+
+ψ ← ψ − ηBC ∇ψ CE  πψ (· | s), ρ  ▷ Cross-entropy on rule labels  
+
+> 6:
+
+end for Online HRL Training  
+
+> 7:
+
+Freeze actor parameters θactor of πθ ; keep critic parameters θcritic trainable.  
+
+> 8:
+
+Initialize rollout buffers Bworker ← ∅ , Bmanager ← ∅  
+
+> 9:
+
+for env step t = 0 , 1, . . . do  
+
+> 10:
+
+if t mod H = 0 or done then  
+
+> 11:
+
+Sample subtask ϕt ∼ ε-greedy  πψ (· | st), ε  
+
+> 12:
+
+else  
+
+> 13:
+
+ϕt ← ϕt−1 ▷ Hold subtask over horizon  
+
+> 14:
+
+end if  
+
+> 15:
+
+Construct augmented state s′ 
+
+> t
+
+← (st, onehot( ϕt))  
+
+> 16:
+
+Sample primitive action at ∼ πθ (· | s′
+
+> t
+
+) 
+
+> 17:
+
+Step env, obtain multi-view shaped reward ˆrt via VLM encoders.  
+
+> 18:
+
+Push (s′
+
+> t
+
+, a t, ˆrt) into Bworker  
+
+> 19:
+
+Accumulate segment reward: Rseg ← Rseg + ˆ rt 
+
+> 20:
+
+if manager segment is complete then  
+
+> 21:
+
+Push (st−H , ϕ t, log πψ , π rule (st−H ), R seg ) into Bmanager  
+
+> 22:
+
+Rseg ← 0 
+
+> 23:
+
+end if  
+
+> 24:
+
+if t = Tfreeze then  
+
+> 25:
+
+Unfreeze actor parameters θactor ; set worker learning rate to η′
+
+> w
+
+. 
+
+> 26:
+
+end if  
+
+> 27:
+
+if rollout complete then  
+
+> 28:
+
+Update worker θ via PPO on Bworker ▷ Updates critic only while t < T freeze  
+
+> 29:
+
+Calculate mean μR and std σR of segment returns in Bmanager  
+
+> 30:
+
+Compute normalized advantages for each segment: Aseg ← Rseg −μR 
+
+> σR
+> 31:
+
+LM ← − EBmanager [log πψ (ϕ | s) · Aseg ] − cH H[πψ ] + wKL KL( πrule ∥ πψ ) 
+
+> 32:
+
+ψ ← ψ − ηM ∇ψ LM 
+
+> 33:
+
+Clear buffers Bworker ← ∅ , Bmanager ← ∅  
+
+> 34:
+
+end if  
+
+> 35:
+
+end for Stage-2 data flow. Figure 9 sketches the full Stage-2 wiring. ManagerNet drives both the worker (via a phase-onehot input) and the phase-aware scorer (via the active prompt index), while the distance-based rule classifier is retained only as an offline BC label source and as the KL-anchor target during REINFORCE. 
+
+BC warmstart. Before any RL update, we run a behaviour-cloning phase: the rule-based phase classifier is rolled out for 250 episodes on the loaded PPO 560k checkpoint, producing (s, i rule ) pairs. The manager is then fit to these labels with cross-entropy for 3500 updates at batch size 64. 12 Rule Selector: (dist bins) 
+
+> MuJoCo Env. (Fetch v4)
+> Render x 6 (720p)
+> VLM Image Encoder
+> Phase-aware Scorer
+> Mean over views
+> PPO Worker (MLP [256, 256]) frozen <50K env. steps
+> Reward
+> Shaper
+> Rollout Buffer
+> ManagerNet MLP [128, 128] REINFORCE
+> BC pretrain
+> = 3500
+> one-hot KL anchor
+> init (offline rollouts)
+
+Figure 9: Stage-2 HRL data flow with a frozen worker. Solid arrows are online data; dashed arrows are offline / regularisation signals. ManagerNet (MLP [128 , 128] , REINFORCE-trained) is the only new learned component; the worker is loaded from the Stage-1 PPO 560k checkpoint and its actor is frozen for the first 50 ,000 env steps (critic remains trainable). The distance-based rule selector is used only offline (to label 250 episodes for BC pretraining) and online as the KL anchor target in Eq. (6); it never directly drives the prompt during Stage-2 training. 
+
+REINFORCE on segment returns. After warmstart, the manager is trained at the end of every PPO rollout with a standard REINFORCE objective on segments of length H:
+
+LM = − Eseg [log πM (ϕ | sseg ) · Aseg ] − cH HπM
+
+ + wKL KL  πrule ∥ πM
+
+, (6) where Aseg is the rollout-internal z-score of the segment return P 
+
+> t∈seg
+
+rt, H[·] is the distributional entropy with bonus cH = 0 .01 , and the third term is a KL anchor to the rule-based policy with weight 
+
+wKL = 0 .30 . Action selection uses ε-greedy exploration with ε = 0 .20 . The optimizer is Adam at learning rate 3 × 10 −4.
+
+Frozen worker. Throughout this paper, Stage 2 starts from a specific Stage-1 checkpoint (PPO 560k env steps) loaded into the worker. For the first 50 ,000 environment steps the worker actor’s parameters are frozen ( requires_grad = False on features + mlp_extractor.policy_net +
+
+action_net + log_std ), keeping only the critic trainable. After 50k steps a callback unfreezes the actor and reduces the worker learning rate to 1 × 10 −4. The BC labels above are also generated against this same 560k checkpoint for distributional consistency. Freezing the worker stabilises the manager’s REINFORCE target during the most non-stationary phase of training, which we found important for avoiding mode collapse on the manager’s softmax. 
+
+Phase prompts. The three Stage-1 micro-task target prompts and the shared baseline prompt are written once and reused across runs. They are: • baseline b: “a robot gripper and a red cube on a table” ;• approach target τapproach : “a two-finger robot gripper with open jaws centered above a red cube” ;• align target τalign : “a robot gripper pinching a red cube between two fingers” ;• grasp target τgrasp : “a robot gripper lifting a red cube between its fingers” .The rule-based selector (Stage 1) chooses the active micro-task deterministically from a simple geometric feature; the learned manager (Stage 2) replaces this rule with a small policy over the same three prompts. 
+
+Camera bank. The six camera viewpoints used by all multi-view configurations are defined as MuJoCo free-camera settings (azimuth, elevation, distance, lookat). Their parameters are: wide_view 
+
+(132 , −14 , 1.5) , front (180 , −20 , 1.1) , front_side (45 , −30 , 1.2) , isometric (225 , −35 , 1.1) , side 
+
+(90 , −15 , 1.2) , close_up (135 , −25 , 0.8) , all looking at approximately (1 .3, 0.75 , 0.42) . Realistic-visuals shading is on. 13 Termination bonus. An episode terminates with success once the gripper is within 0.025 m of the cube and the cube has been lifted at least 0.02 m above the table for two consecutive steps; on success we add a one-shot reward of +1 .0 to the final step. 
+
+Reverse-curriculum thresholds. The 5 RC stages have (d, [dmin , d max ], θ succ , n min )
+
+values (0 , [0 , 0.08] , 0.5, 50) , (0 .15 , [0 .08 , 0.25] , 0.5, 80) , (0 .4, [0 .25 , 0.50] , 0.45 , 120) ,
+
+(0 .65 , [0 .50 , 0.75] , 0.4, 150) , and (1 .0, [0 .75 , 1.0] , −, 0) (the final stage is ungated). 
+
+Manager hyperparameters. Manager horizon H = 3 , hidden sizes [128 , 128] , learning rate 
+
+3 × 10 −4, entropy coefficient 0.01 , KL-to-rule weight 0.30 , ε-greedy 0.20 , BC pretrain updates 3500 ,BC batch size 64 , BC pretrain episodes 250 , BC pretrain checkpoint PPO 560k, frozen-worker until 50k env steps, unfreeze learning rate 1 × 10 −4.
+
+B Hyperparameters 
+
+Stage 1 hyperparameters. Stage 1 training hyperparameters are given in the table below. Table 1: Stage-1 training setup: environment, VLM scorer, phase prompts, reward shaping, reverse curriculum, and PPO worker hyperparameters. Identical across all configs in Section 4.2 except where the ablation explicitly disables a feature. 
+
+Component Hyperparameter Value 
+
+Environment task / version FetchPickAndPlace-v4 (Gymnasium-Robotics) physics MuJoCo state observation 25-D (gripper pose, cube pose, fingers, goal) action space 4-D continuous (gripper ∆xyz + finger) episode length 40 steps parallel envs per learner 16 workspace box (x, y, z ) [1 .00 , 1.60] × [0 .35 , 1.15] × [0 .43 , 0.90] msuccess criterion ∥g − o∥ ≤ 0.025 m and lift ≥ 0.02 m for 2 steps; +1 .0 bonus VLM scorer backbone PE-Core-bigG-14-448 [11] view aggregation mean over V =6 cameras render resolution 720 × 720 
+
+projection mix α 0.9 VLM batch size 64 Phase prompts # micro-tasks K 3 ( grasp / align / approach )distance bins (0 , 0.04] , (0 .04 , 0.15] , (0 .15 , ∞) mReward shaping initial min / max 0.45 / 0.70 adaptation rate / window 0.01 / 3 steps trend / momentum weights 0.3 / 0.3 drop-penalty multiplier ×2
+
+output range [−1, 0] 
+
+Reverse curriculum mode / window scalar / 100 episodes stages d {0, 0.15 , 0.4, 0.65 , 1.0}
+
+success thresholds {0.5, 0.5, 0.45 , 0.4, −} 
+
+min episodes per stage {50 , 80 , 120 , 150 , 0}
+
+PPO worker policy / network MultiInputPolicy, MLP [256 , 256] for π and V
+
+rollout length nsteps , train_freq 40 batch size 64 epochs per update 10 learning rate 3 × 10 −4
+
+discount γ 0.95 GAE λ 0.95 clip range 0.2 entropy coef 0.01 vf coef / max grad norm 0.5 / 0.5 
+
+14 Stage 2 hyperparameters. Stage 2 training hyperparameters are given in the table below. Table 2: Stage-2 manager hyperparameters for the frozen-worker setup.                                               
+
+> Component Hyperparameter Value
+> Manager πψ
+> architecture MLP [128 ,128] + softmax input flattened state (25-D) output K-way categorical ( K=3 )shared across envs yes manager horizon H3 env steps optimizer Adam, lr ηM= 3 ×10 −4
+> exploration ε-greedy with ε= 0 .20
+> manager drives prompt yes REINFORCE objective advantage rollout-internal z-score of segment returns entropy coef cH0.01 KL-to-rule weight wKL 0.30 BC warmstart (offline) teacher rule-based phase classifier πrule (distance bins) source ckpt for rollouts PPO 560k env steps rollout episodes 250 CE updates 3500, batch size 64 pre-fill segments 512 (before first BC step) Frozen-worker gate worker init ckpt PPO 560k env steps (same as BC source) freeze duration Tfreeze 50,000 env steps frozen tensors features, policy_net ,action_net ,log σ
+> critic during freeze trainable post-unfreeze worker lr η′
+> w1×10 −4
+
+C Projection-mix sweep 
+
+This appendix expands on the choice of the projection-mix scalar α = 0 .9 used in Eq. (3). 
+
+Interpreting α. The scalar α ∈ [0 , 1] interpolates between unprojected cosine similarity ( α=0 )and projection strictly along the target–baseline axis ( α=1 ). As α increases, the raw per-step VLM reward typically spans a wider numerical range for the same underlying trajectory: the temporal profile—which micro-task is active and how similarity evolves—remains largely unchanged, but PPO sees larger step-to-step differences and therefore a stronger gradient signal. Figure 10 summarises this on one episode: all α curves follow the same phase structure, but higher α stretches the vertical extent. Figure 11 aggregates the same episodes over two scalar state coordinates. In gripper–cube distance (left), reward climbs monotonically as the gripper approaches the cube; the family of α curves overlaps, so α does not flip which physical variable the reward tracks. In object lift height (right), the on-table ( h≈0) vs. lifted ( h> 0) transition marks the switch into the terminal grasp micro-task; after that the prompt is saturated, so variation along height is dominated by visual noise rather than an informative gradient. Together, these plots justify α=0 .9 as a high-amplitude setting that preserves the phase structure, and they motivate keying the rule-based selector on distance rather than lift height (§3.5). 15 0 2 4 6 8 10 12 14 16 
+
+> Environment step
+> 1.0
+> 0.8
+> 0.6
+> 0.4
+> 0.2
+> 0.0
+> Scaled VLM reward [  1, 0]
+
+Shape comparison per 
+
+> = 0.00
+> = 0.10
+> = 0.20
+> = 0.30
+> = 0.40
+> = 0.50
+> = 0.60
+> = 0.70
+> = 0.80
+> = 0.90
+> = 1.00
+
+Figure 10: Effect of α on the temporal reward profile, one representative episode. (a) Raw active-micro-task VLM reward for α ∈ [0 , 1] : higher α stretches the reward to a larger absolute range (better signal-to-noise) but does not change the shape of the trajectory. (b) Each curve rescaled to [−1, 0] via per-α min–max: the rescaled trajectories cluster tightly, confirming that α primarily controls magnitude rather than the temporal structure of the gradient. Background bands mark active micro-tasks; α = 0 .9 (highlighted with ⋆) is our default. 0.00 0.05 0.10 0.15 0.20 0.25 0.30       
+
+> Gripper cube distance (m)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> VLM reward (rescaled)
+> 0.04 0.06 0.08 0.10 0.12
+> Object lift height (m)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> (regularization strength)
+> VLM reward vs state across (rescaled per )
+
+Figure 11: Effect of α on the state-conditioned reward, aggregated over 10 analysis episodes. 
+
+Each curve is the per-bin mean of the rescaled active-micro-task VLM reward; one curve per 
+
+α ∈ { 0, 0.1, . . . , 1} (colourbar). Left: monotone climb in gripper–cube distance — the dominant state dimension — with the α family tightly bundled. Right: object-lift height. The sharp drop at 
+
+h ≈ 0 is the table–air boundary; the oscillatory plateau for h > 0 sits at the saturation level of the 
+
+grasp prompt, which is the terminal micro-task in our ordering and therefore stays active for all 
+
+h > 0. Variation along the plateau is view-dependent VLM noise within a single saturated prompt rather than a learnable gradient in the lift dimension. 16
