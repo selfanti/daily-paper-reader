@@ -1,0 +1,672 @@
+Title: Sparse Sensor Placement in Multi-Agent Reinforcement Learning Control of Rayleigh-Bénard Convection
+
+URL Source: https://arxiv.org/pdf/2606.30238v1
+
+Published Time: Tue, 30 Jun 2026 02:14:18 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Sparse Sensor Placement in Multi-Agent Reinforcement Learning Control of Rayleigh-Bénard Convection 
+
+## Jan Stenner, Hans Harder, Sebastian Peitz June 30, 2026 
+
+Abstract 
+
+This paper studies sparse sensor placement for control of Rayleigh-Bénard convection with multi-agent reinforcement learning. We train dense expert policies with windowed observations and distill sparse apprentice policies by supervised learning with grouped regularization on encoder input weights. The framework combines ordered non-convex grouped regularization and iterative reweighted grouped regularization, and uses a grouping construction that enforces consistent pruning across overlapping observation windows. Experiments with fixed and varying initial conditions show that Multi-Agent Transformer policies train more stably than proximal policy optimization baselines, while sparse apprentices retain control behavior comparable to dense experts. Sparsity results are strong for the proposed grouped methods across settings, including maximal sparsity in all fixed-initial-condition setting variants and maximal or near-maximal sparsity in varying-initial-condition setting variants. As an additional proof of concept, training from learned minimal sensor sets reduces per-agent observation size from 360 to 12 and preserves the overall training trend in simulation while reducing data throughput. The results provide both an interpretable basis for identifying control-relevant spatial regions and state components, and a practical pathway toward sensor-efficient control under realistic hardware constraints. 
+
+Keywords: sparse sensor placement, partial differential equation control, Rayleigh-Bénard convec-tion, multi-agent reinforcement learning, policy distillation, structured sparsification. 
+
+# 1 Introduction 
+
+Controlling systems governed by Partial Differential Equations (PDEs) is challenging because states are possibly high-dimensional, sensing is limited, and the dynamics are nonlinear and often chaotic. This is particularly true for Rayleigh-Bénard convection (RBC), a canonical buoyancy-driven flow where practical control is usually limited to changes in boundary temperatures. Classical work on sparse PDE control and sparse sensor placement has shown that both actuation and sensing can be drastically reduced without losing essential dynamical information [1, 2, 3]. These insights motivate data-driven control strategies that explicitly acknowledge partial observability. Learning-based control has progressed from early machine-learning control ideas for nonlinear dynamics [4] to deep reinforcement learning (DRL) demonstrations on chaotic PDEs and flow control with limited sensors [5, 6]. The impact of sensor sparsity on performance and the need for mem-ory/attention in partially observable regimes have been quantified recently [7], whereas our focus is on actively selecting sparse sensor subsets and distilling a compact multi-agent controller rather than only characterizing performance degradation. For RBC specifically, multi-agent RL frameworks that 1
+
+> arXiv:2606.30238v1 [cs.MA] 29 Jun 2026
+
+exploit translational invariance enable scalable control with shared policies [8], yielding effective 2D RBC control [9], accelerated learning via positional encoding [10], and extensions toward turbulent regimes [11]. These developments set the stage for structured, scalable control of RBC under severe sensing constraints. At the same time, practical deployment calls for compact, interpretable policies and explicit sen-sor sparsification. Sparse and structured neural-network regularization has been advanced through pruning and compression [12, 13], differentiable L0 regularization [14, 15], and group-structured pa-rameter tying with GrOWL [16, 17, 18]. Complementary to architectural sparsity, expert-apprentice paradigms in imitation learning and RL provide a mechanism to distill high-capacity teachers into smaller students [19, 20, 21, 22]. In this work we focus on the control of RBC and combine these threads into a unified framework. Building on the distributed multi-agent formulation of [8] and the RBC setting of [9], we employ positional encoding [10] and a Multi-Agent Transformer (MAT) architecture [23] while introducing a teacher-student training pipeline that explicitly sparsifies sensors. We further incorporate a small set of implementation changes to MAT that significantly stabilizes training in our RBC setting. An expert policy is first trained with dense observations. Then a sparse apprentice is learned via super-vised distillation with either ordered non-convex grouped regularization inspired by GrOWL [16, 17] or an iterative reweighted grouped regularizer [24] to select informative sensor subsets while pruning non-necessary ones. We demonstrate effectiveness both for fixed initial conditions, as commonly as-sumed in RBC control studies [9, 10], and for varying initial conditions across episodes, as has been done in newer works [11, 25]. The resulting controller preserves performance while substantially reducing sensing and model complexity. Beyond obtaining sparse controllers, the proposed framework provides two forms of practical value. First, it provides a systematic framework for identifying the spatial regions and physical state components that are most informative for a given control objective in PDE-governed dynamical systems. In our RBC example, these components are temperature and the two velocity components. Second, it provides a pathway from simulation toward real deployments where dense sensing across the full domain is often infeasible or too costly. Our sparsification setup explicitly supports both hardware scenarios: systems with multi-component sensors that measure several state components at one location, and systems where each measured state component requires its own sensing unit and therefore contributes separately to installation effort. The remainder of the paper is organized as follows: Section 2 reviews the relevant foundations in RL, multi-agent PDE control, and spar-sification. Section 3 details the proposed training pipeline and architectures. Section 4 presents the full experimental study, including the simulation setup, MAT-versus-PPO training behavior, expert-versus-apprentice trajectory comparisons for fixed and varying initial conditions, sparsity evaluations under multiple metrics, visualizations of the resulting sensor-placement patterns, and RL training under minimized sensor sets. Section 5 concludes. Our code is publicly available at https://github.com/janstenner/RBC-RL-SparseSensors. 
+
+# 2 Related Work 
+
+In the following, we provide a brief overview of the key methods and concepts that form the foun-dation of our approach and are adapted or combined in the subsequent sections. 22.1 Rayleigh-Bénard Convection 
+
+Rayleigh-Bénard convection (RBC) is a buoyancy-driven flow in which a fluid layer is heated from below and cooled from above, leading to formations of convection rolls over time. In the two-dimensional wide-aspect-ratio setups used in recent control studies, the lateral boundaries are typ-ically periodic and the top/bottom walls are no-slip and isothermal. The uncontrolled flow at moderate Rayleigh numbers settles into a two-plume (double-cell) state, while feedback control can collapse the rolls into a single dominant plume and reduce convective heat transfer. Figure 1 provides a visual reference for these canonical states and the associated control signal. Under the Oberbeck-Boussinesq approximation, the nondimensional 2D governing equations are 
+
+∇ · u = 0 , (1) 
+
+∂tu + ( u · ∇ )u = −∇ p +
+
+√ Pr Ra ∇2u + T ez , (2) 
+
+∂tT + u · ∇ T = 1
+
+√Ra Pr ∇2T, (3) where u = ( u, w ) is the velocity in the (x, z ) plane, p the kinematic pressure, T the nondimensional temperature (up to an arbitrary constant shift), and ez the upward unit vector. We consider the rectangular domain x ∈ [0 , L x] and z ∈ [0 , L z ], where Lx and Lz denote the domain length and height. The Rayleigh and Prandtl numbers are Ra = gαδT H 3/(νκ ) and Pr = ν/κ , with domain height H, temperature difference δT , kinematic viscosity ν, and thermal diffusivity κ. We assume periodicity in x, no-slip walls at z ∈ { 0, L z }, a fixed top temperature Tt, and a controlled bottom temperature T (x, 0, t ) = Tb + Tc(x, t ) with Tb − Tt = δT . The control term is normalized over x such that ∫ Lx
+
+> 0
+
+Tc(x, t ) dx = 0 .
+
+The objective of control is to minimize the dimensionless heat transport measured by the instan-taneous Nusselt number 
+
+Nu instant = √Ra Pr ⟨wT ⟩x,z . (4) Here, ⟨·⟩ x,z denotes the spatial average over x and z.The sensor and actuator layout follows the standard benchmark configuration used in these works, in particular the setup described by Becktepe [25]. Control is applied through temperature modulation at the bottom boundary, which is discretized into equally spaced actuator segments along the horizontal direction. Each agent outputs a scalar action for its segment. These actions are mapped to a continuous boundary-control profile via interpolation or filtering before being imposed on the wall. Observations are drawn from a fixed, dense set of probe locations in the bulk that measure temperature and the two velocity components. The full sensor set forms a global grid of probes, and each agent receives a local window of contiguous probes centered on its actuator segment, consistent with the translationally invariant multi-agent design (2.3). 
+
+## 2.2 Reinforcement Learning 
+
+Here we will note the fundamentals of reinforcement learning (RL) that the remaining work of this paper is relying on. A thorough introduction with more explanations about concepts and methods can be found in [26]. In reinforcement learning we typically have an agent that is making sequential decisions at discrete time steps by interacting with an environment in order to maximize cumulative reward. To do so, the agent receives a state st at time step t and after deciding on an action at it 30 2 4 6
+
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> 1
+> 1.5
+> 2
+> 2.5
+
+(a) 0 2 4 6 
+
+> 0
+> 0.5
+> 1
+> 1.5
+> 2
+> 1
+> 1.5
+> 2
+> 2.5
+
+(b) 1.5        
+
+> 2
+> 2.5
+> 0123456
+> −1
+> 0
+> 1
+> 2
+
+(c) 
+
+Figure 1: Illustration for the Rayleigh-Bénard convection control setup referenced in Section 2.1. The figure shows (a) the uncontrolled two-plume state of temperature, (b) a controlled one-plume state, and (c) an example of agent actions (bottom) together with the resulting boundary-control signal (top). receives a reward rt+1 and transitions to the next state st+1 . The goal of the agent is to find a policy 
+
+π(a|s), which is a probability distribution over a given state s, that maps states to actions with the goal of maximizing the expected return, here defined as the sum of discounted future rewards. Typically the dynamics of an environment are modeled as a Markov Decision Process (MDP) (S, A, P, R, γ ), where S is a (possibly finite) set of states, A is the set of actions available to the agent, 
+
+P (s′|s, a ) is the state transition function giving the likelihood of transitioning to state s′ after taking action a in state s, R(s, a, s ′) is the reward function giving the reward after taking action a in state s
+
+and transitioning to s′, and γ ∈ [0 , 1] is a discount factor. The previously mentioned expected return is measured by the value function , defined by V π (st) = Eπ [∑∞ 
+
+> n=t
+
+γn−tR(sn, an, sn+1 ) | st = st],where sn+1 ∼ P (·| sn, an) and an ∼ π(·| sn). Closely related to the value function is the Q function 
+
+or action-value function , Qπ (st, a t), which estimates the expected return of taking action at in state 
+
+st and then continuing under policy π.In recent years, Deep Reinforcement Learning (DRL) has combined function approximation via deep neural networks with the exploration-vs-exploitation nature of RL. In this work we will use the Proximal Policy Optimization algorithm (PPO, see [27]), a DRL actor-critic method that represents both the policy and the value function with neural networks. 
+
+## 2.3 Multi-Agent Framework for PDE Systems 
+
+The RL experiments in this paper follow the framework introduced in [8] and [9]. Agents observe the readings of sensors within a window of certain size, which is centered around the agents actuator positions, see figure 2. Agents receive partial state sets, called observations, that are extracted according to their corresponding actuator positions. To accurately model this framework we can extend the MDP with ideas from Partially Ob-servable Markov Decision Processes (POMDP, [28]) and stochastic games (see [29]) in the form of (S, O1, . . . , On, A1, . . . , An, P, Ω, R 1, . . . , R n, γ ). Here, Oi are the sets of observations for each agent, 
+
+Ai are the sets of actions, Ri are the different reward functions and Ω : Ω( s, i ) = oi is the (deter-ministic) observation function mapping the full state s and agent index i to an observation oi ∈ O i.Since the agents in our framework have the same shape (and are, in fact, sharing parameters) we can assume that the sets Oi and Ai are the same for all i.40 6     
+
+> 0
+> 0.5
+> 1
+> 1.5
+> 2(a) 010 20 30 40
+> 0
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 1
+> 1.5
+> 2
+> 2.5 (b)
+
+Figure 2: (a) Schematic view of different agents and their observation windows of sensor sets for the Rayleigh-Bénard-Convection control problem. Only three agents are depicted for clarity. (b) Sensor-window view of a temperature channel spanning 47 sensors with added positional encoding. Note that observations also include two velocity channels which are omitted here. 
+
+## 2.4 Pruning and Sparsification 
+
+To determine a sparse set of sensors that still enable us to have a controller that achieves performance comparable to that of the fully trained RL agent on a full sensor set, we train an apprentice model using supervised learning. We regularize groups of row vectors in a weight matrix W , which acts on a flattened input x in the form of xT 7 → xT W . Here, grouping is based on the magnitude of the row ℓ2 norms. In our setup, W is the weight matrix of the first layer of the neural network that parameterizes the actor policy. Each row contains exactly the parameters that are multiplied with one input. Pruning a full row therefore removes one complete input from the model. Additionally, we group multiple rows together, so that structures tied to multiple inputs can be pruned jointly. We consider two complementary regularization schemes, namely GrOWL-inspired Group-Ordered (GO) and Iterative Grouped-Reweighted (GR) .For GO we build on the group ordered weighted ℓ1 (GrOWL, see [16, 17]) regularizer, which extends OWL ([30, 31]). In our notation, the GO regularizer is 
+
+RGO  
+
+> λ
+
+(W ) = 
+
+> n
+
+∑
+
+> i=1
+
+λi∥w[i]·∥2,
+
+where W ∈ Rn×m, λ ∈ Rn with 0 < λ 1 ≥ λ2 ≥ . . . ≥ λn ≥ 0 and w[i]· is the row vector of W with the i-th largest ℓ2 norm. Its behavior is influenced by the choice of the parameter vector λ and can result in group-Lasso (or ℓ2,1) for λ1 = λn. Intuitively, with an appropriate choice of λ, GrOWL applies stronger shrinkage to rows with larger norms while already small rows are penalized less. This can keep strongly correlated rows similar instead of pruning them independently as in standard group-Lasso. While still following the GrOWL ordering principle on row-group norms, we choose a linearly increasing non-convex sequence. This design increases pressure on small-norm groups and pushes them closer to zero until they can be ignored in practice: 
+
+0 ≤ λ1 ≤ λ2 ≤ . . . ≤ λn,λi = i − 1
+
+n , i = 1 , . . . , n. (5) 5Hence, the sequence runs from λ1 = 0 to λn = ( n − 1) /n , which induces the non-convex weighting behavior in line with [32]. For GR we adopt the iterative reweighted ℓ1 method from [24] and transfer it to a grouped setting by replacing absolute values with group ℓ2 norms. In this grouped variant, groups are not ordered by magnitude. Instead, we update the reweighting vector iteratively. For each iteration step ℓ, we keep ξ(ℓ) fixed in the regularizer, optimize W for this weighted problem, and then compute ξ(ℓ+1) .At step ℓ we use 
+
+RGR  
+
+> ξ(ℓ)
+
+(W ) = 
+
+> n
+
+∑
+
+> i=1
+
+ξ(ℓ) 
+
+> i
+
+∥wi·∥2,
+
+with initial weights ξ(1)  
+
+> i
+
+= 1 for all i and the update rule 
+
+ξ(ℓ+1)  
+
+> i
+
+= 1
+
+∥w(ℓ) 
+
+> i·
+
+∥2 + ε , ε > 0. (6) Here, wi· denotes the (non-ordered) i-th row of W . Therefore, large groups are downweighted and small groups are penalized more strongly over iterations, promoting sparsity without using any ordering of groups. 
+
+## 2.5 Multi-Agent Transformer 
+
+In this work, we use a slightly modified Multi-Agent Transformer (MAT, see [23]) in two roles: (i) as a policy architecture trained directly with PPO and compared against direct PPO training, and (ii) as a candidate expert policy for later distillation. The apprentice architecture is depicted in figure 3. While being labelled a Multi-Agent method, it bridges the gap between Multi-Agent and Single-Agent setups due to information sharing between agents. We include MAT as an expert candidate because in our varying-initial-condition setting it is empirically more stable than plain PPO. When using MAT for PPO training, we introduce several modifications relative to the original im-plementation in [23]. First, we use a dedicated encoder branch for value prediction, in addition to the encoder that provides observation representations ˆoi to the decoder. Second, in the auto-regressive loop we keep propagating decoder mean actions as tokens. Unlike the original implementation, we do not sample an action from the current mean and the corresponding agent log-probability term and prepend this sampled action to continue decoding. In our experiments, this deterministic mean-token loop is substantially more stable. Third, we keep a fixed order of tokens, which is sufficient for our purpose. Fourth, we place cross-attention before self-attention and keep the MAT-specific cross-attention wiring 
+
+Attention( Q, K, V ) = softmax 
+
+( QK ⊤
+
+√dk
+
+)
+
+V, 
+
+which is the standard notation for attention (see [33]), where dk is the key dimension and Q, K, V are the query, key, and value matrices. Importantly, this setup is reversed compared to usual encoder-decoder cross-attention: here, Q is computed from the encoder’s final observation representations while K and V are computed from the decoder’s layer input. The observation representations are also used as the residual information that gets propagated via the skip-connection. As an additional modification, we disable dropout and LayerNorm throughout the architecture, which further improves training behavior. 6Emb  Self-Attention  + MLP  +      
+
+> Multi-Agent Observation Encoding
+> Emb Masked
+> Cross-Attention +MLP +
+> Auto-regressive Action Decoding
+> Masked
+> Self-Attention +MLP
+
+Figure 3: Architecture of the Multi-Agent Transformer (MAT) network used as an apprentice model for supervised learning from an expert. We illustrate this with the generation of action tokens μ1 to 
+
+μn in the decoder, which are the means of the output normal distributions used to sample actions. In the auto-regressive framework, this effectively amounts to generating μn, as earlier tokens are treated as fixed context. Note that μ0 is the start token that we choose to be [0 .0] .
+
+# 3 Methodology 
+
+We now proceed by introducing the three core methods used to obtain sparse sensor sets, along with controllers capable of operating on them while still achieving comparable performance. These are namely Reducing Window Size , Apprentice Training with Group Regularization and Grouping for Overlapping Windows , the latter being an extension of the second method. 
+
+## 3.1 Reducing Window Size 
+
+This step involves training of several RL agents with different window sizes. Due to the overlapping nature of windows in our framework, as described in 2.3, this only reduces sensors needed in the whole domain if windows can be reduced to a size in which overlapping does not occur. As documented in section 4, for the experiments presented in this work, this method alone does not achieve a reduced sensor set. It does, however, yield multiple agents that can take on the roles as experts in the next steps. Since it also serves as a form of investigatory analysis of the problem at hand, and could already provide sparser solutions for other experiments, we still consider it a valuable first step method. 
+
+## 3.2 Apprentice Training with Group Regularization 
+
+Let πe be the policy of a successfully trained agent, which we call the expert , and fθ a model (usually based on neural networks) parameterized by the vector θ, which we call the apprentice . For simplicity, we assume in the derivation that πe is deterministic. In practice, policies are represented as πe(a | s) and we evaluate them deterministically via a = arg max ˜a πe(˜ a | s). We can now formalize an optimization problem 
+
+min 
+
+> θm
+
+∑
+
+> i=1
+
+(fθ (x(i)) − y(i))2 + RM(W ), M ∈ { GO , GR } (7) for a labelled data set with inputs x(i) and corresponding outputs y(i) = πe(x(i)), i = 1 , . . . , m .Here, RGO = RGO  
+
+> λ
+
+and RGR = RGR  
+
+> ξ(ℓ)
+
+from Section 2.4. For the GO case, rows are ordered by 7Figure 4: Overlapping windows with sensors in one dimension. The window of one agent is high-lighted, and the sensors contained in this window are color-coded. The figure also shows how two grouping sets, indicated by red backgrounds, are constructed from these sensors. These sets are disjoint and together contain the local indices of all sensors in the highlighted window. group norm through w[i]·. For the GR case, rows are indexed directly by wi· without ordering. For the iterative reweighted case, we keep ξ(ℓ) fixed for a certain number of updates Kprox within the same outer iteration level ℓ. After these Kprox inner updates, we update the weights according to (6). W denotes the first-layer weight matrix of fθ , whose rows index the input neurons, and whose entries are part of the parameter vector θ. We solve (7) with a proximal-operator algorithm, which alternates a gradient step for the prediction loss with a proximal shrinkage step that enforces the structured regularization and drives weak row groups toward zero. Our implementation is based on the authors’ public implementation 1.
+
+## 3.3 Grouping for Overlapping Windows 
+
+Figure 4 illustrates why naive row-wise pruning is insufficient in overlapping-window settings. The same physical sensor can appear under different local indices in different agent windows. If these in-dices are pruned independently, the corresponding sensor location may still remain active somewhere else. To enforce consistent pruning, we construct grouping sets Is consisting of indices of flattened inputs, which are also row indices of W , such that indices in the same class correspond to the same global sensor position under shifted windows. With correct construction these sets form equivalence classes that induce a relation 
+
+i ∼ j ⇐⇒ ∃ s : i, j ∈ I s,
+
+and partition the local index set into groups that should be pruned jointly. The full construction of these classes, including the general N -dimensional notation and the overlap proof, is provided in Appendix A. We now extend the optimization problem in (7) to grouped pruning. Let NS denote the number of non-empty grouping classes Is, and index these classes by g ∈ { 1, . . . , N S }. For each such class, let ˆwg denote the vector obtained by concatenating all row vectors wi· with i in that class, in any fixed order. We then formulate 
+
+> 1https://github.com/Dejiao2018/GrOWL
+
+8min 
+
+> θm
+
+∑
+
+> i=1
+
+(
+
+fθ (x(i)) − y(i))2
+
++ ˆRM(W ), M ∈ { GO , GR }, (8) 
+
+ˆRGO  
+
+> λ
+
+(W ) = 
+
+> NS
+
+∑
+
+> g=1
+
+λg ∥ ˆw[g]∥2,
+
+ˆRGR  
+
+> ξ(ℓ)
+
+(W ) = 
+
+> NS
+
+∑
+
+> g=1
+
+ξ(ℓ) 
+
+> g
+
+∥ ˆwg ∥2,
+
+where ˆw[g] denotes the ˆwg with the g-th largest ℓ2 norm. 
+
+3.3.1 Input Channels 
+
+One aspect that is especially relevant for dynamical systems governed by PDEs is that each sensor location can carry multiple measured state components. In our experiments, each location provides three components: temperature, horizontal velocity, and vertical velocity. In the default grouping used here, these components are treated as separate input entries at each location, so pruning can remove one component while keeping the others at the same spatial point. In real scenarios it might, however, be of interest to group channels together at the same spatial locations. This yields two cases: channel-separated grouping, where channels are pruned indepen-dently, and channel-coupled grouping, where channel indices at one spatial location are pruned jointly. We use both cases in our experiments. The formal channel-coupled construction is given in Appendix A.2. 
+
+# 4 Experiments 
+
+In this section, we describe the numerical setup used for all reported experiments. We run the simulations with Oceananigans.jl [34] on a grid of size 96 × 64 in a domain with Lx = 2 π and 
+
+Lz = 2 . The physical parameters are set to δT = 1 , Ra = 10 4 and Pr = 0 .7. We use a sensor grid of 
+
+48 × 8 and 12 actuators/agents, corresponding to one actuator per four sensor points in x direction. To initialize both reported experiment types, we first simulate 300 non-dimensional time steps to obtain the canonical two-plume state. Each RL episode then spans 300 non-dimensional time steps, and each agent applies one action every 1.5 time steps, yielding 200 control steps per episode. Rewards are defined as the negative instantaneous Nusselt number, rt = −Nu instant ,t , with Nu instant 
+
+defined in Eq. (4) and evaluated from sensor measurements. We apply positional encoding on the observations, which was shown to improve performance (see [10]), allowing easier orchestration of asynchronous actions although agents share parameters. Since position information is already part of the observations, we do not add a separate positional encoding inside MAT. Figure 2 conceptu-ally depicts how observations are extracted from the global sensor set and how the added positional encoding appears. Note that only the temperature channel is shown in that figure, while the exper-iments use two additional velocity channels. In the following, all experiments use a window size of 
+
+15 .After expert RL training, we instantiate a separate MAT policy (encoder and decoder) as an apprentice, with configuration matched to the corresponding initial condition (IC) setting. Training data for the apprentice is generated from expert rollouts. For each expert action distribution, we denote by μexpert the mean of the output normal distribution from which the action is sampled. 9PPO mean PPO ±1 std MAT mean MAT ±1 std 500 1000 1500 
+
+> −850
+> −800
+> −750
+> −700
+> −650
+> −600
+> Episodes
+> Return
+
+(a) 2000 4000 6000  
+
+> −850
+> −800
+> −750
+> −700
+> −650
+> −600
+> Episodes
+
+(b) 
+
+Figure 5: MAT-versus-PPO training curves for both initial-condition settings. Panel (a) shows fixed initial conditions with mean and one-standard-deviation bands over 10 runs per algorithm, 2000 episodes per run, and smoothing over 50 measurements. Panel (b) shows varying initial conditions with the same statistics over 10 runs, 8000 episodes per run, and smoothing over 50 measurements. In both cases, MAT trains more stably and attains better performance than PPO. Using these means as targets implements the deterministic policy evaluation used in the distillation objective. The apprentice is trained by supervised learning with mean-squared error on predicted actions as objective. In parallel, we apply structured pruning to encoder input weights using either group-ordered or group-reweighted regularization, with grouping defined by Section 3.3. After each supervised back-propagation step, we apply proximal regularization steps to these grouped encoder-input rows. For the ordered case we use the non-convex sequence in Eq. (5). For the reweighted case we use Eq. (6). In both cases, regularization weights in the proximal step are scaled by a configuration-dependent regularization power parameter, chosen strictly below 0.1. Throughout training we monitor imita-tion loss and sparsity. After training, we generate a binary mask for the encoder input and keep the pair of apprentice policy and mask as the final artifact. 
+
+## 4.1 Apprentice Distillation and Grouped Pruning Results 
+
+We evaluate apprentice training in two initial-condition settings. For fixed initial conditions, training data is taken from one directly generated expert rollout episode. We use 200 states and a batch size of 20. The apprentice architecture is a compact MAT with an latent dimension of 32 and one transformer block. For varying initial conditions, training data is collected as a cache of 4000 control steps from 20 expert rollouts with random initial conditions, and we train with a batch size of 100. The apprentice uses a slightly larger MAT with latent dimension of 44. Figure 5 shows the RL training behavior (window size 15 ) of the expert candidates in both settings and indicates that MAT is consistently more stable than PPO. This is consistent with the information exchange across observation tokens via attention described in Section 2.5. The resulting apprentice policies retain expert-like control behavior in both settings. Figure 6 compares global Nusselt-number trajectories for fixed initial conditions and shows that the trained apprentices control the system on a level comparable to the expert. Figure 7 extends this compar-ison to varying initial conditions. The figure reports cumulative rewards on a test set of 15 fixed random offsets and includes one representative global-Nusselt trajectory from that set, showing that apprentice performance remains comparable to the expert. 10 0 50 100 150 
+
+> 2.5
+> 3
+> 3.5
+> 4
+> Step
+> Nu
+
+Expert Group Ordered, GroupedChannels Group Ordered, SeparateChannels 
+
+Group Reweighted, GroupedChannels Group Reweighted, SeparateChannels Figure 6: Global Nusselt-number trajectories over time for the fixed-initial-condition scenario, com-paring the expert to all apprentice combinations. Expert Group Ordered, GroupedChannels Group Ordered, SeparateChannels 
+
+Group Reweighted, GroupedChannels Group Reweighted, SeparateChannels −580 
+
+> −570
+> −560
+> −550
+> Cumulative Reward
+
+(a) 0 50 100 150  
+
+> 2.5
+> 3
+> 3.5
+> Step
+> Nu
+
+(b) 
+
+Figure 7: Varying-IC performance comparison. Panel (a) shows cumulative-reward box plots on the 15 fixed test initial conditions (offsets). Panel (b) shows the global Nusselt-number trajectory for one example initial condition from this set. 11 Table 1 reports sparsity with three metrics: 
+
+• WS (Window Sparsity) treats the three channels separately within each local window. 
+
+• WS-CC (Window Sparsity combined channels) overlays channels before computing spar-sity in the local window. 
+
+• TS-CC (Total Sparsity combined channels) overlays channels on the global grid. This distinction matters for deployment. With multi-sensors that can measure all channels at one location, combined-channel metrics are often the relevant criterion. Without such sensors, channel-separated sparsity can be operationally more important.                            
+
+> Setting WS (%) WS-CC (%) TS-CC (%) GO + SC 98.889 96.667 96.875
+> GO + GC 96.667 96.667 96.875
+> GR + SC 98.889 96.667 96.875
+> GR + GC 96.667 96.667 96.875
+> Lasso + SC 81.667 47.500 46.875 Lasso + GC 81.389 80.000 81.250 GrOWL + SC 20.833 0.000 0.000 GrOWL + GC 12.222 0.000 0.000
+
+(a) Fixed IC                            
+
+> Setting WS (%) WS-CC (%) TS-CC (%) GO + SC 97.778 93.333 93.750 GO + GC 96.667 96.667 96.875
+> GR + SC 96.667 90.000 90.625 GR + GC 96.667 96.667 96.875
+> Lasso + SC 69.722 32.500 34.375 Lasso + GC 72.778 71.667 71.875 GrOWL + SC 19.167 2.500 0.000 GrOWL + GC 20.000 0.000 0.000
+
+(b) Varying IC 
+
+Table 1: Abbreviations: GO = Group Ordered, GR = Group Reweighted, SC = Separate Channels, GC = Grouped Channels, WS = Window Sparsity, WS-CC = Window Sparsity combined channels, TS-CC = Total Sparsity combined channels. Bold values mark the best value in each column. The table also includes two comparison baselines. The Lasso baseline corresponds to the equal-
+
+λ case described in Section 2.4. The GrOWL baseline uses the same λ sequence as GO, but in descending order. Compared with GO and GR, Lasso reaches lower sparsity and GrOWL reaches substantially lower sparsity in both initial-condition settings. The GO and GR method/channel-grouping combinations reach the maximal sparsity level attainable in our fixed-IC setup. In the varying-IC setting, GO and GR grouped-channel variants again reach maximal sparsity, while their separate-channel variants remain near-maximal. Within separate channels, group-ordered yields higher sparsity than group-reweighted. For Lasso and GrOWL, we additionally set inputs with group norms close to zero exactly to zero after training. This post-training thresholding is required to obtain the sparsity values reported in Table 1. The threshold is chosen as high as possible while still retaining competitive control scores. This also explains why GrOWL with descending λ values reaches 0% for grouped channels in WS-CC and TS-CC. Across the GrOWL runs, training itself does not drive inputs exactly to zero, and the thresholding operation is independent of the channel grouping. In contrast, GO and GR achieve the reported sparsity directly without a norm threshold. In control regimes that are more unstable than the present Ra = 10 4 RBC benchmark, the less aggressive pruning behavior of Lasso and GrOWL may be useful because such methods can preserve control performance more reliably under harder dynamics. The corresponding GO/GR sensor selections are visualized in Figure 8 and Figure 9. In both settings, the selected rows concentrate on the middle and upper parts of the sensor grid. Separate-channel configurations also tend to deprioritize temperature and retain velocity information, which contrasts with the usual temperature-centric RBC visualization perspective. 12 0 5 10      
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(a) GO + GC 0 5 10       
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(b) GO + SC 0 5 10      
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(c) GR + GC 0 5 10       
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(d) GR + SC 
+
+Figure 8: Fixed-IC window sparsity plots for the GO/GR regularizer and channel-grouping combina-tions. For each combination, three channels are shown in this order: temperature, vertical velocity, and horizontal velocity. The width of each observation plot corresponds to window size 15. Black cells mark pruned inputs, and light-violet cells mark non-pruned inputs. 13 0 5 10      
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(a) GO + GC 0 5 10       
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(b) GO + SC 0 5 10      
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(c) GR + GC 0 5 10       
+
+> 0
+> 2
+> 4
+> 6
+> 0510 0510
+
+(d) GR + SC 
+
+Figure 9: Varying-IC window sparsity plots for the GO/GR regularizer and channel-grouping com-binations. For each combination, three channels are shown in this order: temperature, vertical velocity, and horizontal velocity. The width of each observation plot corresponds to window size 15. Black cells mark pruned inputs, and light-violet cells mark non-pruned inputs. 14 4.2 Learning from Minimal Sensor Sets 
+
+As a proof of concept, we also test whether full RL training is possible when each agent observes only a minimal sensor subset. For this experiment, we use the learned mask from the Group Ordered + Grouped Channels setting and construct reduced observations from it. This reduces the observation size per agent from 360 to 12 .masked MAT mean masked MAT ±1 std MAT mean MAT ±1 std 500 1000 1500 
+
+> −800
+> −750
+> −700
+> −650
+> −600
+> Episodes
+> Return
+
+(a) 2000 4000 6000 8000  
+
+> −850
+> −800
+> −750
+> −700
+> −650
+> −600
+> Episodes
+
+(b) 
+
+Figure 10: MAT training with full versus minimal sensor sets. Both panels show mean and standard deviation over 10 training runs, with (a) fixed IC and (b) varying IC. It is important to note that a local reward cannot be computed reliably from these minimal observations alone. Therefore, as in the previous experiments, we compute the reward as the negative global instantaneous Nusselt number (4) evaluated on the full sensor set. Because of this requirement, minimal-sensor training is not directly realizable in reality unless an alternative way to estimate the global instantaneous Nusselt number is available. In simulation, however, this is not a limitation. Figure 10 shows that for fixed IC the minimal-sensor setup reaches the final return regime slightly faster and remains more stable than training on the full sensor set. For varying IC, training with minimal sensors remains feasible but becomes somewhat less stable over longer horizons. This indicates that extreme sparsity levels like those used here can introduce instabilities in more diverse tasks, so less extreme masks are likely the better choice for training in such settings while still retaining data-throughput savings from reduced observation size. 
+
+# 5 Conclusion 
+
+We presented a sparse-sensing framework for PDE control that combines multi-agent RL, MAT-based expert policies, and supervised apprentice training with grouped regularization. Across fixed and varying initial conditions, MAT showed robust training behavior and the sparse apprentices retained control quality comparable to the dense expert. At the same time, sparsity results were very strong for the proposed grouped methods. In the fixed-IC setting, all GO and GR grouping variants reached maximal sparsity levels in our setup. In the varying-IC setting, GO and GR grouped-channel variants reached maximal sparsity and their separate-channel variants remained near-maximal, with group-ordered outperforming group-reweighted in separate-channel sparsity. The resulting sensor-selection patterns also support the interpretability motivation of this work by indicating which spatial regions and physical state components are most relevant for control. As a proof of concept, 15 we additionally demonstrated RL training from minimal sensor sets derived from a learned mask, reducing observation size per agent from 360 to 12. A direct practical implication across applicable setups is that structured sparsification can, in real-world deployments, reduce the required number of probe locations and measured state com-ponents and thereby lower sensor hardware and installation effort. An important next step is to identify real control applications where large windowed sensor evaluations are currently used to com-pute control-relevant signals. A second direction is transfer from 2D to 3D RBC. Our observations suggest a targeted hypothesis to test early in that setting, namely starting without temperature mea-surements and prioritizing velocity components in middle and upper regions. Because of the much higher dimensionality in 3D, successful transfer of these sparsity patterns could reduce observation bandwidth and inference load. 
+
+# Acknowledgements 
+
+Jan Stenner acknowledges support by “ESN4NW: Energieoptimierte Supercomputer-Netzwerke durch die Nutzung von Windenergie” (Grant ID 16ME0617K), funded by the German Federal Ministry of Research, Technology and Space (BMFTR), Germany. Hans Harder acknowledges support by “SAIL: SustAInable Lifecycle of Intelligent Socio-Technical Systems” (Grant ID NW21-059D), funded by the Ministry of Culture and Science of the State of Northrhine Westphalia (NRW), Germany. Sebastian Peitz acknowledges funding from the European Research Council (ERC Starting Grant “KoOpeRaDE”) under the European Union’s Horizon 2020 research and innovation programme (Grant agreement No. 101161457). 
+
+# Declaration of generative AI and AI-assisted technologies in the manuscript preparation process 
+
+During the preparation of this work, the authors used OpenAI Codex to improve the language and readability of parts of the manuscript. The tool was not used to generate research ideas, perform analyses, create figures, or draw scientific conclusions. After using this tool, the authors reviewed and edited the content as needed and take full responsibility for the content of the published article. 16 References 
+
+[1] Eduardo Casas. A review on sparse solutions in optimal control of partial differential equations. 
+
+SeMA Journal , 74, 04 2017. doi: 10.1007/s40324-017-0121-5. [2] B. W. Brunton, S. L. Brunton, J. L. Proctor, and J. N. Kutz. Sparse sensor placement opti-mization for classification. SIAM Journal on Applied Mathematics , 76(5):2099–2122, 2016. doi: 10.1137/15M1036713. URL https://doi.org/10.1137/15M1036713 .[3] Krithika Manohar, Bingni W. Brunton, J. Nathan Kutz, and Steven L. Brunton. Data-Driven Sparse Sensor Placement for Reconstruction: Demonstrating the Benefits of Exploiting Known Patterns. IEEE Control Systems , 38(3):63–86, January 2018. doi: 10.1109/MCS.2018.2810460. [4] Thomas Duriez, Steven L. Brunton, and Bernd R. Noack. Taming Nonlinear Dynamics with MLC , pages 93–120. Springer International Publishing, Cham, 2017. ISBN 978-3-319-40624-4. doi: 10.1007/978-3-319-40624-4_5. URL https://doi.org/10.1007/978-3-319-40624-4_5 .[5] M. A. Bucci, O. Semeraro, A. Allauzen, G. Wisniewski, L. Cordier, and L. Mathelin. Control of chaotic systems by deep reinforcement learning. Proceedings of the Royal Society A: Mathe-matical, Physical and Engineering Sciences , 475(2231):20190351, 11 2019. ISSN 1364-5021. doi: 10.1098/rspa.2019.0351. URL https://doi.org/10.1098/rspa.2019.0351 .[6] Jean Rabault, Miroslav Kuchta, Atle Jensen, Ulysse Réglade, and Nicolas Cerardi. Artificial neural networks trained through deep reinforcement learning discover control strategies for active flow control. Journal of Fluid Mechanics , 865:281–302, February 2019. ISSN 1469-7645. doi: 10.1017/jfm.2019.62. URL http://dx.doi.org/10.1017/jfm.2019.62 .[7] Max Weissenbacher, Anastasia Borovykh, and Georgios Rigas. Reinforcement learning of chaotic systems control in partially observable environments. Flow, Turbulence and Combustion ,115:1357–1378, 01 2025. doi: 10.1007/s10494-024-00632-5. [8] Sebastian Peitz, Jan Stenner, Vikas Chidananda, Oliver Wallscheid, Steven L. Brunton, and Kunihiko Taira. Distributed control of partial differential equations using convolutional rein-forcement learning, 2024. ISSN 0167-2789. URL https://www.sciencedirect.com/science/ article/pii/S0167278924000472 .[9] Colin Vignon, Jean Rabault, Joel Vasanth, Francisco Alcántara-Ávila, Mikael Mortensen, and Ricardo Vinuesa. Effective control of two-dimensional rayleigh–bénard convection: Invariant multi-agent reinforcement learning is all you need. Physics of Fluids , 35(6):065146, 06 2023. ISSN 1070-6631. doi: 10.1063/5.0153181. URL https://doi.org/10.1063/5.0153181 .[10] Joongoo Jeon, Jean Rabault, Joel Vasanth, Francisco Alcántara-Ávila, Shilaj Baral, and Ricardo Vinuesa. Advanced deep-reinforcement-learning methods for flow control: group-invariant and positional-encoding networks improve learning speed and quality, 2024. URL https://arxiv. org/abs/2407.17822 .[11] Thorben Markmann, Michiel Straat, Sebastian Peitz, and Barbara Hammer. Control of rayleigh-bénard convection: Effectiveness of reinforcement learning in the turbulent regime, 2025. URL 
+
+https://arxiv.org/abs/2504.12000 .[12] Song Han, Huizi Mao, and William J. Dally. Deep compression: Compressing deep neural networks with pruning, trained quantization and huffman coding, 2016. URL https://arxiv. org/abs/1510.00149 .17 [13] Johan Samir Obando Ceron, Aaron Courville, and Pablo Samuel Castro. In value-based deep reinforcement learning, a pruned network is a good network, 21–27 Jul 2024. URL https: //proceedings.mlr.press/v235/obando-ceron24a.html .[14] Christos Louizos, Max Welling, and Diederik P. Kingma. Learning sparse neural networks through L0 regularization. In International Conference on Learning Representations , 2018. URL https://openreview.net/forum?id=H1Y8hhg0b .[15] Nicolò Botteghi and Urban Fasel. Parametric pde control with deep reinforcement learning and differentiable L0-sparse polynomial policies, 2024. URL https://arxiv.org/abs/2403.15267 .[16] Urvashi Oswal, Christopher Cox, Matthew Lambon-Ralph, Timothy Rogers, and Robert Nowak. Representational similarity learning with application to brain networks. In Maria Flo-rina Balcan and Kilian Q. Weinberger, editors, Proceedings of The 33rd International Con-ference on Machine Learning , volume 48 of Proceedings of Machine Learning Research , pages 1041–1049, New York, New York, USA, 20–22 Jun 2016. PMLR. URL https://proceedings. mlr.press/v48/oswal16.html .[17] Dejiao Zhang, Haozhu Wang, Mario Figueiredo, and Laura Balzano. Learning to share: Simul-taneous parameter tying and sparsification in deep learning. In International Conference on Learning Representations , 2018. URL https://openreview.net/forum?id=rypT3fb0b .[18] S. S. Hotegni, M. Berkemeier, and S. Peitz. Multi-objective optimization for sparse deep multi-task learning, 2024. URL https://arxiv.org/abs/2308.12243 .[19] Stephane Ross, Geoffrey Gordon, and Drew Bagnell. A reduction of imitation learning and structured prediction to no-regret online learning. In Geoffrey Gordon, David Dunson, and Miroslav Dudík, editors, Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics , volume 15 of Proceedings of Machine Learning Research , pages 627– 635, Fort Lauderdale, FL, USA, 11–13 Apr 2011. PMLR. URL https://proceedings.mlr. press/v15/ross11a.html .[20] Andrei A. Rusu, Sergio Gomez Colmenarejo, Caglar Gulcehre, Guillaume Desjardins, James Kirkpatrick, Razvan Pascanu, Volodymyr Mnih, Koray Kavukcuoglu, and Raia Hadsell. Policy distillation, 2016. URL https://arxiv.org/abs/1511.06295 .[21] Glen Berseth, Cheng Xie, Paul Cernek, and Michiel Van de Panne. Progressive reinforce-ment learning with distillation for multi-skilled motion control. In International Conference on Learning Representations , 2018. URL https://openreview.net/forum?id=B13njo1R-.[22] Dor Livne and Kobi Cohen. Pops: Policy pruning and shrinking for deep reinforcement learn-ing. IEEE Journal of Selected Topics in Signal Processing , 14(4):789–801, May 2020. ISSN 1941-0484. doi: 10.1109/jstsp.2020.2967566. URL http://dx.doi.org/10.1109/JSTSP.2020. 2967566 .[23] Muning Wen, Jakub Grudzien Kuba, Runji Lin, Weinan Zhang, Ying Wen, Jun Wang, and Yaodong Yang. Multi-agent reinforcement learning is a sequence modeling problem. In Alice H. Oh, Alekh Agarwal, Danielle Belgrave, and Kyunghyun Cho, editors, Advances in Neural In-formation Processing Systems , 2022. URL https://openreview.net/forum?id=1W8UwXAQubL .[24] Emmanuel J. Candès, Michael B. Wakin, and Stephen P. Boyd. Enhancing sparsity by reweighted ℓ1 minimization, October 2008. ISSN 1531-5851. URL http://dx.doi.org/10. 1007/s00041-008-9045-x .18 [25] Jannis Becktepe, Aleksandra Franz, Nils Thuerey, and Sebastian Peitz. Plug-and-play bench-marking of reinforcement learning algorithms for large-scale flow control, 2026. URL https: //arxiv.org/abs/2601.15015 .[26] Richard S. Sutton and Andrew G. Barto. Reinforcement Learning: An Introduction . The MIT Press, second edition, 2018. URL http://incompleteideas.net/book/the-book-2nd.html .[27] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. CoRR , abs/1707.06347, 2017. URL http://arxiv.org/abs/ 1707.06347 .[28] Matthijs T. J. Spaan. Partially Observable Markov Decision Processes , pages 387–414. Springer Berlin Heidelberg, Berlin, Heidelberg, 2012. ISBN 978-3-642-27645-3. doi: 10.1007/ 978-3-642-27645-3_12. URL https://doi.org/10.1007/978-3-642-27645-3_12 .[29] Lucian Buşoniu, Robert Babuška, and Bart De Schutter. Multi-agent Reinforcement Learning: An Overview , pages 183–221. Springer Berlin Heidelberg, Berlin, Heidelberg, 2010. ISBN 978-3-642-14435-6. doi: 10.1007/978-3-642-14435-6_7. URL https://doi.org/10.1007/ 978-3-642-14435-6_7 .[30] Mario Figueiredo and Robert Nowak. Ordered weighted l1 regularized regression with strongly correlated covariates: Theoretical aspects. In Arthur Gretton and Christian C. Robert, editors, 
+
+Proceedings of the 19th International Conference on Artificial Intelligence and Statistics , vol-ume 51 of Proceedings of Machine Learning Research , pages 930–938, Cadiz, Spain, 09–11 May 2016. PMLR. URL https://proceedings.mlr.press/v51/figueiredo16.html .[31] Xiangrong Zeng and Mário A. T. Figueiredo. The ordered weighted ℓ1 norm: Atomic formula-tion, projections, and algorithms, 2015. URL https://arxiv.org/abs/1409.4271 .[32] Xiao-Lin Huang, Lei Shi, and Ming Yan. Nonconvex sorted ℓ1 minimization for sparse ap-proximation. Journal of the Operations Research Society of China , 3(2):207–229, February 2015. ISSN 2194-6698. doi: 10.1007/s40305-014-0069-4. URL http://dx.doi.org/10.1007/ s40305-014-0069-4 .[33] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need, 2023. URL https://arxiv. org/abs/1706.03762 .[34] Simone Silvestri, Gregory L. Wagner, Christopher Hill, Matin Raayai Ardakani, Johannes Blaschke, Jean-Michel Campin, Valentin Churavy, Navid C. Constantinou, Alan Edelman, John Marshall, Ali Ramadhan, Andre Souza, and Raffaele Ferrari. Oceananigans.jl: A julia library that achieves breakthrough resolution, memory and energy efficiency in global ocean simula-tions, 2024. URL https://arxiv.org/abs/2309.06662 .19 A General Group Construction and Overlap Proof 
+
+## A.1 General Construction of Grouping Classes 
+
+To formalize the grouping process in a general setting, let to be an N -th order observation tensor of sensor measurements, whose flattened form o is used as model input. Let D = {1, 2, . . . , N } be its set of modes, let dk, k ∈ D, denote dimensions, and define 
+
+Io = ∏
+
+> k∈D
+
+[ dk ] = [ d1] × [d2] × · · · × [dN ], no = ∏
+
+> k∈D
+
+dk,
+
+so that o = vec( to) ∈ Rno . In this appendix section, Io is the local coordinate system of one window. To separate local from global coordinates, let G ⊆ ZN be the global sensor grid and C ⊆ G 
+
+the admissible agent centers. Assume Do ⊆ D is a non-empty set of overlap modes and that to contains a local center index 
+
+ic. Let δi ∈ Z>0 denote center spacings in each mode i ∈ Do. Define 
+
+Oo = {η ∈ ZN : ic + η ∈ I o}, ϕ : {1, . . . , n o} → O o.
+
+Here, ϕ is the flattening bijection that maps flattened indices of o to local offsets. Hence, ic + ϕ(i)
+
+are the local window coordinates associated with index i. For c ∈ C and i ∈ { 1, . . . , n o}, define the global-point map 
+
+g(c, i ) = c + ϕ(i).
+
+This map returns the global grid point addressed by local index i in the window centered at c. For example, with N = 2 and row-wise flattening, 
+
+to ∈ Rn×m, o = vec( to) ∈ Rnm ,ϕ(i) = η = ( p − (ic)1, q − (ic)2) ⇐⇒ i = ( p − 1) m + q, ∀(p, q ) ∈ I o = [ n] × [m].
+
+Define anchors and stencil by 
+
+W = {w ∈ ZN : wi = δi ki, ∃ ki ∈ Z, ∀i ∈ Do,wj = 0 ∀j ∈ D \ Do},
+
+S = {s ∈ ZN : 0 ≤ si ≤ δi − 1 ∀i ∈ Do,
+
+− (ic)j ≤ sj ≤ dj − (ic)j ∀j ∈ D \ Do},
+
+and the relevant anchors 
+
+Wrel = {w ∈ W : ( ic + w + S) ∩ I o̸ = ∅}.
+
+Assume a reference center exists: 
+
+∃ c⋆ ∈ C s.t. c⋆ + w ∈ C ∀w ∈ W rel . (9) For any distinct w, v ∈ W rel , the finite sets 
+
+(ic + w + S) ∩ I o and (ic + v + S) ∩ I o
+
+are disjoint. 20 Figure 11: Illustration of the overlap construction in two modes. One mode is an overlap mode, where the centers ci and cj are separated by 2δr . Offsets p and q define the global points ci + p
+
+and cj + q, which coincide in the shown example. The outer boxes indicate the corresponding local window size around each center. For every s ∈ S , define 
+
+Is = {ϕ−1(w + s) : w ∈ W rel , i c + w + s ∈ I o
+
+} ⊆ { 1, . . . , n o}.
+
+These sets are pairwise disjoint and induce the equivalence relation 
+
+i ∼ j ⇐⇒ ∃ s ∈ S : i, j ∈ I s.
+
+Under (9), the following characterization holds (proof in Appendix A.3): two local indices, viewed from two different window centers, point to a common global grid point if and only if they lie in a common set Is. Equivalently, this overlap can be written in operational form as 
+
+ci + v + s = cj + w + s, v, w ∈ W rel , s ∈ S ,
+
+for suitable centers ci, c j ∈ C .
+
+## A.2 Input-Channel Grouping Extension 
+
+For channel-coupled grouping, let m denote the channel mode and let D be the set of all non-channel modes of to. Let Oo be the corresponding local offset set in these modes. Then ϕ is a surjective map from flattened indices of o to offsets in Oo. Let dm be the channel-mode dimension and let 
+
+ϕ−11 , . . . , ϕ −1 
+
+> dm
+
+be channel-specific inverse maps back to flattened indices. For each s ∈ S , define 
+
+Is;i = {ϕ−1 
+
+> i
+
+(w + s) : w ∈ W rel , i c + w + s ∈ I o
+
+} ⊆ { 1, . . . , n o},
+
+Is =
+
+> dm
+
+⋃
+
+> i=1
+
+Is;i.
+
+This couples pruning decisions across channels at the same spatial locations. 
+
+## A.3 Proof of the Overlap Characterization 
+
+Proposition. For i, j ∈ { 1, . . . , n o}, the following are equivalent: (A) ∃ ci, c j ∈ C : g(ci, i ) = g(cj , j ),
+
+(B) ∃ s ∈ S : i, j ∈ I s.
+
+21 Proof. (A) ⇒(B): Let (A) hold and set p := ϕ(i), q := ϕ(j). Then 
+
+ci + p = cj + q =⇒ p − q = cj − ci =: u. 
+
+By anchor compatibility, u ∈ W . Hence, for each overlap mode r ∈ Do, there exists kr ∈ Z such that 
+
+pr = qr + ur = qr + kr δr .
+
+Therefore 
+
+mod( pr , δ r ) = mod( qr , δ r ), r ∈ Do,
+
+where mod( ·, δ r ) denotes the nonnegative remainder in {0, . . . , δ r − 1}. For non-anchor modes j ∈
+
+D \ Do, we have uj = 0 by definition of W, hence 
+
+pj = qj .
+
+To construct anchors in W, define s ∈ S coordinate-wise by 
+
+sr := mod (pr , δ r
+
+) = mod (qr , δ r
+
+), r ∈ Do,sj := pj = qj , j ∈ D \ Do.
+
+Now set 
+
+v := p − s, w := q − s. 
+
+Then p = v + s and q = w + s. Moreover, for each r ∈ Do,
+
+vr = pr − sr ∈ δr Z, wr = qr − sr ∈ δr Z,
+
+and for each j ∈ D \ Do,
+
+vj = pj − sj = 0 , wj = qj − sj = 0 .
+
+so v, w ∈ W . Since p, q ∈ O o and p = v + s, q = w + s, we also have v, w ∈ W rel . Therefore 
+
+i = ϕ−1(v + s) ∈ I s and j = ϕ−1(w + s) ∈ I s, so (B) holds. In particular, we have shown the concrete representation 
+
+ϕ(i) = v + s, ϕ(j) = w + s, ci + v + s = cj + w + s. 
+
+(B) ⇒(A): Let (B) hold. Then there exists s ∈ S and anchors v, w ∈ W rel such that i = ϕ−1(v +
+
+s), j = ϕ−1(w + s), equivalently ϕ(i) = v + s, ϕ (j) = w + s. By (9), choose ci := c⋆ + w, c j := c⋆ + v,which are both in C. Then 
+
+g(ci, i ) = ci + ϕ(i) = ( c⋆ + w) + ( v + s) = c⋆ + v + w + s, g(cj , j ) = cj + ϕ(j) = ( c⋆ + v) + ( w + s) = c⋆ + v + w + s. 
+
+So g(ci, i ) = g(cj , j ), and thus (A) holds. Therefore (A) and (B) are equivalent. □
+
+22
