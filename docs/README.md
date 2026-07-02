@@ -6,73 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-01
-- 运行时间：2026-07-01 21:22:15 UTC
+- 最新运行日期：2026-07-02
+- 运行时间：2026-07-02 20:56:18 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日17篇论文精读速读，聚焦多智能体强化学习协调与部分观测挑战。  
-最值得关注两篇9分精读：理论角色与实际路由的翻译差距，以及超属性引导的部分观测MARL方法。  
-建议普通读者优先精读这两篇，理解协调惯例与观测局限下的学习机制。
-- 详情：[/202607/01/README](/202607/01/README)
+今日17篇论文聚焦强化学习与多智能体通信、LLM记忆架构、视觉-语言-动作模型效率提升。最值得精读两篇9分高作：多智能体分层通信机制《HiComm》与记忆架构驱动语言涌现研究《From Signals to Structure》。普通读者可重点关注多智能体通信优化和记忆结构对语言涌现影响的交叉方向。
+- 详情：[/202607/02/README](/202607/02/README)
 
 ### 精读区论文标签
-1. [Learned Coordination Conventions in Cooperative MARL: Measuring the Translation Gap Between Theory-Informed Roles and Learned Routing](/202607/01/2606.29541v1-learned-coordination-conventions-in-cooperative-marl-measuring-the-translation-gap-between-theory-informed-roles-and-learned-routing)  
+1. [HiComm: Hierarchical Communication for Multi-agent Reinforcement Learning](/202607/02/2606.29126v2-hicomm-hierarchical-communication-for-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：分析合作多智能体强化学习中的角色-路由矩阵，揭示理论与实际协调的差距
-2. [HyPOLE: Hyperproperty-Guided Multi-Agent Reinforcement Learning under Partial Observation](/202607/01/2606.30966v1-hypole-hyperproperty-guided-multi-agent-reinforcement-learning-under-partial-observation)  
+   evidence：协作MARL的分层通信
+2. [From Signals to Structure: How Memory Architecture Drives Language Emergence in LLM Agents](/202607/02/2607.00233v1-from-signals-to-structure-how-memory-architecture-drives-language-emergence-in-llm-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：超属性引导的多智能体强化学习
-3. [Warp RL: Reshaping Base Policy Distributions for Dynamics Adaptation](/202607/01/2606.31043v1-warp-rl-reshaping-base-policy-distributions-for-dynamics-adaptation)  
+   evidence：研究记忆架构在多智能体语言涌现中的作用
+3. [Next-Generation Agentic Reinforcement Learning Systems Enable Self-Evolving Agents](/202607/02/2607.01120v1-next-generation-agentic-reinforcement-learning-systems-enable-self-evolving-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：策略自适应与动力学变化适应
-4. [ACE: Pluggable Adaptive Context Elasticizer across Agents](/202607/01/2606.31564v1-ace-pluggable-adaptive-context-elasticizer-across-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：自适应上下文弹性器用于智能体记忆管理
-5. [ECHO: Prune to act, trace to learn with selective turn memory in agentic RL](/202607/01/2606.31650v1-echo-prune-to-act-trace-to-learn-with-selective-turn-memory-in-agentic-rl)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：选择性轮次记忆用于长程智能体RL中的证据重用
-6. [TRIAGE: Role-Typed Credit Assignment for Agentic Reinforcement Learning](/202607/01/2606.32017v1-triage-role-typed-credit-assignment-for-agentic-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体强化学习信用分配
+   evidence：通过强化学习实现自我进化智能体
+4. [Selective Memory Retention for Long-Horizon LLM Agents](/202607/02/2606.29178v1-selective-memory-retention-for-long-horizon-llm-agents)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：LLM智能体的选择性记忆保留
+5. [Warp RL: Reshaping Base Policy Distributions for Dynamics Adaptation](/202607/02/2606.31043v2-warp-rl-reshaping-base-policy-distributions-for-dynamics-adaptation)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：使用可逆变换重塑策略分布实现动力学适应
+6. [Learning from Failure: Inference-Time Self-Improvement for Computer-Use Agents](/202607/02/2606.31270v1-learning-from-failure-inference-time-self-improvement-for-computer-use-agents)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：利用失败的推理时自我改进
 
 ### 速读区论文标签
-1. [ECHO: Learning Epistemically Adaptive Language Agents with Turn-Level Credit](/202607/01/2606.29745v1-echo-learning-epistemically-adaptive-language-agents-with-turn-level-credit)  
+1. [Z-1: Efficient Reinforcement Learning for Vision-Language-Action Models](/202607/02/2606.31846v1-z-1-efficient-reinforcement-learning-for-vision-language-action-models)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：认识自适应语言智能体与回合级信用
-2. [Accelerating Q-learning through Efficient Value-Sharing across Actions](/202607/01/2606.29806v1-accelerating-q-learning-through-efficient-value-sharing-across-actions)  
+   evidence：基于GRPO的视觉-语言-动作模型强化学习后训练
+2. [VLM-AR3L: Vision-Language Models for Absolute and Relative Rewards in Reinforcement Learning](/202607/02/2607.00483v1-vlm-ar3l-vision-language-models-for-absolute-and-relative-rewards-in-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：通过动作间价值共享加速Q学习用于RL智能体
-3. [Automating the Design of Embodied AgentArchitectures](/202607/01/2606.30111v1-automating-the-design-of-embodied-agentarchitectures)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：自动搜索具身智能体架构，包含记忆模块设计
-4. [Sampling-Based Coordination-Informed Multi-Objective Multi-Robot Reinforcement Learning](/202607/01/2606.30893v1-sampling-based-coordination-informed-multi-objective-multi-robot-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：协调知情的多目标多机器人强化学习
-5. [Preventing Error Propagation in Multi-Agent AI through Runtime Monitoring](/202607/01/2606.29026v1-preventing-error-propagation-in-multi-agent-ai-through-runtime-monitoring)  
+   evidence：基于视觉语言模型的强化学习奖励设计
+3. [DAIN: Dynamic Agent-Based Interaction Network for Efficient and Collaborative Multimodal Reasoning](/202607/02/2606.30189v1-dain-dynamic-agent-based-interaction-network-for-efficient-and-collaborative-multimodal-reasoning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：通过运行时监控防止多智能体推理交换中的错误传播
-6. [Hybrid Retriever Evolution for Multimodal Document Reasoning Agents](/202607/01/2606.29648v1-hybrid-retriever-evolution-for-multimodal-document-reasoning-agents)  
+   evidence：动态多智能体协作过程，通过共识构建实现高效多模态推理
+4. [Scaling the Horizon, Not the Parameters: Reaching Trillion-Parameter Performance with a 35B Agent](/202607/02/2606.30616v1-scaling-the-horizon-not-the-parameters-reaching-trillion-parameter-performance-with-a-35b-agent)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：基于失败驱动的进化框架用于智能体检索编排
-7. [KbSD: Knowledge Boundary aware Self-Distillation for Behavioral Calibration in Agentic Search](/202607/01/2606.29863v1-kbsd-knowledge-boundary-aware-self-distillation-for-behavioral-calibration-in-agentic-search)  
+   evidence：通过扩展智能体视野提升强化学习性能
+5. [Holonic Active Distillation for Scalable Multi-Agent Learning in Multi-Sensor Systems](/202607/02/2606.31578v1-holonic-active-distillation-for-scalable-multi-agent-learning-in-multi-sensor-systems)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：使用密集令牌级监督的强化学习进行知识边界校准
-8. [RoamFlow: Reinforcement-Aligned One-Step Action MeanFlow Policy for Image-Goal Navigation](/202607/01/2606.29934v1-roamflow-reinforcement-aligned-one-step-action-meanflow-policy-for-image-goal-navigation)  
+   evidence：基于全息主动蒸馏的可扩展多智能体学习
+6. [What Memory Do GUI Agents Really Need? From Passive Records to Active Task-Driving States](/202607/02/2606.31612v1-what-memory-do-gui-agents-really-need-from-passive-records-to-active-task-driving-states)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：具身智能体强化对齐导航策略
-9. [Agentic AI for Bilevel Long-Term Optimization of Policy-Driven Physical Layer Systems](/202607/01/2606.24416v1-agentic-ai-for-bilevel-long-term-optimization-of-policy-driven-physical-layer-systems)  
+   evidence：面向GUI智能体的主动任务驱动记忆
+7. [A Contextual-Bandit Oversight Game with Two-Sided Informational Asymmetry](/202607/02/2607.00155v1-a-contextual-bandit-oversight-game-with-two-sided-informational-asymmetry)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：利用强化学习概念研究自主智能体的监督博弈
+8. [Learning Generalizable Skill Policy with Data-Efficient Unsupervised RL](/202607/02/2607.00392v1-learning-generalizable-skill-policy-with-data-efficient-unsupervised-rl)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：无监督强化学习预训练通用技能策略
+9. [RoAd-RL: A Unified Library and Benchmark for Robust Adversarial Reinforcement Learning](/202607/02/2606.29867v1-road-rl-a-unified-library-and-benchmark-for-robust-adversarial-reinforcement-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：智能体AI用于双层优化中的自主决策
-10. [Memory as an Attack Surface in LLM Agents: A Study on Multiple-Choice Question Answering](/202607/01/2606.29030v1-memory-as-an-attack-surface-in-llm-agents-a-study-on-multiple-choice-question-answering)  
+   evidence：鲁棒对抗强化学习基准库
+10. [FormIDEAble: Safe and Socially-aware Autonomous Systems](/202607/02/2606.31572v1-formideable-safe-and-socially-aware-autonomous-systems)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：LLM智能体中的记忆作为攻击面
-11. [Building Multi-Task Agentic LLMs via Two-Phase Distillation](/202607/01/2606.30044v1-building-multi-task-agentic-llms-via-two-phase-distillation)  
+   evidence：具有形式化保证的社会感知安全协调
+11. [Multi-scale Mixture of World Models for Embodied Agents in Evolving Environments](/202607/02/2607.00457v1-multi-scale-mixture-of-world-models-for-embodied-agents-in-evolving-environments)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：通过蒸馏独立RL专家构建多任务智能体LLM
+   evidence：面向演化环境的尺度感知世界模型混合
 
 
 <div class="dpr-home-promo-card">
