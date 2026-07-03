@@ -1,0 +1,315 @@
+Title: The Rollout Infrastructure Tax in Coding-Agent Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2607.01415v1
+
+Published Time: Fri, 03 Jul 2026 00:10:18 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# The Rollout Infrastructure Tax in Coding-Agent Reinforcement Learning 
+
+## Daniel Thi Graviet 
+
+Daytona United States 
+
+## Lovre Pešut 
+
+Daytona United States 
+
+## Ivan Dagelić 
+
+Daytona United States 
+
+## Vedran Jukic 
+
+Daytona United States 
+
+## Ivan Burazin 
+
+Daytona United States 
+
+Abstract 
+
+Coding-agent reinforcement learning treats execution infrastruc-ture as a background implementation detail, despite relying on large numbers of interactive software rollouts. This is a missed opportunity: measuring infrastructure overhead can reveal practi-cal efficiency gains for RL post-training, where small per-rollout savings compound at scale. We present a comparative study of four execution substrates: single containers, hosted sandboxes, Kubernetes-orchestrated containers, and cloud virtual machines. We find up to 110 × variation in cold-start latency and a 1.8 × spread in projected worker-hours for one million 150-step trajectories. Our results suggest that future coding-agent RL systems should optimize execution substrates as part of the training system itself, not merely as deployment plumbing. 
+
+CCS Concepts 
+
+• Computer systems organization → Cloud computing ; • Soft-ware and its engineering → Software performance ; • Computing methodologies → Machine learning .
+
+1 Introduction 
+
+Coding-agent reinforcement learning turns post-training into a large-scale systems workload. Instead of producing a single static answer, an agent repeatedly acts inside a software environment by inspecting files, editing code, running commands, and observing results. Each rollout therefore depends not only on model inference and reward computation, but also on the execution substrate that provisions and manages the environment. This paper studies a specific systems question: how much does the execution substrate itself slow down coding-agent RL? The question is narrow, but consequential: seemingly small per-rollout and per-action delays compound quickly at training scale. 
+
+Table 1: Small substrate overheads become large training costs. Extra overhead Scale Added worker-hours 
+
+1 s per rollout 1M rollouts 278 h 10 ms per action 1M × 150 actions 417 h 100 ms per action 1M × 150 actions 4,167 h 
+
+> Preprint. Submitted to ACM SoCC 2026.
+
+Parallelism does not remove this cost; it converts it into a re-quirement for more workers, more scheduling capacity, and higher training expense to achieve the same wall-clock throughput. We call this overhead the rollout infrastructure tax : the latency and cost introduced by the systems that execute coding-agent RL trajectories. Execution substrates must provision environments, execute agent actions, manage state, and clean up after each attempt. They must also provide isolation and reproducibility so that one trajectory does not contaminate another or distort the reward signal. These requirements create tradeoffs among startup latency, per-action latency, scalability, and isolation. Despite its importance, this tax is rarely measured directly. Re-cent agentic RL systems increasingly recognize rollout generation as a major training bottleneck, with some work reporting rollout generation as more than 90% of total runtime [ 16 ]. Production traces further show that software environments introduce their own fail-ures and long tails: containerized environment reset can dominate rollout time during failures, with delays caused by Docker image pulls, network contention, and host I/O contention [ 7 ]. These obser-vations suggest that rollout execution is not merely a background implementation detail. However, existing work typically optimizes rollout scheduling, GPU utilization, or end-to-end training through-put, leaving open a narrower systems question: how much latency is introduced by the execution substrate itself? We study this question through a measurement study of four coding-agent execution substrates: single containers, hosted sand-boxes, Kubernetes-orchestrated containers, and cloud virtual ma-chines. Our study makes the following contributions: 
+
+• We define the rollout infrastructure tax and identify the sys-tems operations that contribute to it, including environment creation, readiness, orchestration, command execution, ob-servation collection, and cleanup (§2). 
+
+• We present a controlled evaluation methodology for com-paring execution substrates under identical coding-agent workloads (§3). 
+
+• We show that substrate choice directly affects rollout per-formance: cold-start latency varies by up to 110 ×, but the gap narrows on heavier workloads (§4). 
+
+• We project these measurements to training scale and find that, for one million 150-step trajectories, substrate choice produces a 1.8 × spread in rollout worker-hours, equivalent to 5,316 additional worker-hours (§4.4). 
+
+• We translate the measurements into three concrete design requirements for rollout-native substrates: locality-aware 
+
+> arXiv:2607.01415v1 [cs.LG] 1 Jul 2026 Graviet et al.
+
+warm pools, low-latency action APIs, and isolation mecha-nisms chosen according to rollout size (§5). We do not claim that execution substrates solve RL post-training inefficiency, but show that they are a measurable and optimizable part of the training system. As coding-agent RL scales to larger workloads and longer trajectories, rollout infrastructure should be treated as a core systems concern rather than an implementation detail. 
+
+2 The Rollout Infrastructure Tax 
+
+The key idea in this paper is simple: a coding-agent rollout is not only a model computation; it is also a repeated interaction with an execution system. Before the agent can act, the system must create an environment and make it ready. Each time the agent acts, the system must execute a command, collect the result, update state, and return an observation. After the trajectory ends, the system must preserve, reset, or discard the environment so that later trials remain isolated and reproducible. We call the latency introduced by this execution system the 
+
+rollout infrastructure tax . This tax excludes model inference and reward computation. It captures only the systems cost of running the environment in which the agent acts. At a high level, a rollout has the following structure: 
+
+𝑇 create + 𝑇 ready 
+
+| {z }
+
+> fixed per trajectory
+
++
+
+> 𝑆
+
+∑︁ 
+
+> 𝑖 =1
+
+𝑇 action ,𝑖 
+
+| {z }
+
+> repeated per agent step
+
++ 𝑇 orchestration 
+
+| {z }
+
+> control-plane overhead
+
+(1) where 𝑆 is the number of agent actions in the trajectory. This decomposition is useful because different parts of the tax matter in different regimes. For short trajectories, fixed startup and readi-ness costs can dominate total rollout time. For longer trajectories, those fixed costs are amortized, and repeated per-action overhead becomes increasingly important. A substrate can therefore look excellent for long rollouts but poor for short ones, or vice versa. The components of the rollout infrastructure tax are: 
+
+• Environment creation time. Time required to provision a new execution environment. 
+
+• Readiness time. Time between environment creation and the point at which the first agent action can execute. 
+
+• Amortized per-action cost. Total rollout latency divided by the number of agent actions. 
+
+• Orchestration overhead. Latency introduced by the con-trol plane that coordinates rollout execution. This decomposition gives the rest of the paper a measurement framework. Rather than asking only which substrate is fastest, we ask where each substrate pays the tax: before the first action, during each action, or in the control plane that coordinates the rollout. The answer determines when substrate choice matters most and how infrastructure overhead compounds at training scale. 
+
+3 Evaluation Overview 
+
+We evaluate the rollout infrastructure tax by holding the coding-agent workload fixed while varying the execution substrate. Our goal is not to benchmark every possible deployment configuration, but to compare common substrate archetypes under a controlled rollout workload. We study four common points in the rollout-substrate design space: lightweight single containers, commercial hosted coding-agent sandboxes, Kubernetes-orchestrated containers, and strongly isolated cloud virtual machines. We evaluate three workload tiers. T0 is a minimal command workload that isolates startup overhead and the cost of launch-ing commands. T1 uses a preloaded python/attrs repository to measure simple code inspection in an already-loaded repository, reflecting the code-navigation operations used by recent software-agent RL systems, including AST-based search tools [ 4]. T2 uses 
+
+python/attrs at a fixed buggy commit and includes repository cloning, source-code inspection, patch application, and test execu-tion. This tier reflects the heavier setup and validation loop common in software-engineering agent tasks, where environment creation and step execution can become significant sources of latency [ 7 ]. Together, these tiers separate minimal substrate overhead from increasingly realistic coding-agent setup, execution, and validation costs. Across these workloads, we measure cold-start latency, latency decomposition, multi-step trajectory completion time, and pro-jected rollout worker-hours at training scale. Fresh-episode and multi-step trajectory experiments are each repeated 100 times per substrate and workload configuration. We report p50 and p95 la-tency to capture both typical and tail behavior. All substrates use comparable software environments, resource limits, and regional placement when available. We avoid provider-specific optimizations such as specialized image prefetching, de-pendency caches, or scheduler tuning. The resulting measurements should be interpreted as controlled comparisons of execution sub-strates rather than theoretical limits of the underlying technologies. 
+
+4 Results 
+
+We organize our evaluation around four research questions in-tended to characterize the rollout infrastructure tax and its implica-tions for large-scale coding-agent reinforcement learning. 
+
+4.1 RQ1: How Does Rollout Time Break Down? 
+
+Our first goal is to understand how rollout latency is distributed across the execution lifecycle. Using the decomposition introduced in Section 2, we measure environment creation latency, readiness latency, per-action execution latency, and orchestration overhead across all evaluated execution substrates. This analysis reveals whether rollout performance is primarily constrained by startup costs, command responsiveness, scheduling delays, or workload setup. We focus on the T2 networked repository workload, which most closely resembles a realistic coding-agent trajectory: the environment clones a repository, performs source-code inspection, executes command-line operations, and resets state across repeated trials. As shown in Figure 1, the dominant source of latency varies across substrates. Lightweight container-based environments spend most of their rollout time on agent actions and setup, while sub-strates with stronger isolation or heavier orchestration incur larger startup and readiness costs. This result shows that rollout latency is The Rollout Infrastructure Tax in Coding-Agent Reinforcement Learning Container Sandbox Orchestrated        
+
+> Container
+> Cloud VM
+> (a) Median latency decomposition
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> Rollout time (s)
+> 23.5s 24.5s
+> 34.2s
+> 43.8s
+> Container Sandbox Orchestrated
+> Container
+> Cloud VM
+> (b) Fraction of total rollout time
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Share of rollout time (%)
+> Env. creation Readiness Workload setup Action execution Orchestration
+
+Figure 1: Latency decomposition across execution substrates for Tier 2 workloads. 
+
+not a single bottleneck: different substrates pay the infrastructure tax at different points in the execution lifecycle. 
+
+4.2 RQ2: How Do Execution Substrates Compare Under Cold Starts? 
+
+Many coding-agent RL systems provision a fresh execution envi-ronment for each trajectory, making cold-start latency a direct con-straint on rollout throughput. This effect is especially pronounced for short-horizon tasks, where infrastructure overhead may domi-nate useful computation. We measure cold-start latency across all substrates under iden-tical workload and resource configurations. Each experiment pro-visions a new isolated environment and records the elapsed time until the first command can be executed. Results are reported for three workload tiers (T0–T2) using 100 trials per configuration. T0     
+
+> Command
+> T1
+> Local repo
+> T2
+> Networked repo
+> Workload tier
+> 100ms
+> 1s
+> 10s
+> 100s
+> Cold-start latency (log scale)
+> 162ms
+> 1.2s
+> 18.0s
+> 597ms
+> 1.6s
+> 19.6s
+> 2.9s
+> 4.2s
+> 25.5s
+> 17.9s 18.8s
+> 33.9s
+> Sandbox Container Orchestrated Container Cloud VM
+
+Figure 2: P50 (median) cold-start latency by substrate and workload tier. 
+
+Figure 2 shows substantial variation in cold-start performance across execution substrates. The hosted sandbox achieves the lowest cold-start latency, followed by the single-container configuration. Kubernetes-orchestrated containers add scheduling overhead, while cloud VMs have the highest provisioning cost in our measured configuration. Across workload tiers, cold-start latency spans more than two orders of magnitude between the fastest and slowest substrates. Cold-start overhead also affects lightweight workloads dispro-portionately. For T0 tasks, the gap between the hosted sandbox and the cloud VM exceeds two orders of magnitude. As workload 1s 10s        
+
+> 0
+> .25
+> .50
+> .75
+> 1
+> Fraction of runs completed
+> p50
+> p95
+> T0 — Command
+> 1s 10s
+> 0
+> .25
+> .50
+> .75
+> 1
+> p50
+> p95
+> T1 — Local repo
+> 15s 20s 30s 50s
+> 0
+> .25
+> .50
+> .75
+> 1
+> p50
+> p95
+> T2 — Networked repo
+> Startup latency (log scale)
+> Sandbox Container Orchestrated Container Cloud VM
+
+Figure 3: Cold-start latency distribution across substrates. 
+
+complexity increases, however, cold-start latency is amortized by execution time: by T2, the cloud VM–hosted-sandbox gap shrinks to approximately 1.9 ×.Figure 3 shows the distributional behavior of cold starts. Or-chestrated containers exhibit stable startup performance, with low variance and a narrow gap between median and tail latency. The hosted sandbox achieves the fastest median startup times but shows greater variability on lightweight workloads. Overall, these results show that substrate choice is most visible for short trajectories, where startup costs dominate, but remains important for longer rollouts because even smaller per-trajectory differences compound across parallel batches at training scale. 
+
+4.3 RQ3: When Are Infrastructure Costs Amortized? 
+
+Cold-start latency alone does not determine rollout efficiency. Coding-agent RL trajectories often contain dozens or hundreds of agent actions, so fixed startup costs are divided across more actions as trajectories grow. We therefore measure how rollout latency and latency composition change with trajectory length. We execute fixed-length trajectories containing 10, 50, and 150 actions. Each trajectory consists of representative coding-agent operations, including filesystem inspection, command execution, source-code modification, and test execution. We report both total trajectory completion time and amortized per-action latency, de-fined as total trajectory time divided by the number of actions. This second metric should be interpreted as an average cost per action including amortized startup and setup overhead, not as the latency of an isolated command. Figure 4 shows how the composition of rollout latency changes with trajectory length. Fixed infrastructure costs are most visible in short trajectories, while per-action execution becomes a larger share of total rollout time as trajectories grow. Figure 5 shows that increasing trajectory length amortizes fixed startup costs and narrows the relative gap between substrates. This does not mean that individual commands become faster. Rather, fixed provisioning and setup costs are divided across more actions. Short-horizon workloads amplify cold-start and readiness costs, while longer trajectories expose the ongoing cost of executing commands and returning observations at each agent step. Graviet et al. n=10 n=150 n=10 n=150 n=10 n=150 n=10 n=150       
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Share of rollout time (%)
+> Container Sandbox Orchestrated
+> Container
+> Cloud VM
+> Env. creation Readiness Workload setup Action execution Orchestration
+
+Figure 4: Normalized latency composition as trajectories shift from 10 to 150 steps. 10 50 150    
+
+> Actions per trajectory
+> 8s
+> 10s
+> 15s
+> 20s
+> 30s
+> 45s
+> Trajectory Latency
+> Sandbox Container Orchestrated Container Cloud VM
+
+Figure 5: Trajectory completion time by action count. 
+
+4.4 RQ4: How Do Substrate Delays Compound at Training Scale? 
+
+The previous results show that longer trajectories can amortize fixed startup costs. However, amortization does not make substrate overhead disappear. Even small per-trajectory latency gaps can become large operational costs when repeated across many rollout batches. We estimate this effect by projecting measured 150-step tra-jectory latency into aggregate rollout worker-hours. This projec-tion is complementary to recent work showing that rollout delays and long-tail trajectories can stall synchronous RL pipelines and leave accelerators underutilized [ 6, 16 ]. In these settings, execution-substrate latency matters not only because rollout workers run longer, but also because delayed environment setup, action execu-tion, and observation collection can slow the delivery of rollout data to downstream training components. We therefore focus on the substrate-side portion of this bottleneck: the time spent creating, preparing, and interacting with coding environments. For each substrate 𝑠 , let 𝐿 𝑠 denote the measured end-to-end latency of a 150-step trajectory, excluding model inference and reward computation. For a training run containing 𝑁 trajectories, we estimate rollout worker-hours as 
+
+𝐻 𝑠 (𝑁 ) = 𝑁 · 𝐿 𝑠 
+
+3600 . (2) This models only rollout-worker demand, not total training cost. It excludes GPU inference, reward-model evaluation, optimizer steps, and queueing outside the rollout workers. Table 2 shows how a small per-trajectory latency gap compounds at training scale. 
+
+Table 2: A 19s per-trajectory gap compounds into thousands of worker-hours. Case Latency / trajectory Worker-hours 
+
+Slowest substrate 42.5 s 11,811 h Fastest substrate 23.4 s 6,495 h Difference at 1M traj. 19.1 s 5,316 h Thus, a difference that is barely noticeable for a single rollout becomes a multi-thousand-worker-hour gap when repeated across one million 150-step trajectories. 10K 50K 100K 500K 1M    
+
+> Training run size
+> 0
+> 2,000
+> 4,000
+> 6,000
+> 8,000
+> 10,000
+> 12,000
+> 14,000
+> 16,000
+> 18,000
+> 20,000
+> Worker-Hours
+> Sandbox Container Orchestrated Container Cloud VM
+
+Figure 6: Projected rollout worker-hours required at training scale across execution substrates. 
+
+Figure 6 shows this effect across training runs from 10,000 to 1,000,000 trajectories. As rollout counts grow, the same per-trajectory latency gap turns into a larger worker-hour gap. 
+
+5 Design Implications 
+
+Our results suggest that substrates designed for long-lived ser-vices, batch jobs, or general-purpose cloud workloads can expose overheads that become costly when repeated across many short, interactive trajectories. This motivates rollout-native designs that reduce trajectory latency while preserving isolation, reproducibility, and scalable execution. We highlight three implications. 
+
+Move readiness work off the critical path with locality-aware warm pools. Short trajectories are especially sensitive to startup and readi-ness latency because fixed costs are amortized over only a small The Rollout Infrastructure Tax in Coding-Agent Reinforcement Learning 
+
+number of actions. Rollout systems should therefore avoid repeat-edly constructing environments from scratch. A rollout-native sub-strate can maintain staged warm pools: base environments with the runtime already initialized, image-warmed environments with re-quired tools loaded, repository-warmed environments with source trees already present, and dependency-warmed environments with language packages or build artifacts cached. These pools are most effective when the scheduler accounts for the state already present in each environment. Rather than asking only whether a worker is idle, the scheduler should ask which idle worker is closest to the desired rollout state. Routing a trajectory to a worker with the relevant image, repository, dependency cache, or filesystem state can reduce readiness costs before useful agent work begins. 
+
+Minimize control-plane and command-dispatch overhead. Roll-out execution is interactive: every trajectory may require tens or hundreds of commands, observations, file operations, and test ex-ecutions. Substrates that route each action through remote shells, or-chestration APIs, scheduling layers, or heavyweight result-collection paths can add latency repeatedly across the trajectory. As trajec-tories grow longer and startup costs are amortized, low-latency action APIs, direct process execution, fast filesystem access, and lightweight observation collection become increasingly important. 
+
+Match isolation and scaling mechanisms to rollout economics. 
+
+Strong isolation and elastic scaling are necessary for large-scale rollout generation, but they can impose startup, reset, scheduling, and placement costs. Virtual machines provide strong isolation, but their fresh-start paths can be expensive. Containers reduce startup overhead, but may provide weaker isolation. MicroVMs, snapshots, sandbox runtimes, and preallocated rollout workers offer intermediate designs. The appropriate substrate depends on rollout length, reset frequency, parallelism, and the cost of waiting for new workers to become ready. Taken together, these implications point toward execution sub-strates that combine warm reuse, cache locality, low-latency in-teraction, scalable scheduling, and lightweight isolation. Treating coding-agent rollouts as a distinct systems workload creates an opportunity to reduce training cost without changing the model, reward function, or optimization algorithm. 
+
+6 Limitations 
+
+This study is a controlled measurement of rollout infrastructure rather than a complete simulation of production coding-agent RL systems. Our workloads use fixed command sequences to make comparisons reproducible across substrates; real agents may issue more varied commands, interact with larger repositories, or exhibit longer-horizon behavior. However, our study captures the core operations common to coding-agent rollouts: environment creation, command execution, filesystem interaction, test execution, and reset. Our measurements also reflect specific hardware, regions, cache states, and provider configurations. Cloud execution latency can vary with image locality, resource placement, noisy neighbors, stor-age performance, and control-plane load. We therefore interpret the absolute latencies as configuration-specific, while treating the cross-substrate differences and scaling trends as the primary result. Finally, our training-scale projections depend on assumptions about trajectory length, rollout count, parallelism, and environ-ment reuse. These projections are not intended as universal cost estimates. Instead, they show how measured per-trajectory over-heads compound at scale and provide a comparative framework for reasoning about rollout infrastructure choices. 
+
+7 Related Work 
+
+Coding agents and interactive software environments. Recent work on coding agents has moved language models from single-turn code generation into interactive software environments, where agents inspect repositories, edit files, execute commands, and run tests. Benchmarks and systems such as TerminalBench, SWE-bench, and SWE-agent have been especially valuable in making this interac-tion loop concrete [ 10 , 12 , 15 ]. Our work studies the same execution pattern of stateful, multi-step trajectories over software reposito-ries. However, it asks a different question: rather than measuring agent success rate or task realism, we measure the infrastructure cost of executing these trajectories at training scale. 
+
+Reinforcement learning and rollout systems. Reinforcement learning from feedback and reasoning-oriented post-training meth-ods rely on large numbers of sampled trajectories or rollouts [ 9 , 14 ]. Distributed systems such as Ray and RLlib show how rollout gener-ation and task execution can be scaled across clusters [ 11 , 13 ]. This line of work motivates our focus on rollout throughput. However, coding-agent RL adds an execution loop that is not present in many standard RL settings: each trajectory requires a mutable software environment that must be provisioned, prepared, interacted with, and reset. Our study isolates this environment-execution cost rather than the model, reward, or optimization components of RL training. 
+
+Execution substrates, cold starts, and ML infrastructure. 
+
+Systems research has developed techniques for reducing startup latency, improving isolation, and scheduling distributed workloads. Firecracker, SEUSS, and Catalyzer show how lightweight virtual-ization, snapshots, and runtime initialization affect startup latency and isolation [ 1, 3, 5 ]. Cluster and ML systems such as Borg, Ray, and Tiresias study scheduling, resource allocation, and training throughput at scale [ 2 , 8, 13 ]. We build on these systems insights, but apply them to repeated, interactive, stateful coding-agent roll-outs. In this setting, cold starts, command execution, filesystem mutation, observation collection, and environment reset all become part of the training loop. 
+
+8 Conclusion 
+
+Coding-agent RL makes execution infrastructure part of the training loop. Each rollout must create, prepare, interact with, and observe a software environment, and these costs accumulate across large numbers of trajectories. This paper measured that cost as the rollout infrastructure tax .Across four execution substrates, we showed that substrate choice can change cold-start latency by orders of magnitude and produce thousands of additional rollout worker-hours at training scale. The main lesson is not that one substrate is universally best, but that rollout infrastructure is measurable, consequential, and optimizable. Future coding-agent RL systems should treat execution sub-strates as part of the training system itself. Rollout-native stacks Graviet et al. 
+
+that combine warm reuse, cache locality, low-latency interaction, efficient reset, scalable orchestration, and appropriate isolation may reduce training cost without changing the model, reward function, or optimization algorithm. 
+
+References 
+
+[1] Alexandru Agache, Marc Brooker, Alexandra Iordache, Anthony Liguori, Rolf Neugebauer, Phil Piwonka, and Diana-Maria Popa. 2020. Firecracker: Light-weight Virtualization for Serverless Applications. In 17th USENIX Symposium on Networked Systems Design and Implementation (NSDI 20) . USENIX Associ-ation, Santa Clara, CA, 419–434. https://www.usenix.org/conference/nsdi20/ presentation/agache [2] Brendan Burns, Brian Grant, David Oppenheimer, Eric Brewer, and John Wilkes. 2016. Borg, Omega, and Kubernetes. ACM Queue 14 (2016), 70–93. http: //queue.acm.org/detail.cfm?id=2898444 [3] James Cadden, Thomas Unger, Yara Awad, Han Dong, Orran Krieger, and Jonathan Appavoo. 2020. SEUSS: Skip Redundant Paths to Make Serverless Fast. In Proceedings of the Fifteenth European Conference on Computer Systems .Article 32, 15 pages. doi:10.1145/3342195.3392698 [4] Shiyi Cao, Dacheng Li, Fangzhou Zhao, Shuo Yuan, Sumanth R. Hegde, Connor Chen, Charlie Ruan, Tyler Griggs, Shu Liu, Eric Tang, Richard Liaw, Philipp Moritz, Matei Zaharia, Joseph E. Gonzalez, and Ion Stoica. 2025. SkyRL-Agent: Efficient RL Training for Multi-turn LLM Agent. arXiv:2511.16108 [cs.AI] https: //arxiv.org/abs/2511.16108 [5] Dong Du, Tianyi Yu, Yubin Xia, Binyu Zang, Guanglu Yan, Chenggang Qin, Qixuan Wu, and Haibo Chen. 2020. Catalyzer: Sub-millisecond Startup for Serverless Computing with Initialization-less Booting. In Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems . 467–481. doi:10.1145/3373376.3378512 [6] Wei Gao, Yuheng Zhao, Dakai An, Tianyuan Wu, Lunxi Cao, Shaopan Xiong, Ju Huang, Weixun Wang, Siran Yang, Wenbo Su, Jiamang Wang, Lin Qu, Bo Zheng, and Wei Wang. 2025. RollPacker: Mitigating Long-Tail Rollouts for Fast, Synchronous RL Post-Training. arXiv:2509.21009 [cs.DC] https://arxiv.org/abs/ 2509.21009 [7] Wei Gao, Yuheng Zhao, Tianyuan Wu, Shaopan Xiong, Weixun Wang, Dakai An, Lunxi Cao, Dilxat Muhtar, Zichen Liu, Haizhou Zhao, Ju Huang, Siran Yang, Yong-bin Li, Wenbo Su, Jiamang Wang, Lin Qu, Bo Zheng, and Wei Wang. 2026. RollArt: Disaggregated Multi-Task Agentic RL Training at Scale. arXiv:2512.22560 [cs.DC] https://arxiv.org/abs/2512.22560 [8] Juncheng Gu, Mosharaf Chowdhury, Kang G. Shin, Yibo Zhu, Myeongjae Jeon, Junjie Qian, Hongqiang Harry Liu, and Chuanxiong Guo. 2019. Tiresias: A GPU Cluster Manager for Distributed Deep Learning. In 16th USENIX Symposium on Networked Systems Design and Implementation . 485–500. https://www.usenix. org/conference/nsdi19/presentation/gu [9] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chong Ruan, Damai Dai, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Honghui Ding, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jingchang Chen, Jingyang Yuan, Jinhao Tu, Junjie Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaichao You, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingxu Zhou, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, S. S. Li, Shuang Zhou, Shaoqing Wu, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding Zeng, Wen Liu, Wenfeng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao, Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan Song, Xinyi Zhou, Xianzu Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He, Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan Wang, Yue Gong, Yuheng Zou, Yujia He, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou, Y. X. Zhu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying Tang, Yukun Zha, Yuting Yan, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao, Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun Liu, Zilin Li, Ziwei Xie, Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, and Zhen Zhang. 2025. DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. Nature 645, 8081 (2025), 633–638. doi:10.1038/s41586-025-09422-z [10] Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan. 2024. SWE-bench: Can Language Models Resolve Real-World GitHub Issues? arXiv:2310.06770 [cs.CL] https://arxiv.org/abs/2310. 06770 [11] Eric Liang, Zhanghao Wu, Michael Luo, Sven Mika, Joseph E. Gonzalez, and Ion Stoica. 2021. RLlib Flow: Distributed Reinforcement Learning is a Dataflow Problem. arXiv:2011.12719 [cs.LG] https://arxiv.org/abs/2011.12719 [12] Mike A. Merrill, Alexander G. Shaw, Nicholas Carlini, Boxuan Li, Harsh Raj, Ivan Bercovich, Lin Shi, Jeong Yeon Shin, Thomas Walshe, E. Kelly Buchanan, Junhong Shen, Guanghao Ye, Haowei Lin, Jason Poulos, Maoyu Wang, Mari-anna Nezhurina, Jenia Jitsev, Di Lu, Orfeas Menis Mastromichalakis, Zhiwei Xu, Zizhao Chen, Yue Liu, Robert Zhang, Leon Liangyu Chen, Anurag Kashyap, Jan-Lucas Uslu, Jeffrey Li, Jianbo Wu, Minghao Yan, Song Bian, Vedang Sharma, Ke Sun, Steven Dillmann, Akshay Anand, Andrew Lanpouthakoun, Bardia Koopah, Changran Hu, Etash Guha, Gabriel H. S. Dreiman, Jiacheng Zhu, Karl Krauth, Li Zhong, Niklas Muennighoff, Robert Amanfu, Shangyin Tan, Shreyas Pimpal-gaonkar, Tushar Aggarwal, Xiangning Lin, Xin Lan, Xuandong Zhao, Yiqing Liang, Yuanli Wang, Zilong Wang, Changzhi Zhou, David Heineman, Hange Liu, Harsh Trivedi, John Yang, Junhong Lin, Manish Shetty, Michael Yang, Nabil Omi, Negin Raoof, Shanda Li, Terry Yue Zhuo, Wuwei Lin, Yiwei Dai, Yuxin Wang, Wenhao Chai, Shang Zhou, Dariush Wahdany, Ziyu She, Jiaming Hu, Zhikang Dong, Yuxuan Zhu, Sasha Cui, Ahson Saiyed, Arinbjörn Kolbeinsson, Jesse Hu, Christopher Michael Rytting, Ryan Marten, Yixin Wang, Alex Dimakis, Andy Konwinski, and Ludwig Schmidt. 2026. Terminal-Bench: Benchmarking Agents on Hard, Realistic Tasks in Command Line Interfaces. arXiv:2601.11868 [cs.SE] https://arxiv.org/abs/2601.11868 [13] Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov, Richard Liaw, Eric Liang, Melih Elibol, Zongheng Yang, William Paul, Michael I. Jordan, and Ion Stoica. 2018. Ray: A Distributed Framework for Emerging AI Applications. arXiv:1712.05889 [cs.DC] https://arxiv.org/abs/1712.05889 [14] Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schul-man, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Pe-ter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe. 2022. Training language models to follow instructions with human feedback. arXiv:2203.02155 [cs.CL] https://arxiv.org/abs/2203.02155 [15] John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press. 2024. SWE-agent: Agent-Computer In-terfaces Enable Automated Software Engineering. arXiv:2405.15793 [cs.SE] https://arxiv.org/abs/2405.15793 [16] Yuzhen Zhou, Jiajun Li, Yusheng Su, Gowtham Ramesh, Zilin Zhu, Xiang Long, Chenyang Zhao, Jin Pan, Xiaodong Yu, Ze Wang, Kangrui Du, Jialian Wu, Ximeng Sun, Jiang Liu, Qiaolin Yu, Hao Chen, Zicheng Liu, and Emad Barsoum. 2025. APRIL: Active Partial Rollouts in Reinforcement Learning to Tame Long-tail Generation. arXiv:2509.18521 [cs.LG] https://arxiv.org/abs/2509.18521
