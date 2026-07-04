@@ -6,65 +6,55 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-03
-- 运行时间：2026-07-03 21:50:59 UTC
+- 最新运行日期：2026-07-04
+- 运行时间：2026-07-04 21:30:11 UTC
 - 运行状态：成功
-- 本次总论文数：15
-- 精读区：6
-- 速读区：9
+- 本次总论文数：11
+- 精读区：5
+- 速读区：6
 
 ### 今日简报（AI）
-今日共推荐15篇论文，精读6篇，速读9篇。最值得关注的方向是智能体强化学习（自我进化智能体）与平均场强化学习，均获9.0高分。建议普通读者优先了解自我进化智能体与偏好对齐的奖励建模思路。
-- 详情：[/202607/03/README](/202607/03/README)
+1) 今日精选11篇论文，重点关注智能硬件设计与GUI代理记忆机制两大高分方向。  
+2) 最值得看：Agentic硬件设计转向仓库级代码演化，GUI代理需从被动记录升级为主动任务驱动状态——两项研究均获9.0分。  
+3) 建议优先精读这两篇，速读中的强化学习奖励黑客缓解与LLM推理增强策略可作为补充。
+- 详情：[/202607/04/README](/202607/04/README)
 
 ### 精读区论文标签
-1. [Next-Generation Agentic Reinforcement Learning Systems Enable Self-Evolving Agents](/202607/03/2607.01120v2-next-generation-agentic-reinforcement-learning-systems-enable-self-evolving-agents)  
+1. [Agentic Hardware Design as Repository-Level Code Evolution](/202607/04/2606.28279v1-agentic-hardware-design-as-repository-level-code-evolution)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：自我进化智能体，从经验中持续学习
-2. [Mean Field Reinforcement Learning](/202607/03/2607.01525v1-mean-field-reinforcement-learning)  
+   evidence：用于硬件设计的自演化智能体框架
+2. [What Memory Do GUI Agents Really Need? From Passive Records to Active Task-Driving States](/202607/04/2606.31612v2-what-memory-do-gui-agents-really-need-from-passive-records-to-active-task-driving-states)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：平均场强化学习连接多智能体系统与合作学习
-3. [Safe Online Learning via Smooth Safety-Structured Policy Composition](/202607/03/2606.31320v1-safe-online-learning-via-smooth-safety-structured-policy-composition)  
+   evidence：GUI代理的主动任务驱动记忆
+3. [Learning the Supports for Categorical Critic in Reinforcement Learning](/202607/04/2607.01880v1-learning-the-supports-for-categorical-critic-in-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：强化学习中分类评论家学习
+4. [Episodic-to-Semantic Consolidation Without Identity Drift](/202607/04/2607.01988v1-episodic-to-semantic-consolidation-without-identity-drift)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：记忆整合；情景到语义；智能体记忆架构
+5. [Coachable agents for interactive gameplay](/202607/04/2607.00642v1-coachable-agents-for-interactive-gameplay)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：安全在线强化学习策略组合，实现平滑的安全约束学习，适用于自主智能体
-4. [VLM-AR3L: Vision-Language Models for Absolute and Relative Rewards in Reinforcement Learning](/202607/03/2607.00483v2-vlm-ar3l-vision-language-models-for-absolute-and-relative-rewards-in-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：视觉语言模型为强化学习智能体提供绝对和相对奖励
-5. [MemSyco-Bench: Benchmarking Sycophancy in Agent Memory](/202607/03/2607.01071v1-memsyco-bench-benchmarking-sycophancy-in-agent-memory)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：智能体记忆引发的谄媚行为评测
-6. [Simulation Based Reward Function Validation for Multi-Agent On Orbit Inspection](/202607/03/2607.01367v1-simulation-based-reward-function-validation-for-multi-agent-on-orbit-inspection)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：使用多智能体强化学习和泛化奖励函数实现航天器协同检测
+   evidence：使用强化学习和通用价值函数近似器的可教练代理技术
 
 ### 速读区论文标签
-1. [CoRe: Combined Rewards with Vision-Language Model Feedback for Preference-Aligned Reinforcement Learning](/202607/03/2607.01721v1-core-combined-rewards-with-vision-language-model-feedback-for-preference-aligned-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：结合形式化奖励和残差奖励与VLM反馈的混合强化学习框架
-2. [Full Bayesian Reinforcement Learning via LF-IBIS](/202607/03/2607.01741v1-full-bayesian-reinforcement-learning-via-lf-ibis)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：无需似然函数的贝叶斯强化学习方法
-3. [AgenticSTS: A Bounded-Memory Testbed for Long-Horizon LLM Agents](/202607/03/2607.02255v1-agenticsts-a-bounded-memory-testbed-for-long-horizon-llm-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：面向长周期LLM智能体的有界记忆测试平台
-4. [EvoPolicyGym: Evaluating Autonomous Policy Evolution in Interactive Environments](/202607/03/2607.02440v1-evopolicygym-evaluating-autonomous-policy-evolution-in-interactive-environments)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：自主策略进化评估基准
-5. [MemSyco-Bench: Benchmarking Sycophancy in Agent Memory](/202607/03/2607.01071v2-memsyco-bench-benchmarking-sycophancy-in-agent-memory)  
+1. [Modification-Considering Value Learning for Reward Hacking Mitigation in RL](/202607/04/2606.28955v1-modification-considering-value-learning-for-reward-hacking-mitigation-in-rl)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：评估智能体记忆引发谄媚的基准
-6. [Cache Merging as a Convergent Replicated State for Multi-Agent Latent Reasoning](/202607/03/2607.01308v1-cache-merging-as-a-convergent-replicated-state-for-multi-agent-latent-reasoning)  
+   evidence：基于值的强化学习方法缓解智能体奖励黑客问题
+2. [Experience Augmented Policy Optimization for LLM Reasoning](/202607/04/2606.30420v1-experience-augmented-policy-optimization-for-llm-reasoning)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：针对LLM推理的经验增强策略优化
+3. [Theory of collective learning in populations of adaptive agents](/202607/04/2607.02171v1-theory-of-collective-learning-in-populations-of-adaptive-agents)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：内部记忆编码先前状态以评估奖励的集体学习
+4. [A Fast Convergent Algorithm for Solving Non-convex Partially-Decoupled Generalized Nash Equilibrium Problems](/202607/04/2606.28617v1-a-fast-convergent-algorithm-for-solving-non-convex-partially-decoupled-generalized-nash-equilibrium-problems)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：用于多智能体潜在推理的缓存合并内存管理
-7. [The Rollout Infrastructure Tax in Coding-Agent Reinforcement Learning](/202607/03/2607.01415v1-the-rollout-infrastructure-tax-in-coding-agent-reinforcement-learning)  
+   evidence：多智能体微分博弈的纳什均衡求解算法
+5. [OPINE-World: Programmatic World Modeling with Ontology-error-Prioritized Interactive Exploration](/202607/04/2607.01531v1-opine-world-programmatic-world-modeling-with-ontology-error-prioritized-interactive-exploration)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：编码智能体强化学习中的轨迹基础设施分析
-8. [Atomic Task Graph: A Unified Framework for Agentic Planning and Execution](/202607/03/2607.01942v1-atomic-task-graph-a-unified-framework-for-agentic-planning-and-execution)  
+   evidence：为智能体决策学习的程序化世界模型
+6. [Controllable Sim Agents with Behavior Latents](/202607/04/2607.02496v1-controllable-sim-agents-with-behavior-latents)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：智能体规划执行统一框架
-9. [Hardware-Enforced Semantic Coordination for Safety-Critical Real-Time Autonomous Systems](/202607/03/2607.02376v1-hardware-enforced-semantic-coordination-for-safety-critical-real-time-autonomous-systems)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：硬件强制协调用于自主系统
+   evidence：带行为隐变量的可控仿真智能体
 
 
 <div class="dpr-home-promo-card">
