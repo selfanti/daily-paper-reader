@@ -1,0 +1,906 @@
+Title: Plan Right, Then Plan Tight: Symbolic RL for Efficient Embodied Reasoning
+
+URL Source: https://arxiv.org/pdf/2606.31260v1
+
+Published Time: Wed, 01 Jul 2026 00:43:05 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+## Plan Right, Then Plan Tight: Symbolic RL for Efficient Embodied Reasoning 
+
+Xiangli Shi 1 Xiaomeng Zhu 2 Ye Tian 3 Yuchun Guo 3 Ziyang Sun 4
+
+Lujie Yin 1 Yuxuan Zhou 1 Yufei Huang 3*
+
+1Tsinghua University 2The Hong Kong University of Science and Technology 
+
+3Tencent 4University of London 
+
+shixl25@mails.tsinghua.edu.cn 
+
+Abstract 
+
+Embodied task planning asks an agent to turn a natural-language instruction into an executable sequence of actions in a physical scene, and is a building block for household, assistive, and service robots. Recent prompting-based and reinforcement-learning planners generate flu-ent action text but lack a cheap deterministic check that the produced plan is valid in the target world, while high-fidelity simulation is too slow to serve as an inner-loop training sig-nal. The general problem is therefore how to obtain verifiable supervision and rewards for embodied planners without relying on string-level matching or full simulation. Here we show that a single BDDL specification, auto-matically constructed from open-world video evidence or curated tasks, can serve as a shared interface for data construction, plan verifica-tion, and reward design. A video-to-BDDL parser, an LLM verifier, and a lightweight sym-bolic engine together supply dense feedback at millisecond latency. We further introduce GroupAdapt, a difficulty-aware length sched-ule that uses the in-batch group pass rate as a zero-cost signal so that hard prompts get wider length tolerance and automatically tighten as their pass rate improves. Under the guidance of the proposed verifier and GroupAdapt sched-ule, the 8B planner attains a Strict-Pass score of 97.3 on BEHAVIOR-1000, yielding a 25.9% relative improvement over the Qwen3-8B base-line. This result exceeds the strongest large-model baseline by 3.5%, while simultaneously compressing the response length by 79% to 207 tokens, demonstrating both effectiveness and efficiency. 
+
+1 Introduction 
+
+Embodied task planning studies how an agent should transform a high-level instruction and its sur-rounding world state into an executable sequence  
+
+> *
+
+Corresponding author. User: Set up the camera, please.              
+
+> Assistant: Sure — how would you like it arranged?
+> User: Put the camera on top of the tripod in the bedroom, and leave the tripod on the bedroom floor.
+> Previous Current Future
+> 5s 35s 45s 55s 80s 88s
+> Current frame: attach camera to tripod
+> digital_camera.n.01_1 held by robot
+> camera_tripod.n.01_1 goal support
+> Video + Task Verified BDDL Verifier Reward Real Dialogue
+> objects: floor.n.01_1, digital_camera.n.01_1, camera_tripod.n.01_1
+> init: ontop(camera, floor); ontop(tripod, floor)
+> goal: ontop(camera, tripod); ontop(tripod, floor) Place the camera on top of the tripod.
+> 1
+> 17s
+> Error Traces
+> Strict Pass
+> Plan + Code
+> navigate(digital_camera.n.01_1) grasp(digital_camera.n.01_1) navigate(camera_tripod.n.01_1) attach(digital_camera.n.01_1, camera_tripod.n.01_1) 1. Navigate & grasp the camera 2. Move to the tripod and mount the camera.
+> Symbolic Engine
+> Precondition Check State Update Goal Check
+> 2
+> 34
+> 5
+
+Figure 1: A running example of SymPlan based on a real attach_a_camera_to_a_tripod guided sample. 
+
+Open-world video evidence is parsed into grounded ob-jects and initial predicates, verified into BDDL, rewrit-ten as planner-facing dialogue, turned into executable action code, and checked by the symbolic engine. The same BDDL interface therefore builds data, verifies plans, and supplies training rewards. 
+
+of actions (Ahn et al., 2022; Singh et al., 2022). This problem is increasingly important as robots move from scripted demonstrations toward open-ended household and assistive settings: a command such as “attach the camera to the tripod” is not solved by emitting a verb alone, but by grounding the intended digital camera and tripod in the scene, recognizing that both are initially on the floor, se-lecting executable grasp and attach actions, and reaching a goal state (attached digital_camera camera_tripod) that can be verified. A practical robot stack therefore organizes itself in layers: a low-level VLA or skill controller turns short sub-goals into motor actions (Zitkovich et al., 2023), while a high-level planner decides which subgoals to issue, in what order, and against which world state. Our work targets the planning-brain layer in between, which converts a natural-language in-struction and the current scene into a verified sym-bolic task structure that the lower layer can execute. 1
+
+> arXiv:2606.31260v1 [cs.RO] 30 Jun 2026
+
+Existing solutions to this layer are split: classi-cal PDDL-style and neuro-symbolic planners em-phasize formal executability under hand-specified domains (Fox and Long, 2003; Ahn et al., 2026), while LLM-based planners (Huang et al., 2022; Yao et al., 2022) are fluent on open-world tasks but lack a cheap, deterministic check that the produced plan is valid in the target world. A natural interface for closing this gap is BDDL, the Behavior Domain Definition Language used in BEHAVIOR-1K and related benchmarks (Li et al., 2023). A BDDL specification encodes the typed objects in a scene, predicates describing the initial state, and predicates defining the goal con-dition. Although BDDL shares first-order logic with classical PDDL (Fox and Long, 2003), it dif-fers in two ways that matter for our setting: ob-ject types are grounded in WordNet synsets such as digital_camera.n.01 , which makes the rep-resentation open-vocabulary, and BDDL specifies only the scene together with initial and goal pred-icates, leaving the action model to a simulator-backed library rather than requiring every action schema to be hand-authored. Unlike free-form lan-guage instructions, this structure is directly check-able, and unlike low-level robot trajectories, it ab-stracts away embodiment-specific control and ex-poses the planning problem itself. BDDL is there-fore a natural interface between open-world percep-tion and verifiable plan execution. We therefore study BDDL-centric embodied planning : given a task description and either an open-world video or an existing task specification, can we construct a verified BDDL representation and use it to train a compact planning model? The goal is not to replace VLA control or physics simu-lation, but to expose a scalable layer at which task structure can simultaneously provide supervision, execution checks, and reward signals. In this for-mulation, BDDL is not only an offline evaluation artifact. It is the shared representation that con-nects data construction, symbolic execution, RL reward design, and response-length control. Fig-ure 1 illustrates this setting with a concrete BDDL-to-execution example. However, the broader adoption of BDDL still faces several challenges. First, data construction must recover typed objects, initial predicates, and goals from noisy sources, whereas existing BDDL files are usually curated as benchmark metadata (Li et al., 2023). Second, verification must be strict enough to catch physical and symbolic errors but fast enough to score many training rollouts, unlike full simulation loops (Savva et al., 2019). Third, compact planning must shorten responses only af-ter executable behavior is reliable. Reasoning mod-els often solve tasks with long outputs (Yang et al., 2025), but length pressure applied too early can remove useful planning steps and reduce correct-ness (Yuan et al., 2025). These challenges are cou-pled because the same representation must support data construction, plan execution, reward computa-tion, and compression. Therefore, we propose SymPlan, a three-stage pipeline centered on verified BDDL to address these challenges. First, to construct reliable BDDL specifications from complex visual tasks, SymPlan employs a video-to-BDDL parser to ground task-relevant objects, infer initial predicates, and derive goal predicates from the task description. The re-sulting draft is further examined by an LLM veri-fier, which checks syntax, object consistency, pred-icate feasibility, and goal executability before ac-ceptance. Second, to make BDDL executable and informative for planning-model evaluation, Sym-Plan rewrites the verified specification into hierar-chical planning conversations and executes them with a fast symbolic engine. This engine reports Goal-Completion, Engine-Pass, Strict-Pass, and di-agnostic error traces, while the action library is expanded when new predicate requirements arise. Third, to translate symbolic verification into effec-tive model optimization, the same engine is used to filter SFT data and provide rewards for an SFT-initialized DAPO policy (Yu et al., 2026). We further incorporate Short-RL’s correctness-gated length penalty and introduce GroupAdapt , which uses the per-prompt group pass rate as a zero-cost difficulty signal to adapt the length tolerance for easy and hard prompts. Taken together, SymPlan is organized around three design choices that are evaluated throughout the paper: 1. BDDL as the data interface. We formu-late a pipeline that converts open-world task evidence and curated task files into verified BDDL, then into planner-facing supervision through extended-BDDL normalization, hier-archical conversations, and automated action discovery (Sections A, B and 3.1). 2. Symbolic verification as training feedback. 
+
+We build a millisecond-latency symbolic engine 2that verifies generated plans against typed ob-jects, initial states, and goal conditions, expos-ing deterministic signals for evaluation, rejec-tion sampling, and reward design (Sections 3.2 and 3.3). 3. Compact executable planning. We combine verifier-driven SFT, symbolic-reward DAPO, and correctness-gated length control so that the 8B planner preserves strict-pass executability while reducing response length on B-100 and B-1000 (Sections 3.3, 3.4 and D.4). 
+
+2 Related Work 
+
+LLM-based task planning. Recent work uses LLMs to generate or rank executable plans for em-bodied agents, either by prompting pretrained mod-els directly (Huang et al., 2022; Yao et al., 2022; Liu et al., 2023a; Singh et al., 2022; Song et al., 2023), grounding proposals with affordances or scene structure (Ahn et al., 2022; Rana et al., 2023), or integrating planning into larger embodied sys-tems (Liang et al., 2023; Wang et al., 2023; Driess et al., 2023; Zitkovich et al., 2023). These meth-ods show that language models can express long-horizon intent, but most rely on prompting, heuris-tic grounding, or downstream simulation feedback. We instead train the planner with deterministic sym-bolic feedback derived from the task specification. 
+
+Symbolic and simulation-based verification. 
+
+Embodied benchmarks such as VirtualHome (Puig et al., 2018), AI2-THOR (Kolve et al., 2017), Habi-tat (Savva et al., 2019), ALFRED (Shridhar et al., 2020), TEACh (Padmakumar et al., 2022), and BEHAVIOR-1K / OmniGibson (Li et al., 2023) provide rich household tasks and simulation envi-ronments. Classical planning also offers symbolic representations such as PDDL and STRIPS for plan checking (Fikes and Nilsson, 1971; Fox and Long, 2003), and task-and-motion planning con-nects symbolic goals to continuous feasibility (Gar-rett et al., 2021, 2020). Recent neurosymbolic work combines LLM generation with symbolic verifica-tion (Ahn et al., 2026). Full simulation is valuable but too expensive for inner-loop RL, while hand-crafted symbolic domains can be hard to scale. Our verifier is built directly on BDDL, so it inherits typed objects, predicates, and goals from the bench-mark specification and can execute candidate plans at millisecond latency. 
+
+RL and reasoning compression. Group-based RL methods such as GRPO and DAPO have be-come effective for training LLM reasoning poli-cies (Shao et al., 2024; Guo et al., 2025; Yu et al., 2026), building on broader work on chain-of-thought and verifier-guided reasoning (Wei et al., 2022; Kojima et al., 2022; Lightman et al., 2024). Related work also applies RL to embodied or re-flective reasoning (Kim et al., 2026; Shen et al., 2025). A separate line of work reduces verbose reasoning through long-to-short distillation, length penalties, or difficulty-aware budgets (Team et al., 2025; Yuan et al., 2025; Aggarwal and Welleck, 2025; Liang et al., 2025). These methods typically evaluate answers with string matching or language-level judges. In our setting, the final reasoning must produce a syntactically valid, verifier-accepting ac-tion sequence, so we gate length compression on symbolic correctness and use the verifier itself as the reward source. 
+
+3 Method 
+
+The central idea behind SymPlan is that verified BDDL can serve as the common interface between open-world data, executable verification, and RL training . When a curated BDDL task is available, its typed objects, initial predicates, and goal pred-icates can be used directly. When only a task description and video are available, a video-to-BDDL parser first grounds task-relevant objects and key frames, infers initial and goal predicates, and passes a draft specification to an LLM veri-fier for checking. Once verified, the same formal structure can be used to synthesize planner data, execute candidate plans, and compute training re-wards. Because new tasks enter the pipeline as BDDL drafts rather than hand-authored domains, SymPlan scales naturally with the task pool: open-world videos and curated benchmarks share a sin-gle interface, and the action library itself grows on demand as new predicates are observed (Sec-tions B.2 and 3.1). Figure 2 summarizes the BDDL-centric data con-struction and verification workflow, which converts task descriptions and open-world videos into ver-ified BDDL, an expanded action library, verifier signals, error traces, and verified trajectories (Sec-tions 3.1 and 3.2). 33Video-to-BDDL Drafting BDDL Verification & Engine  
+
+> Inputs
+> Task Description
+> Place camera on tripod Open-world Video
+> Task Description
+> Object init goal
+> Draft BDDL
+> LLM Verifier
+> Parser
+> Object Grounding Init Predicates Goal Inference Draft BDDL
+> Syntax Objects Init Goal
+> Verified BDDL
+> Dialogue
+> Extended BDDL
+> Transcribe Align
+> Symbolic Engine
+> Action Library
+> Update Action-Gap Analysis
+> Precondition Check
+> State Update Goal Check Error Traces Verifier Reward Strict Pass
+> Predicate-Guided
+
+Figure 2: BDDL-centric data construction and symbolic verification. A task description and open-world video are parsed into draft BDDL, checked by an LLM verifier, and executed by a fast symbolic engine. The engine uses the action library, performs predicate-guided action expansion when gaps are detected, and returns verifier signals, error traces, and verified trajectories. 
+
+3.1 Video/BDDL-to-Data Synthesis and Action Discovery 
+
+SymPlan converts curated BDDL or open-world videos into verifier-aligned planner supervision. For videos, a parser grounds task-relevant objects and key frames, infers initial and goal predicates, and drafts a BDDL specification, and an LLM ver-ifier checks syntax, object consistency, and goal executability, and only accepted drafts enter the data factory. Each verified task is normalized to extended BDDL, a planner-facing expansion of BDDL that preserves the task-relevant objects, ini-tial predicates, and goals while adding realistic scene distractors and their predicates to better re-cover a cluttered real environment. It is then rewrit-ten into a sample with environment state, robot embodiment, short clarification dialogue, and tar-get steps plus executable code (Section A). When new goal predicates are not covered by the current action set, an automatic action builder proposes and compiles the missing callable actions (Section B). Cold-start SFT uses symbolic rejection sampling with Gemma-4-31B-IT as the teacher: for each prompt we draw K rollouts, keep the shortest strict-pass trajectory when any sample passes, and other-wise exclude the prompt. This yields the compact checkpoint D-SFT that initializes RL. 
+
+3.2 Symbolic Verification Engine 
+
+Given a generated plan y consisting of an action sequence ⟨a1, a 2, . . . , a n⟩, the symbolic engine ex-ecutes each action against a state representation derived from the BDDL task specification (Li et al., 2023). 
+
+State representation. Each task defines an ini-tial state s0 (a set of predicates over objects, e.g. 
+
+(ontop candle table) ) and a goal state g (a con-junction of target predicates). The engine maintains a state st that is updated by each action’s effects. For example, in the gift-basket task, a valid plan may first open a basket, then pick a candle from the table, and finally place it in the basket. If the model skips the open action and directly places an object into a closed basket, the goal may still become partially satisfied, but the violated precondition is recorded in the error set. This is the difference between matching the final goal and producing an executable plan. 
+
+Execution and verification. For each action at,the engine checks whether its preconditions are sat-isfied in st. If satisfied, the state is updated accord-ing to the action’s predefined effects ( set /clear 
+
+specifications). If violated, the action is logged as an error but execution continues to provide maxi-mum feedback. After all actions execute, the en-gine computes: • Goal Completion Rate (GCR): GCR = |{ gi ∈
+
+g : gi satisfied }| /|g|
+
+• Error set E: all precondition violations encoun-tered during execution. • Engine Pass (EP): GCR = 1 .0 (all goals met, errors permitted). • Strict Pass (SP): EP ∧ |E| = 0 (all goals met, no errors). 
+
+3.3 SFT-Initialized RL with Multi-Granular Symbolic Rewards 
+
+Training proceeds in two stages. The cold-start rejection-sampling procedure of Section 3.1 pro-duces D-SFT , which is the sole initialization for 4RL. The same symbolic verifier that labels super-vised trajectories also supplies the RL reward. 
+
+Optimizer and symbolic reward. The reward must distinguish three cases that a binary success signal would conflate: a plan that reaches only part of the goal, a plan that reaches the goal af-ter illegal actions, and a strict-pass plan that is both goal-complete and error-free. We therefore shape the answer reward with three symbolic sig-nals from the engine: progress (GCR), legality (precondition errors), and goal completion (EP). We adopt DAPO (Yu et al., 2026), an extension of GRPO (Shao et al., 2024) with dynamic sam-pling, asymmetric clipping (Clip-Higher, ϵlow =0 .2,
+
+ϵhigh =0 .28 ), token-level policy-gradient aggrega-tion, and overlong reward shaping. KL regulariza-tion is disabled since the SFT initialization already acts as a strong prior. The total reward is R(y) = 
+
+Rfmt (y) + Rans (y) + Rlen (y), where Rfmt is a bi-nary tag penalty and Rlen is the gated length term of Section 3.4. The answer reward in Equation (1) combines a continuous base (−0.5 + 2 .5 GCR) , a hard error penalty of −1 when any precondition is violated, and a +0 .5 engine-pass bonus: 
+
+Rans = ( −0.5+2 .5 GCR) −1|E| >0+0 .5·1EP . (1) For example, a partial plan receives graded credit through GCR, an engine-pass-only plan loses one point for the illegal action, and a strict-pass plan receives both full goal credit and the EP bonus. The continuous base retains variance on hard prompts that a binary is_successful signal would filter out via DAPO’s dynamic sampling, while the ≥ 1
+
+gap between strict-pass and engine-pass-only out-comes prevents a “conservatism trap” in which a model trades goal coverage for cleanliness. Full reward-landscape analysis is in Section C.1. In the experimental section we evaluate three SFT-initialized variants under a unified naming scheme: DAPO (plain symbolic-reward baseline), 
+
+DAPO + Short-RL (adds the lazy length penalty), and DAPO + Short-RL + GroupAdapt (our full method, see Section 3.4). 
+
+3.4 Correctness-Gated Length Compression 
+
+Following Short-RL (Yuan et al., 2025), response length is regularized only after the model reaches stable correctness. GroupAdapt keeps this correct-ness gate but replaces the fixed length tolerance with a task-adaptive one. Its key signal is the cur-rent group pass rate : for each prompt, DAPO al-ready samples a group of rollouts, and the fraction of strict-pass rollouts directly reflects how well the current policy handles that prompt. This signal is zero-cost because it is produced by the RL batch itself, requiring no extra difficulty classifier, simu-lator call, or manual task label. 
+
+Accuracy gate. Let ab be the current batch SP rate and a∗ its running best. The length reward is gated: Rlen = 0 whenever ¬ SP (y) or ab <a∗ − ϵacc . Hence the model first learns what to plan before being pushed to plan concisely .
+
+Group-adaptive tolerance. For each prompt t with group size G=8 , let 
+
+ρt = G−1 PGi=1 1[SP( yi)] be the instanta-neous strict-pass rate in the current DAPO batch. We set δbase =200 tokens as the easy-task budget and use a binary easy/hard schedule with threshold 
+
+τ =0 .5:
+
+δt =
+
+(
+
+δbase ρt ≥ τ (easy )2 δbase ρt < τ (hard ) (2) Short-RL uses a fixed 200 -token budget for every prompt. GroupAdapt keeps this 200 -token toler-ance for easy prompts, but gives hard prompts 400 
+
+tokens of slack. Thus difficult tasks first receive a wider length tolerance, and as their group pass rate improves beyond τ , they are automatically re-assigned to the easy budget. 
+
+Length reward. When the accuracy gate is open, 
+
+Rlen in Equation (3) rewards being within δt tokens of the shortest known SP length ℓmin  
+
+> t
+
+for task t and otherwise decays linearly up to the observed range 
+
+∆t = ℓmax  
+
+> t
+
+− ℓmin  
+
+> t
+
++ ε:
+
+Rlen =
+
+
+
+0.5 ℓ(y) ≤ ℓmin  
+
+> t
+
++ δt
+
+0.5 − ℓ(y) − ℓmin 
+
+> t
+
+∆t
+
+otherwise. (3) Per-task references (ℓmin  
+
+> t
+
+, ℓ max  
+
+> t
+
+) are updated online using only SP responses, so the compression target always reflects achievable quality. Early in training the gate is closed and the answer reward drives correctness, and once SP stabilizes, the gate opens and GroupAdapt matches Short-RL on easy tasks while protecting hard tasks with a wider 400 -token tolerance. When a hard prompt’s group pass rate improves, it automatically moves back to the easy budget. Figure 3 summarizes this SFT-initialized RL workflow. 5SFT Cold Start                                     
+
+> Symbolic engine signals
+> Distilled
+> checkpoint
+> (D-SFT)
+> DAPO RL +GroupAdapt Final Output
+> Policy 𝜋 !
+> action trajectory
+> Environment
+> Reward from
+> verifier signals
+> Rejection
+> Sampling
+> Candidate K rollouts
+> Batch -accuracy gate :𝑎 "≥𝑎 ∗−𝜖 $%%
+> Correctness gate :𝑆𝑃 (𝑦 )=1
+> Group pass rate :𝜌 &=𝐺 '(∑𝟏 SP 𝑦 ))
+> Easy / Tig ht
+> 𝜌 *≥𝜏
+> 𝛿 *=𝛿 +,-.
+> Hard / Loose
+> 𝜌 *<𝜏
+> 𝛿 *=2𝛿 +,-.
+> 𝜏 01
+> Batch -accuracy gate 𝑎 "
+> 𝑎 ∗𝑎 "𝑎 ∗−𝜖 $%%
+> 𝜖 $%%
+> Compact policy
+> Executable
+> short plans
+
+Figure 3: SFT-initialized verifiable RL for compact planning. Artifacts from Figure 2 initialize D-SFT and provide symbolic engine signals for DAPO. The batch-accuracy gate applies the length penalty only when the current batch accuracy exceeds the running maximum minus tolerance, and the penalty is charged only to strict-pass samples, and otherwise training continues with symbolic correctness rewards. GroupAdapt uses the current group pass rate to assign an easy budget δbase or a hard budget 2δbase , so hard prompts first receive wider tolerance and automatically switch to the easy budget as their pass rate improves. 
+
+4 Experiments 
+
+4.1 Setup Research questions. The experiments evaluate four claims: whether symbolic rejection-sampling distillation improves compact planners, how close the distilled planner is to larger open and fron-tier models, whether SFT-initialized symbolic-reward RL can improve one-sample Strict-Pass, and whether Short-RL plus GroupAdapt can re-duce length without sacrificing correctness. 
+
+Benchmarks and splits. We evaluate on two benchmarks from BEHAVIOR-1K (Li et al., 2023): 
+
+Behavior-100 (B-100, 100 tasks, 200 paired single-/dual-arm episodes) and Behavior-1000 (B-1000, 1,000 tasks). To better reflect realistic robot em-bodiments, each evaluated task is instantiated in single-arm and dual-arm settings when available. For B-1000 we reserve a held-out 97-task, 194-episode test set, which also serves as the RL vali-dation set. The remaining B-1000 tasks form the training pool and are augmented by LLM-based BDDL perturbation to 2,117 training episodes (Sec-tion A.3). For RL analysis, both B-100 and the B-1000 held-out split are in-domain embodied eval-uations under the same extended-BDDL planning setting. Following Short-RL (Yuan et al., 2025), we also report out-of-domain mathematical reasoning on AIME24, AIME25, AMC23, and MATH500 as a secondary check for whether length control damages non-embodied reasoning, and it is not an optimization target or a core claim of this paper. 
+
+Metrics. We report Strict-Pass (SP: all goals met with zero precondition errors), Engine-Pass (EP: all goals met while allowing execution errors), av-erage Goal Completion Ratio (GCR), and average output length. SP is the primary correctness met-ric because it requires both goal satisfaction and executable action sequences. Full per-embodiment breakdowns are in Section D.2. 
+
+Baselines. We compare against a one-sample baseline suite spanning frontier API models (DeepSeek-V4-Flash/Pro, Gemini-3.1-Pro, Kimi-K2.6, GLM-5.1, GPT-5.4) and a broad set of open-weight models, including Gemma-4-31B-IT and the Qwen3 / Qwen3.5 / Qwen3.6 families from 8B to 122B active parameters. 
+
+Decoding protocol. Unless a vendor API forces a different setting, all models are decoded at tem-perature 0.6 and top-p 0.9 with thinking/reason-ing mode enabled when available. Unless stated otherwise, evaluations use the default Guided 
+
+prompt on the extended-BDDL scene represen-tation. For RL checkpoint evaluations, each table entry and curve point is averaged over three de-coding seeds, and non-RL baseline rows use the one-sample protocol. We discuss prompt sensi-tivity as a limitation rather than making prompt engineering a main experimental axis. 
+
+Training and SFT initialization. The RL stage in this paper is scoped to a single initialization, the compact supervised checkpoint D-SFT (Qwen3-8B-Gemma-Distill-SFT), obtained by symbolic re-jection sampling from Gemma-4-31B-IT. We use 6Table 1: One-sample symbolic evaluation on BEHAVIOR-1K under the Guided extended-BDDL prompt. SP% = Strict-Pass rate, EP% = Engine-Pass rate, GCR = average Goal Completion Ratio (%), and Err% = engine error rate among valid samples. DAPO-stage variants are initialized from D-SFT and averaged over three decoding seeds.                                                                                                                                                                     
+
+> B-1000 B-100 Model Size SP ↑EP ↑GCR ↑Err ↓SP ↑EP ↑GCR ↑Err ↓
+> Frontier API / large open models
+> DeepSeek-V4-Flash 284B 93.8 96.9 98.36 3.6 90.0 96.0 98.74 6.5 DeepSeek-V4-Pro 1.6T 89.7 94.8 96.92 6.2 86.5 95.5 98.24 9.5 Gemini-3.1-Pro –87.1 87.6 89.39 0.5 97.5 97.5 99.19 0.0 Kimi-K2.6 1T 92.3 95.9 96.88 4.6 93.0 97.5 99.36 4.5 GLM-5.1 754B 90.7 94.3 96.88 6.2 93.0 96.5 98.40 5.5 GPT-5.4 –92.8 93.8 95.34 1.0 97.0 97.0 99.20 1.0 Qwen3.5-122B-A10B 122B 86.6 90.7 93.80 7.2 82.5 93.0 96.93 13.5
+> Small / medium open models
+> Gemma-4-31B-IT 31B 92.8 95.4 96.49 4.6 94.5 96.5 99.21 2.0 Qwen3.6-35B-A3B 35B 88.1 93.3 95.17 9.3 83.0 94.0 96.62 15.5 Qwen3.5-35B-A3B 35B 76.3 90.7 93.14 19.1 69.0 82.5 86.81 23.5 Qwen3.6-27B 27B 91.2 94.8 97.21 4.1 90.5 96.5 98.49 6.5 Qwen3.5-27B 27B 83.0 89.7 93.71 12.4 80.0 92.5 94.91 18.5 Qwen3-8B 8B 77.3 83.0 89.84 13.4 72.0 87.0 95.17 23.0 D-SFT (ours) 8B 92.3 95.9 98.32 4.1 87.0 93.5 97.70 9.5
+> Symbolic RL (D-SFT init., 8B)
+> D-SFT+DAPO 8B 96.2 96.2 98.64 0.2 94.3 95.7 98.67 2.0 D-SFT+DAPO+Short-RL 8B 96.9 96.9 99.23 0.0 95.2 95.5 99.32 1.5 D-SFT+DAPO+Short-RL+GroupAdapt ( τ=0 .5)8B 97.3 97.3 99.39 0.2 94.0 95.2 99.22 2.2
+
+the same prompt and symbolic engine as in evalua-tion. The SFT-initialized DAPO configuration uses group size G=8 , and full hyperparameters are in Table 9. 
+
+4.2 Main Results: Baseline Comparison 
+
+Table 1 shows a consistent gain from reusing sym-bolic verification as training feedback. D-SFT raises Qwen3-8B from 77.3 to 92.3 SP on B-1000 and from 72.0 to 87.0 SP on B-100, and symbolic-reward DAPO further reaches 96.2 and 94.3 SP. Adding Short-RL keeps this accuracy while com-pressing responses, and the default GroupAdapt configuration reaches the best B-1000 SP and GCR among the 8B variants. The B-100 result is slightly below Short-RL at the final checkpoint, so we inter-pret GroupAdapt as a correctness-preserving com-pression strategy rather than a uniform per-dataset accuracy improvement. 
+
+4.3 Ablations and Length Analysis 
+
+Table 2 shows that most of the length reduction comes from the correctness-gated Short-RL ob-jective: final output length drops from 999/1253 tokens to 194/242 tokens on B-1000/B-100 while SP is maintained or improved. GroupAdapt then changes how this pressure is applied. Larger τ
+
+values mark more rollout groups as hard, giving still-unstable prompts temporary 400 -token slack before they return to the standard 200 -token budget after their group pass rate improves. This explains why τ =0 .75 yields the strongest final embodied SP with only a small length increase. We keep 
+
+τ =0 .5 as the default because it is the natural half-pass split selected before the final checkpoint com-parison and gives the most balanced trajectory in Figure 4. The math columns are included only as an OOD side-effect check following Short-RL: length-adapted variants are not optimized for math-ematical derivations, but GroupAdapt recovers part of Short-RL’s math drop on AIME24, AIME25, and MATH500. 
+
+5 Conclusion 
+
+This paper presented SymPlan, a BDDL-centric pipeline for turning open-world or curated task ev-idence into verifiable planner training. By using verified typed objects, initial predicates, and goal predicates as a shared interface, SymPlan connects data construction, symbolic verification, SFT filter-ing, and RL reward design. The system constructs or accepts BDDL specifications, rewrites them into hierarchical planning conversations, expands the callable action set through predicate-guided action discovery, and verifies generated plans with deter-ministic GCR, Engine-Pass, Strict-Pass, and error signals. 70                
+
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 80
+> 85
+> 90
+> 95
+> 100
+> Strict Pass (%)  B-1000
+> Strict Pass
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> 2500 B-1000
+> Output Length
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 88
+> 90
+> 92
+> 94
+> 96
+> 98
+> Strict Pass (%)  B-1000
+> Strict Pass
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 250
+> 500
+> 750
+> 1000
+> 1250
+> 1500 B-1000
+> Output Length
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> Strict Pass (%)  B-100
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 0
+> 1000
+> 2000
+> 3000 B-100
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 80
+> 85
+> 90
+> 95
+> Strict Pass (%)  B-100
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 500
+> 1000
+> 1500
+> 2000 B-100
+> (a) Main comparison (b) GroupAdapt ablation
+> Base ShortRL GroupAdapt ( = 0.5) Qwen3-8B D-SFT Gemma-4-31B GroupAdapt ( = 0.25) GroupAdapt ( = 0.75)
+
+Figure 4: Compact symbolic-RL trajectories on in-domain embodied validation, averaged over three decoding seeds. Rows show B-1000 and B-100. A vertical divider separates (a) the main comparison from (b) the GroupAdapt threshold ablation. Each group reports Strict-Pass and output length, while GCR and error-rate curves are moved to Figure 9. Table 2: Ablation axes for correctness and compactness. Rows compare the no-length-adaptation DAPO baseline, Short-RL, and GroupAdapt thresholds. GA denotes GroupAdapt. We report in-domain embodied SP, secondary out-of-domain math accuracy, and final inference length, averaged over three decoding seeds. 
+
+Short-RL GA ID SP ↑ Math Acc. ↑ Len. ↓
+
+B1K B100 A24 A25 AMC M500 B1K B100 
+
+– – 96.2 94.3 37.8 24.4 72.5 73.4 999 1253 
+
+✓ – 96.9 95.2 25.6 20.0 67.5 72.7 194 242 
+
+✓ τ =0 .25 97.1 94.0 30.0 16.7 65.8 73.1 205 251 
+
+✓ τ =0 .5 97.3 94.0 30.0 21.1 65.8 73.7 207 251 
+
+✓ τ =0 .75 97.6 95.5 27.8 17.8 69.2 73.3 217 255 
+
+Empirically, the pipeline turns the 8B planner into a competitive symbolic executor while keeping its responses short. The final GroupAdapt configu-ration reaches 97.3 SP on B-1000 with an average response length of 207 tokens, compared with 96.2 SP and 999 tokens for DAPO without length adap-tation. The threshold ablation further shows that giving low-pass-rate rollout groups temporary slack is a useful safeguard: harder prompts can first sta-bilize under a wider budget and later return to the shorter budget as their group success rate improves. The main technical lesson is that verifier reuse simplifies the entire pipeline. The same sym-bolic engine that certifies SFT trajectories also supplies dense RL rewards, separating partial goal progress, illegal-but-goal-complete plans, and strict executable success. On top of this reward, Short-RL and GroupAdapt provide a controlled path from accurate planning to concise planning: compres-sion is delayed until correctness stabilizes, and the current group pass rate adapts the length tolerance without extra difficulty classifiers or simulator calls. The appendix pass@ k analysis suggests that the compact planner still has consistency headroom, motivating symbolic-reward RL as a way to con-vert sampled correct behaviors into more reliable one-sample planning. 8Limitations 
+
+SymPlan is a planning model rather than a low-level control policy. Its action space is intentionally abstract: for example, a task such as making cof-fee is evaluated at the level of symbolic planning steps, not decomposed into fine-grained manipu-lation primitives. Learning such low-level skills would require separate robot-control training. A second limitation concerns deployment: areal robot must scan a scene and quickly construct the task-relevant BDDL objects and initial pred-icates from perception, while the goal can often be derived from the user’s instruction rather than scanned from the scene. Robust real-time scene-to-BDDL construction with diverse cameras and viewpoints therefore remains an open problem. Finally, our main experiments use the Guided prompt for consistency with D-SFT training, but forbid-style prompts may be more helpful than rule-style prompts for stronger models, and prompt choice therefore remains an evaluation variable rather than a core claim of the method. 
+
+References 
+
+Pranjal Aggarwal and Sean Welleck. 2025. L1: Controlling how long a reasoning model thinks with reinforcement learning. arXiv preprint arXiv:2503.04697 .Michael Ahn, Anthony Brohan, Noah Brown, Yevgen Chebotar, Omar Cortes, Byron David, Chelsea Finn, Chuyuan Fu, Keerthana Gopalakrishnan, Karol Haus-man, and 1 others. 2022. Do as i can, not as i say: Grounding language in robotic affordances. arXiv preprint arXiv:2204.01691 .Sanghyun Ahn, Wonje Choi, Junyong Lee, Jinwoo Park, and Honguk Woo. 2026. Towards reliable code-as-policies: A neuro-symbolic framework for embodied task planning. Advances in Neural Information Pro-cessing Systems , 38:75428–75459. Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, and 1 others. 2021. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374 .Danny Driess, Fei Xia, Mehdi SM Sajjadi, Corey Lynch, Aakanksha Chowdhery, Brian Ichter, Ayzaan Wahid, Jonathan Tompson, Quan Vuong, Tianhe Yu, and 1 others. 2023. Palm-e: An embodied multimodal language model. arXiv preprint arXiv:2303.03378 .Richard E Fikes and Nils J Nilsson. 1971. Strips: A new approach to the application of theorem proving to problem solving. Artificial intelligence , 2(3-4):189– 208. Maria Fox and Derek Long. 2003. Pddl2. 1: An ex-tension to pddl for expressing temporal planning do-mains. Journal of artificial intelligence research ,20:61–124. Caelan Reed Garrett, Rohan Chitnis, Rachel Holladay, Beomjoon Kim, Tom Silver, Leslie Pack Kaelbling, and Tomás Lozano-Pérez. 2021. Integrated task and motion planning. Annual review of control, robotics, and autonomous systems , 4(1):265–293. Caelan Reed Garrett, Tomás Lozano-Pérez, and Leslie Pack Kaelbling. 2020. Pddlstream: Integrat-ing symbolic planners and blackbox samplers via optimistic adaptive planning. In Proceedings of the international conference on automated planning and scheduling , volume 30, pages 440–448. Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, and 1 others. 2025. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 .Wenlong Huang, Pieter Abbeel, Deepak Pathak, and Igor Mordatch. 2022. Language models as zero-shot planners: Extracting actionable knowledge for em-bodied agents. In International conference on ma-chine learning , pages 9118–9147. PMLR. Dongyoung Kim, Sumin Park, Huiwon Jang, Jinwoo Shin, Jaehyung Kim, and Younggyo Seo. 2026. Robot-r1: Reinforcement learning for enhanced em-bodied reasoning in robotics. Advances in Neural Information Processing Systems , 38:161472–161507. Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yu-taka Matsuo, and Yusuke Iwasawa. 2022. Large lan-guage models are zero-shot reasoners. Advances in neural information processing systems , 35:22199– 22213. Eric Kolve, Roozbeh Mottaghi, Winson Han, Eli Van-derBilt, Luca Weihs, Alvaro Herrasti, Matt Deitke, Kiana Ehsani, Daniel Gordon, Yuke Zhu, and 1 oth-ers. 2017. Ai2-thor: An interactive 3d environment for visual ai. arXiv preprint arXiv:1712.05474 .Chengshu Li, Ruohan Zhang, Josiah Wong, Cem Gok-men, Sanjana Srivastava, Roberto Martín-Martín, Chen Wang, Gabrael Levine, Michael Lingelbach, Jiankai Sun, and 1 others. 2023. Behavior-1k: A benchmark for embodied ai with 1,000 everyday ac-tivities and realistic simulation. In Conference on Robot Learning , pages 80–93. PMLR. Jacky Liang, Wenlong Huang, Fei Xia, Peng Xu, Karol Hausman, Brian Ichter, Pete Florence, and Andy Zeng. 2023. Code as policies: Language model pro-grams for embodied control. In 2023 IEEE Interna-tional conference on robotics and automation (ICRA) ,pages 9493–9500. IEEE. 
+
+9Tian Liang, Wenxiang Jiao, Zhiwei He, Jiahao Xu, Haitao Mi, and Dong Yu. 2025. Deepcompress: A dual reward strategy for dynamically exploring and compressing reasoning chains. arXiv preprint arXiv:2510.27419 .Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harri-son Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2024. Let’s verify step by step. In International Conference on Learning Representations , volume 2024, pages 39578–39601. Bo Liu, Yuqian Jiang, Xiaohan Zhang, Qiang Liu, Shiqi Zhang, Joydeep Biswas, and Peter Stone. 2023a. Llm+ p: Empowering large language models with optimal planning proficiency. arXiv preprint arXiv:2304.11477 .Shilong Liu, Zhaoyang Zeng, Tianhe Ren, Feng Li, Hao Zhang, Jie Yang, Qing Jiang, Chunyuan Li, Jian-wei Yang, Hang Su, and 1 others. 2024. Grounding dino: Marrying dino with grounded pre-training for open-set object detection. In European conference on computer vision , pages 38–55. Springer. Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang Zhu. 2023b. G-eval: Nlg evaluation using gpt-4 with better human align-ment. In Proceedings of the 2023 conference on empirical methods in natural language processing ,pages 2511–2522. Aishwarya Padmakumar, Jesse Thomason, Ayush Shri-vastava, Patrick Lange, Anjali Narayan-Chen, Span-dana Gella, Robinson Piramuthu, Gokhan Tur, and Dilek Hakkani-Tur. 2022. Teach: Task-driven em-bodied agents that chat. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 36, pages 2017–2025. Xavier Puig, Kevin Ra, Marko Boben, Jiaman Li, Tingwu Wang, Sanja Fidler, and Antonio Torralba. 2018. Virtualhome: Simulating household activities via programs. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 8494–8502. Krishan Rana, Jesse Haviland, Sourav Garg, Jad Abou-Chakra, Ian Reid, and Niko Suenderhauf. 2023. Say-plan: Grounding large language models using 3d scene graphs for scalable robot task planning. arXiv preprint arXiv:2307.06135 .Manolis Savva, Abhishek Kadian, Oleksandr Maksymets, Yili Zhao, Erik Wijmans, Bhavana Jain, Julian Straub, Jia Liu, Vladlen Koltun, Jitendra Malik, and 1 others. 2019. Habitat: A platform for embodied ai research. In Proceedings of the IEEE/CVF international conference on computer vision , pages 9339–9347. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, and 1 others. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Maohao Shen, Guangtao Zeng, Zhenting Qi, Zhang-Wei Hong, Zhenfang Chen, Wei Lu, Gregory Wornell, Subhro Das, David Cox, and Chuang Gan. 2025. Satori: Reinforcement learning with chain-of-action-thought enhances llm reasoning via autoregressive search. arXiv preprint arXiv:2502.02508 .Mohit Shridhar, Jesse Thomason, Daniel Gordon, Yonatan Bisk, Winson Han, Roozbeh Mottaghi, Luke Zettlemoyer, and Dieter Fox. 2020. Alfred: A bench-mark for interpreting grounded instructions for ev-eryday tasks. In Proceedings of the IEEE/CVF con-ference on computer vision and pattern recognition ,pages 10740–10749. Ishika Singh, Valts Blukis, Arsalan Mousavian, Ankit Goyal, Danfei Xu, Jonathan Tremblay, Dieter Fox, Jesse Thomason, and Animesh Garg. 2022. Progprompt: Generating situated robot task plans using large language models. arXiv preprint arXiv:2209.11302 .Chan Hee Song, Jiaman Wu, Clayton Washington, Brian M Sadler, Wei-Lun Chao, and Yu Su. 2023. Llm-planner: Few-shot grounded planning for em-bodied agents with large language models. In Pro-ceedings of the IEEE/CVF international conference on computer vision , pages 2998–3009. Kimi Team, Angang Du, Bofei Gao, Bowei Xing, Changjiu Jiang, Cheng Chen, Cheng Li, Chenjun Xiao, Chenzhuang Du, Chonghua Liao, and 1 others. 2025. Kimi k1. 5: Scaling reinforcement learning with llms. arXiv preprint arXiv:2501.12599 .Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Man-dlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. 2023. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 .Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, and 1 others. 2022. Chain-of-thought prompting elic-its reasoning in large language models. Advances in neural information processing systems , 35:24824– 24837. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Jianwei Yang, Hao Zhang, Feng Li, Xueyan Zou, Chun-yuan Li, and Jianfeng Gao. 2023. Set-of-mark prompting unleashes extraordinary visual grounding in gpt-4v. arXiv preprint arXiv:2310.11441 .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2022. React: Synergizing reasoning and acting in language models. arXiv preprint arXiv:2210.03629 .
+
+10 Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, and 1 others. 2026. Dapo: An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing Systems , 38:113222–113244. Danlong Yuan, Tian Xie, Shaohan Huang, Zhuocheng Gong, Huishuai Zhang, Chong Luo, Furu Wei, and Dongyan Zhao. 2025. Efficient rl training for rea-soning models via length-aware optimization. arXiv preprint arXiv:2505.12284 .Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, and 1 others. 2023. Judging llm-as-a-judge with mt-bench and chatbot arena. Advances in neural information pro-cessing systems , 36:46595–46623. Brianna Zitkovich, Tianhe Yu, Sichun Xu, Peng Xu, Ted Xiao, Fei Xia, Jialin Wu, Paul Wohlhart, Stefan Welker, Ayzaan Wahid, and 1 others. 2023. Rt-2: Vision-language-action models transfer web knowl-edge to robotic control. In Conference on Robot Learning , pages 2165–2183. PMLR. 
+
+11 The appendix follows the same pipeline order as the main paper: Section A details data construction, Section B describes the symbolic engine and action library, Section C collects RL training details, and Section D reports additional evaluation analyses. 
+
+A Data Construction Details 
+
+This appendix summarizes the conversion from raw BDDL to planner-facing conversations. Each sample is built by parsing objects, initial predi-cates, and goals, identifying the robot type, select-ing the corresponding action library and system prompt, and rewriting the formal goal into a natural-language request. Distractor objects are retained to test whether the model identifies task-relevant ob-jects. This section first describes video-to-BDDL conversion (Section A.1), then shows the model-facing sample format (Section A.2), and finally summarizes data augmentation (Section A.3). Fig-ure 7 gives one concrete example. 
+
+A.1 Video-to-BDDL Construction 
+
+When the source is a video or other visual scene evidence, SymPlan uses the task description as a prior for deciding what to look for. The instruc-tion specifies the target objects and related context objects that should be grounded, while the video supplies evidence for where those objects are and what states or relations they currently satisfy. The conversion has three stages. First, the task descrip-tion is parsed into a search plan over relevant object categories, such as target objects, tools, contain-ers, surfaces, and the agent. Second, the visual front end follows the Set-of-Mark visual prompt-ing style (Yang et al., 2023) to select frames that expose these objects and ground them as BDDL in-stances, in the spirit of open-vocabulary detection references such as (Liu et al., 2024), and observ-able initial predicates are then created from spatial and state evidence, including room membership, support, containment, open/closed state, cleanli-ness, and similar task-relevant properties. Third, the task instruction is converted into goal predi-cates over the same typed objects. The resulting BDDL is accepted only after an LLM-as-a-judge verifier (Zheng et al., 2023; Liu et al., 2023b) con-firms syntax, object coverage, initial-state consis-tency, and goal executability, matching the four content axes used by the symbolic engine. Figure 5 summarizes this construction pipeline. The important design choice is that the same ver-3     
+
+> 5s initial evidance 55s tripod visible 88s camera on tripod
+> Video + Task Task prior
+> Place the camera on top of the tripod.
+> Search targets
+> camera_tripod digital_camera floor / room Visual evidence
+> digital_camera
+> camera_tripod
+> digital_camera
+> camera_tripod
+> digital_camera camera_tripod floor
+> Object grounding BDDL Draft LLM Verifier
+> :objects
+> digital_camera_1 camera_tripod_1
+> fl oor_1
+> :init
+> ontop(camera,
+> fl oor) ontop(tripod,
+> fl oor)
+> :goal
+> ontop(camera, tripod)
+> Checks for aspects: Syntax Objects Init Goal
+> :objects
+> digital_camera_1 camera_tripod_1
+> fl oor_1
+> :init
+> ontop(camera,
+> fl oor) ontop(tripod,
+> fl oor)
+> :goal
+> ontop(camera, tripod)
+> Verified BDDL
+
+Figure 5: Task-guided video-to-BDDL construction on a camera episode. The task description provides a prior over target and related objects, while key frames provide visual evidence for grounding these objects and their initial relations. The BDDL draft is then checked for syntax, object coverage, initial-state consistency, and goal executability before being accepted. 
+
+ified BDDL serves three roles: it is rewritten into the planner prompt, it defines the target condition for training examples, and it is reused unchanged by the symbolic engine when executing generated action code. 
+
+Quantitative evaluation. Following the pipeline in Figure 5, we apply it to 50 BEHAVIOR-1K task videos from our evaluation suite and report four indicators in Table 3. The engine and the verifier accept the large ma-jority of drafts at 100% and 74%, with 36/50 drafts agreeing with the released BDDL on core seman-tics, and on 32/50 the judge prefers our BDDL with respect to the natural-language instruction. The 14/50 disagreements are dominated by scene-decoration objects (sauces, packaging, room decor) declared in the released BDDL but not required by the instruction, suggesting that the construction is grounded in the written task rather than memoris-ing static curation choices. The example in Figure 6 illustrates a typical dis-agreement of this kind. Both BDDLs cover the three Easter eggs, the basket, the lawn, and a tree, and both place the eggs inside the basket initially. The video-derived goal places all three eggs next to 12 Video-derived BDDL (SymPlan) 
+
+objects: lawn.n.01_1 - lawn.n.01 basket.n.01_1 - basket.n.01 easter_egg.n.01_1 easter_egg.n.01_2 easter_egg.n.01_3 -easter_egg.n.01 tree.n.01_1 - tree.n.01 init: (ontop tree.n.01_1 lawn.n.01_1) (ontop basket.n.01_1 lawn.n.01_1) (inside easter_egg.n.01_1 basket.n.01_1) (inside easter_egg.n.01_2 basket.n.01_1) (inside easter_egg.n.01_3 basket.n.01_1) goal: (ontop easter_egg.n.01_1 lawn.n.01_1) (nextto easter_egg.n.01_1 tree.n.01_1) (ontop easter_egg.n.01_2 lawn.n.01_1) (nextto easter_egg.n.01_2 tree.n.01_1) (ontop easter_egg.n.01_3 lawn.n.01_1) (nextto easter_egg.n.01_3 tree.n.01_1) 
+
+Official BDDL (BEHAVIOR) 
+
+objects (task-critical subset): easter_egg.n.01_1 easter_egg.n.01_2 easter_egg.n.01_3 -easter_egg.n.01 wicker_basket.n.01_1 - wicker_basket.n.01 lawn.n.01_1 - lawn.n.01 tree.n.01_1 - tree.n.01 scrub.n.01_1 - scrub.n.01 init (task-critical subset): (inside easter_egg.n.01_1 wicker_basket.n.01_1) (inside easter_egg.n.01_2 wicker_basket.n.01_1) (inside easter_egg.n.01_3 wicker_basket.n.01_1) (ontop wicker_basket.n.01_1 lawn.n.01_1) (inroom lawn.n.01_1 garden) (inroom tree.n.01_1 garden) (inroom scrub.n.01_1 garden) goal (task-critical subset): (nextto wicker_basket.n.01_1 lawn.n.01_1) (nextto easter_egg.n.01_1 tree.n.01_1) (nextto easter_egg.n.01_2 tree.n.01_1) (nextto easter_egg.n.01_3 scrub.n.01_1) 
+
+LLM-judge verdict 
+
+Task: hiding_Easter_eggs Instruction: Take the three Easter eggs out of the wicker basket on the lawn in the garden, then place them on the lawn next to a single tree. Verdict: partially equivalent, better aligned to instruction: model Scores (0-5): core entities = 5, init = 5, goal = 2, overall = 3 Rationale: Both BDDLs cover the three eggs, basket, lawn, and a tree, and both start with all three eggs inside the basket on the lawn. The key mismatch is in the goal: the video-derived BDDL places all three eggs next to the same tree, matching the instruction, while the official goal places one egg next to a scrub instead. Basket vs wicker_basket is semantically equivalent, and omitted decorative objects are not important here. Because the official goal conflicts with the natural-language requirement, the two BDDLs are only partially equivalent. 
+
+Figure 6: Side-by-side comparison of the video-derived BDDL with the official BEHAVIOR BDDL for the task hiding_Easter_eggs . The LLM judge is instructed to ignore synset/lemma differences (e.g. egg.n.02 vs 
+
+easter_egg.n.01 ) and decoration objects, and only score core semantic alignment with the natural-language instruction. Table 3: Video-to-BDDL evaluation on 50 BEHAVIOR-1K task videos. Engine Loading : fraction of drafts the symbolic engine loads. Verifier : fraction the LLM verifier accepts on the four content axes ( Syntax , Ob-jects , Init , Goal ). Core Semantic Agreement : frac-tion rated equivalent or partially equivalent to the offi-cial BEHAVIOR-1K BDDL by an independent GPT-5.4 judge across core entities, init, goal, and over-all. Win Rate : fraction where the judge prefers our BDDL over the released BDDL with respect to the natural-language instruction. Synset and lemma dif-ferences ( e.g. basket.n.01 vs. wicker_basket.n.01 )and scene-decoration-only objects are not penalized. 
+
+Indicator Value 
+
+Engine Loading Rate 50/50 (100%) Verifier Acceptance Rate 37/50 (74%) Core Semantic Agreement 36/50 (72%) Instruction Alignment Win Rate 32/50 (64%) 
+
+the same tree, which matches the natural-language instruction verbatim. The released goal instead places one egg next to a scrub, which is a cura-tion artifact rather than a planning requirement, and the judge accordingly counts this case toward our Instruction Alignment Win Rate. This kind of mismatch supports our design choice of treating the natural-language task as authoritative when the visual evidence and the released BDDL disagree. 
+
+A.2 Data Sample 
+
+Figure 7 illustrates the conversion from a raw BDDL task to the model-facing conversation for-mat. The formal BDDL goal is used during data construction, but it is not exposed verbatim to the model, and instead, it is rewritten as a natural-language request in the dialogue. 
+
+A.3 Data Augmentation 
+
+We augment the B-1000 training partition with two GPT-4o-based strategies, summarized in Table 4a. Each augmented BDDL is checked for tool con-sistency, and invalid drafts are excluded from the training set. Training pairs each task definition with one robot embodiment, while evaluation uses both single-arm and dual-arm settings, and the resulting split sizes are reported in Table 4b. 13 Data-construction example: from task specification to training target 
+
+Task: assembling_gift_baskets Robot: Single-arm Model sees: environment state + dialogue, not the raw goal formula 
+
+1. Verified BDDL 
+
+Objects 
+
+basket_1..4, candle_1..4 cookie_1..4, cheese_1..4 bow_1..4, table_1, table_2 
+
++ floor, agent, distractors 
+
+Init 
+
+(onfloor basket_1 floor) (ontop candle_1 table_1) (ontop cookie_1 table_1) (ontop cheese_1 table_2) (ontop bow_1 table_2) 
+
+... repeated for 4 baskets 
+
+Goal 
+
+for each basket: inside(candle, basket) inside(cookie, basket) inside(cheese, basket) inside(bow, basket) 
+
+2. Model-facing prompt 
+
+System 
+
+You are a single-arm robot. Track hand state internally; grasp needs a free hand; place_* needs holding object. 
+
+Environment 
+
+(define (environment) (:objects ...) (:init ...)) 
+
+Dialogue 
+
+User: Please help me assemble the gift baskets. Assistant: Should each basket include candle, cookie, cheese, bow? User: Yes. 
+
+3. Target training output 
+
+Reasoning scaffold 
+
+<think> Identify objects; track hands; order pick-and-place actions. </think> 
+
+Executable plan 
+
+<answer><steps> 1. go to table_1, grasp candle_1 2. go to basket_1, place inside 
+
+... 20 steps total 
+
+</steps><code> navigate(table_1) grasp(candle_1) place_inside(candle_1,basket_1) 
+
+... 
+
+</code></answer> 
+
+Figure 7: Illustration of our data construction format. We parse the raw BDDL task, includ-ing its formal goal, then convert it into a model-facing prompt consisting of environment state, robot specification, and multi-turn natural-language dialogue. The target output follows the training format 
+
+<think> . . . </think><answer><steps> . . . </steps><code> . . . </code></answer> .Table 4: Data augmentation strategies and split statistics. 
+
+Strategy What changes Goal changes? 
+
+Init aug. Object placements in :init No Object aug. Object types and instances Yes (a) Data augmentation strategies. 
+
+Split Original Init aug. Object aug. Total defs Episodes 
+
+B-1000 train 959 376 782 2,117 2,117 B-1000 test 48 9 40 97 194 B-100 test 100 0 0 100 200 
+
+(b) Training and evaluation data statistics. Augmented BDDL files are counted as new task definitions. 
+
+B Symbolic Engine and Action Library 
+
+This section documents the execution layer behind the symbolic feedback used in the main paper. We first replay one verified plan (Section B.1), then describe action-set scaling (Section B.2), predicate resolution (Section B.3), and the complete action library (Section B.4). 
+
+B.1 Symbolic Engine Replay 
+
+After the planner emits action code, the symbolic engine executes the code against the same BDDL state and goal. Figure 8 illustrates this replay on a compact grocery-store task. The symbolic panels show the initial state and the verified final state, while the visual schematic gives a human-readable view of the task and generated high-level steps. (a) Initial symbolic state (b) Final symbolic state   
+
+> shelf #1
+> checkout #1 basket #1
+> can of dog food #1
+> shopping cart #1
+> money #1
+> apple #1
+> apple #2
+> banana #1
+> bag of chips #1
+> candy bar #1
+> candy bar #2
+> soda can #1 bread loaf #1
+> agent
+> shelf #1
+> checkout #1 basket #1
+> can of dog food #1
+> shopping cart #1
+> money #1
+> apple #1
+> apple #2
+> banana #1
+> bag of chips #1
+> candy bar #1
+> candy bar #2
+> soda can #1 bread loaf #1
+> agent
+
+(c) Visual task schematic with generated steps      
+
+> apple banana bread soda can
+> shopping cart basket agent checkout money dog food
+
+Step instruction 
+
+1. go to shelf 2. pick dog food 3. pick money 4. go to checkout 5. place both items 
+
+Figure 8: Symbolic replay for buy_dog_food . The engine executes generated action code from the initial grocery-store state to the verified checkout state, using the same BDDL specification that was used to construct the planner input. 
+
+B.2 Action Set Scaling 
+
+Table 5 summarizes the action-set expansion from the 14-action B-100 engine to the 34-action B-1000 engine. Predicate gap analysis on B-1000 identi-fies 23 uncovered predicate requirements, and after consolidation and LLM review, these become 20 accepted action additions with full resolved-goal coverage. Concretely, auto-discovery first normalizes B-1000 goal predicates through alias, regex, compos-ite, and handled-format rules. Predicates that can-not be mapped to the existing B-100 action effects 14 are counted as uncovered requirements. The pro-posal stage groups semantically equivalent require-ments, infers action names and arguments from predicate morphology and goal co-occurrence pat-terns, and uses LLM review to check the proposed action semantics. A proposed action is accepted only if its emitted effect resolves at least one previ-ously uncovered requirement without introducing invalid arguments or conflicting state updates. Cov-erage is computed after validation as the fraction of normalized goal-predicate requirements supported by either the original action set or the accepted additions. The reduction from 23 uncovered re-quirements to 20 additions is due to consolidation: several requirements share the same action schema after normalization. 
+
+Table 5: Action-set expansion from B-100 to B-1000. “Uncovered goal predicates” counts post-resolution pred-icate requirements not directly supported by the B-100 action set. “Accepted additions” counts the final new actions introduced after consolidation and LLM review. 
+
+B-100 B-1000 
+
+Base actions 14 14 Uncovered goal predicates – 23 Reviewed proposals – 23 Accepted additions – 20 Total actions 14 34 Resolved goal predicate coverage 100% 100% 
+
+B.3 Predicate Resolution Rules 
+
+The rules used for predicate resolution during the gap analysis are detailed in Table 6. 
+
+Table 6: Predicate resolution and action synthesis rules used in gap analysis.                       
+
+> Rule Example Resolved Status
+> Direct ontop ontop Directly supported Alias covered_stain covered Alias-resolved Regex dust.n.01_1 dusty Regex-resolved Composite contains_peaches contains Composite-resolved Handled format inside_exists inside_exists Handled by goal checker Inverse toggled_on = False toggle_off Accepted addition Missing folded = True fold Accepted addition
+
+Mapping to the implementation. The three stages described in Section 3.1 (gap analysis, LLM-assisted proposal, symbolic code synthesis) are re-alized by a six-phase implementation: SCAN and 
+
+CLASSIFY operationalize gap analysis by partition-ing the observed goal predicates into covered / format-variant / truly missing buckets, while IN -
+
+FER and PROPOSE operationalize LLM-assisted 
+
+Table 7: Base action library used for B-100.                               
+
+> Action Args Effect
+> navigate obj close_to target grasp obj inside agent; clear ontop place_on_top obj,tgt ontop target place_inside obj,tgt inside target place_next_to obj,tgt nextto target place_under obj,tgt under target open obj open = True close obj open = False toggle_on obj toggled_on = True cut obj sliced = True pour obj,tgt covered target clean obj stained/dusty = False wait_for_cooked time cooked = True soak obj,tgt soaked = True
+
+Table 8: Actions added for B-1000 after predicate-gap analysis and LLM review.                                           
+
+> Action Args Effect
+> toggle_off obj on = False; toggled_on = False fill obj,tgt filled target fold obj folded = True unfold obj unfolded = True; folded = False attach obj,tgt attached target; attached_to target screw obj,tgt screwed target overlay obj,tgt overlaid target drape obj,tgt draped target heat obj hot = True water obj watered = True; wet = True; dry = False saturate obj,tgt saturated target paint obj painted = True set_timer obj timeset = True make obj real = True repair obj broken = False break_obj obj broken = True burn obj burnt = True ignite obj on_fire = True patch obj torn = False; patched = True uncrimp obj crumpled = False
+
+proposal by combining morphology-based param-eter / verb inference, goal co-occurrence mining, and optional LLM review, and VALIDATE and EMIT 
+
+operationalize symbolic code synthesis by scoring the proposed set against a reference library and emitting engine code, tool prompts, and allowed-function patches. This factorization is an engineer-ing detail and is orthogonal to the paper’s claims, and it only affects the ease of extending the action library to new predicate families. 
+
+B.4 Complete Action List 
+
+Tables 7 and 8 present the complete action library, separating the base B-100 actions from the B-1000 additions. 
+
+C Training and RL Details 
+
+This section contains the RL configuration and re-ward details that support Sections 3.3 and 3.4. We list the shared DAPO hyperparameters in Table 9 and the reward ordering in Section C.1. 
+
+C.1 Reward Landscape Details 
+
+Table 10 lists the reward values produced by the multi-granular symbolic reward (Section 3.3) for 15 Table 9: Core hyperparameters for SFT-initialized DAPO. All RL variants share this configuration and differ only in the length-reward term and the GroupAdapt tolerance schedule.                                                  
+
+> Hyperparameter Value Hyperparameter Value
+> Initialization checkpoint D-SFT (Qwen3-8B-Gemma-Distill-SFT) RL algorithm DAPO (Yu et al., 2026) Advantage estimator group-relative (GRPO-style) Group size G8Train batch size 32 Generation batch size 96 Training sampling temp 0.8, top-p0.9Validation sampling temp 0.6, top-p0.9
+> Learning rate 1×10 −6LR warmup steps 10 Weight decay 0.1 Gradient clip 1.0 PPO clip (low / high) 0.2/0.28 (Clip-Higher) Dual-clip ratio c10.0 Loss aggregation token-mean Dynamic sampling enabled, metric = total reward Max regeneration batches 50 Overlong shaping buffer = 1048 , factor = 1 .0
+> Max prompt length 6144 Max response length 8192 PPO mini-batch size 32 PPO micro-batch / GPU 4
+
+representative plan outcomes. The ordering ensures that complete, error-free plans (Strict Pass) always receive the highest reward, while partial successes are rewarded proportionally. 
+
+Table 10: Reward landscape for representative symbolic outcomes.                             
+
+> Outcome GCR Err? EP? Rans
+> Strict Pass 1.0 No Yes 2.5 EP-only 1.0 Yes Yes 1.5 Near-miss (0.8) 0.8 No No 1.5 Near-miss (0.6) 0.6 No No 1.0 Partial 0.5 Yes No −0.25 Failure 0.0 No No −0.5
+
+D Additional Evaluation Analysis 
+
+This section collects analyses that support but are not required for the main comparison: additional RL curves (Section D.1), embodiment-specific be-havior (Section D.2), task-horizon statistics (Sec-tion D.3), and pass@ k headroom (Section D.4). 
+
+D.1 Additional RL Curves 
+
+Figure 9 complements the main SP/length curves by reporting Goal Completion Ratio and engine error rate. GCR shows whether methods preserve partial task progress, while the error-rate curves show whether higher SP comes from cleaner exe-cutable plans rather than merely satisfying goals with invalid intermediate actions. 
+
+D.2 Single-arm vs. Dual-arm Comparison 
+
+Table 11 summarizes the single-arm and dual-arm setup, and Table 12 reports the comparison on B-1000. On B-1000, dual-arm settings usually reduce executable command count, while changes in er-ror rate and goal completion remain more model-dependent. This suggests that embodiment mainly affects coordination burden and plan efficiency rather than the semantic difficulty of the task it-self. 
+
+Table 11: Key differences between single-arm and dual-arm configurations. The average command count is computed on B-1000 across the baseline suite in Ta-ble 12.             
+
+> Aspect Single-arm Dual-arm
+> Max held objects 12Action interface Same ( e.g. grasp(obj) ,place_*(obj, tgt) )Key constraint Must release before next grasp Can carry two objects simultaneously System prompt “single-arm robot” “dual-arm robot” Avg. commands 19.6 16.0
+
+Table 12: Single-arm vs. dual-arm performance on B-1000. Each entry reports single-arm / dual-arm values. Goal completion is reported as a fraction, and error rate is reported in percent. 
+
+Model Goal completion Error rate (%) Commands 
+
+DeepSeek-V4-Flash 0.987 / 0.980 0.03 / 0.09 19.09 / 16.03 DeepSeek-V4-Pro 0.978 / 0.961 1.11 / 0.71 27.20 / 21.95 Gemini-3.1-Pro 0.897 / 0.890 0.00 / 0.02 17.77 / 14.73 Kimi-K2.6 0.958 / 0.979 0.28 / 0.11 13.28 / 10.03 GLM-5.1 0.966 / 0.971 0.06 / 0.26 17.98 / 17.78 GPT-5.4 0.964 / 0.943 0.00 / 0.07 19.96 / 17.18 Qwen3.5-122B 0.939 / 0.937 0.22 / 0.38 19.11 / 15.39 Gemma-4-31B 0.959 / 0.971 0.07 / 0.12 17.47 / 14.97 Qwen3.6-35B 0.975 / 0.929 0.40 / 0.20 18.60 / 13.43 Qwen3.5-35B 0.975 / 0.887 1.05 / 2.44 30.91 / 24.82 Qwen3.6-27B 0.973 / 0.972 0.08 / 0.09 17.05 / 14.52 Qwen3.5-27B 0.955 / 0.919 0.22 / 0.31 18.97 / 15.25 Qwen3-8B 0.920 / 0.877 0.86 / 0.46 17.99 / 14.69 D-SFT 0.979 / 0.988 0.06 / 0.13 18.40 / 13.81 
+
+D.3 Task Complexity Analysis 
+
+To characterize benchmark difficulty, we analyze the distribution of executable command count (the number of primitive robot actions in each generated plan) on B-100 and B-1000 . This metric reflects task complexity: more commands correspond to multi-step tasks with more objects or longer ac-tion sequences. Command count is distinct from response-token length: it measures the symbolic action horizon rather than verbal verbosity. Figure 10 summarizes the executable command count for GPT-5.4 with per-bin histograms and summary statistics. The model produces a median of 19 commands on B-100 (average 23.8, P90 = 45) and a median of 14.5 commands on B-1000 16 0               
+
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 90
+> 92
+> 94
+> 96
+> 98
+> 100
+> Goal Completion Ratio (%)
+> B-1000
+> Goal Completion Ratio
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 0.0
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5 B-1000
+> Error Rate
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 95
+> 96
+> 97
+> 98
+> 99
+> 100
+> Goal Completion Ratio (%)
+> B-1000
+> Goal Completion Ratio
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> 0
+> 2
+> 4
+> 6B-1000
+> Error Rate
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 95
+> 96
+> 97
+> 98
+> 99
+> 100
+> Goal Completion Ratio (%)
+> B-100
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> B-100
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 95
+> 96
+> 97
+> 98
+> 99
+> 100
+> Goal Completion Ratio (%)
+> B-100
+> 0
+> 40
+> 80
+> 120
+> 160
+> 200
+> 240
+> RL Step
+> 0
+> 5
+> 10
+> 15 B-100
+> (a) Main comparison (b) GroupAdapt ablation
+> Base ShortRL GroupAdapt ( = 0.5) Qwen3-8B D-SFT Gemma-4-31B GroupAdapt ( = 0.25) GroupAdapt ( = 0.75)
+
+Figure 9: Additional symbolic-RL trajectories, averaged over three decoding seeds. The layout matches Figure 4, with a vertical divider separating (a) the main comparison from (b) the GroupAdapt threshold ablation. Each group reports Goal Completion Ratio and engine error rate. 
+
+(average 18.6, P90 = 32), showing a heavier B-100 action-horizon distribution. The right-skewed tails indicate that some tasks require substantially longer symbolic action sequences than the median case. 
+
+D.4 Pass@ k Analysis: RL Headroom 
+
+To assess how much reinforcement learning can still improve the distilled checkpoint D-SFT, we perform a pass@ k analysis on both B-100 and B-1000 using the guided extended-BDDL multi-sample evaluation. For each task occurrence we draw n=10 independent samples with temperature 
+
+0.6 and top-p=0 .9, and evaluate each with the sym-bolic engine. We then compute pass@ k using the unbiased estimator in Equation (4) from Chen et al. (Chen et al., 2021): pass@ k = Etasks 
+
+"
+
+1 −
+
+ n−ck
+
+ nk
+
+#
+
+(4) where n is the total number of samples per task occurrence and c is the number of strict-passing samples. Table 13 shows that D-SFT has non-trivial con-sistency headroom even after distillation. Strict pass@1 is already high, but pass@10 rises to 97.0% on B-100 and 99.0% on B-1000, leaving 11.6 and 7.6 points of recoverable one-sample reliability, re-0
+
+10 
+
+20 
+
+30 
+
+> # Tasks
+
+N=200 
+
+Avg=23.8 
+
+Med=19.0 
+
+P90=45 
+
+B-100 
+
+0 50 100 150 
+
+Executable command count 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+> # Tasks
+
+N=194 
+
+Avg=18.6 
+
+Med=14.5 
+
+P90=32 
+
+B-1000 
+
+Figure 10: Histogram of executable command count for GPT-5.4 on B-100 (top, N = 200) and B-1000 (bot-tom, N = 194). Dashed lines mark the median and dot-ted lines mark the average, and each panel also reports 
+
+N , average, median, and P90. 
+
+17 spectively. This is the kind of gap that group-based symbolic RL is designed to close. 
+
+Table 13: Strict-Pass pass@ k for D-SFT on guided extended-BDDL B-100 and B-1000. n=10 independent samples are drawn per task occurrence with temperature 
+
+0.6 and top-p=0 .9. ∆SP denotes the gap from pass@1.                            
+
+> B-100 (200 pairs) B-1000 (194 pairs)
+> kSP ∆SP SP ∆SP
+> 185.4 –91.4 –291.7 +6.3 96.1 +4.7 393.6 +8.2 97.8 +6.5 595.3 +9.9 98.8 +7.4 10 97.0 +11.6 99.0 +7.6
+
+Consistency analysis. Table 14 breaks down how reliably D-SFT solves each task occurrence across the same n=10 samples. B-100 has a larger “some-times pass” bucket than B-1000, suggesting that the smaller but structurally richer split still contains more prompts where the policy can solve the task but does not do so consistently. 
+
+Table 14: Task consistency breakdown for D-SFT (n=10 samples per task occurrence). “Always/Some-times/Never pass” partition task occurrences by the num-ber of strict-passing samples out of 10.         
+
+> Category B-100 B-1000 Always pass (all 10) 61.0% 76.3% Sometimes pass (1–9) 36.0% 22.7% Never pass (0/10) 3.0% 1.0%
+
+Length–correctness relationship. Across the B-1000 multi-sample run, failing responses remain on average noticeably longer than strict-passing ones for the same prompt. We do not interpret this gap as evidence that verbosity directly causes errors: harder tasks naturally induce both longer outputs and more failures. Rather, we take it as a practi-cal signal that length cannot be reduced uniformly across samples: trimming long correct plans is un-likely to help, while trimming long failing plans may amount to truncating genuinely needed rea-soning. This observation directly motivates the correctness-gated compression used in the final RL stage. 
+
+GroupAdapt threshold. The same consistency view also motivates the group-adaptive tolerance in Equation (2). During DAPO, each prompt is represented by a rollout group of size G=8 . We therefore treat groups with at least half of the roll-outs passing as easy (4–8 / 8), and the remaining groups as hard (0–3 / 8). Reliable prompts can be compressed under the Short-RL budget, while less reliable prompts keep wider length slack until their pass rate improves. The resulting two-level sched-ule keeps δbase =200 on easy groups and widens to 400 tokens on hard groups (Equation (2)). The main configuration uses τ =0 .5, and the ablation in Figure 4 additionally evaluates τ ∈ { 0.25 , 0.75 }.18

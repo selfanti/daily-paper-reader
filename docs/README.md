@@ -6,44 +6,60 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-05
-- 运行时间：2026-07-05 21:22:56 UTC
+- 最新运行日期：2026-07-06
+- 运行时间：2026-07-06 21:03:35 UTC
 - 运行状态：成功
-- 本次总论文数：8
-- 精读区：5
-- 速读区：3
+- 本次总论文数：12
+- 精读区：4
+- 速读区：8
 
 ### 今日简报（AI）
-今日精读5篇、速读3篇，聚焦无评论家强化学习稳定性与自适应智能体认证。最值得关注的是《BV-Blend》与《Self-Evolving Agents》两篇9分工作，分别提出基于不确定性加权的基线方法和任意时刻有效的自我进化框架。建议优先阅读这两篇精读论文，并跟进工具智能体多语言适配等速读方向。
-- 详情：[/202607/05/README](/202607/05/README)
+今日精读4篇速读8篇，聚焦智能体优化与工具使用的新范式，其中ReGRPO反思增强策略和层级实验代理设计成为亮点。
+
+最值得关注的方向：ReGRPO通过反思增强显著提升了工具型代理的任务完成率，而层级实验代理则为自主探索提供了更灵活的决策框架。
+
+建议下一步尝试将反思机制与现有代理系统结合，重点关注在复杂工具调用场景下的性能提升。
+- 详情：[/202607/06/README](/202607/06/README)
 
 ### 精读区论文标签
-1. [BV-Blend: Uncertainty-Weighted Historical Baselines for Stable Critic-Free RL with Verifiable Rewards](/202607/05/2606.28707v1-bv-blend-uncertainty-weighted-historical-baselines-for-stable-critic-free-rl-with-verifiable-rewards)  
+1. [ReGRPO: Reflection-Augmented Policy Optimization for Tool-Using Agents](/202607/06/2606.31392v1-regrpo-reflection-augmented-policy-optimization-for-tool-using-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：基于可验证奖励的稳定无评论家强化学习
-2. [Self-Evolving Agents with Anytime-Valid Certificates](/202607/05/2607.00871v1-self-evolving-agents-with-anytime-valid-certificates)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：具有随时有效证书的自我进化智能体
-3. [AI Trading's Alpha Singularity: Emergent Market Reasoning through Agent-to-Agent Self-Evolution](/202607/05/2606.29194v1-ai-tradings-alpha-singularity-emergent-market-reasoning-through-agent-to-agent-self-evolution)  
+   evidence：面向工具使用智能体的反思增强策略优化
+2. [Hierarchical Experimentalist Agents](/202607/06/2606.29315v1-hierarchical-experimentalist-agents)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：智能体间自我进化框架
-4. [A Linear Matching Bandit Approach to Online Multi-Human Multi-Robot Teaming](/202607/05/2606.29221v1-a-linear-matching-bandit-approach-to-online-multi-human-multi-robot-teaming)  
+   evidence：上下文内自我改进框架，通过主动实验学习
+3. [On the Comparison of Reinforcement Learning and Adaptive Control for Linear Systems under Packet Loss and Uncertainty](/202607/06/2606.32003v1-on-the-comparison-of-reinforcement-learning-and-adaptive-control-for-linear-systems-under-packet-loss-and-uncertainty)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：多人类多机器人组队的线性匹配强盗算法
-5. [LAMP: Long-Horizon Adaptive Manipulation Planning for Multi-Robot Collaboration in Cluttered Space](/202607/05/2606.29358v1-lamp-long-horizon-adaptive-manipulation-planning-for-multi-robot-collaboration-in-cluttered-space)  
+   evidence：DDPG策略梯度方法比较
+4. [A-TMA: Decoupling State-Aware Memory Failures in Long-Term Agent Memory](/202607/06/2607.01935v1-a-tma-decoupling-state-aware-memory-failures-in-long-term-agent-memory)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：多机器人长视野自适应操作规划
+   evidence：面向长期智能体记忆的状态感知记忆架构
 
 ### 速读区论文标签
-1. [HUMEMBR: Learning Human Routines for Predictive Embodied Navigation](/202607/05/2606.30404v1-humembr-learning-human-routines-for-predictive-embodied-navigation)  
+1. [Analytic Concept-Centric Memory for Agentic Embodied Manipulation](/202607/06/2606.29774v1-analytic-concept-centric-memory-for-agentic-embodied-manipulation)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：具身导航中的人类中心记忆
-2. [Ask the World Before Acting: Budgeted Environment Probing for World-Model Calibration](/202607/05/2606.31422v1-ask-the-world-before-acting-budgeted-environment-probing-for-world-model-calibration)  
+   evidence：面向具身智能体的解析概念中心记忆
+2. [Plan Right, Then Plan Tight: Symbolic RL for Efficient Embodied Reasoning](/202607/06/2606.31260v1-plan-right-then-plan-tight-symbolic-rl-for-efficient-embodied-reasoning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：预算约束下的世界模型校准探测
-3. [Think in English, Answer in Korean: Efficient Adaptation of Multilingual Tool-Using Agents](/202607/05/2606.31648v1-think-in-english-answer-in-korean-efficient-adaptation-of-multilingual-tool-using-agents)  
+   evidence：用于具身智能体决策的符号强化学习
+3. [AgentFlow: Building Agent Dependency Graphs for Static Analysis of Agent Programs](/202607/06/2607.01640v1-agentflow-building-agent-dependency-graphs-for-static-analysis-of-agent-programs)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：静态分析框架，恢复记忆和多智能体依赖
+4. [When LLMs Develop Languages: Symbolic Communication for Efficient Multi-Agent Reasoning](/202607/06/2606.29354v1-when-llms-develop-languages-symbolic-communication-for-efficient-multi-agent-reasoning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：利用强化学习高效适应工具使用任务
+   evidence：多智能体推理中的自主语言演化
+5. [Why Solve It Twice? Hierarchical Accumulation of Skills for Transfer-Efficient ML Engineering](/202607/06/2606.30911v1-why-solve-it-twice-hierarchical-accumulation-of-skills-for-transfer-efficient-ml-engineering)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：层次化多智能体技能迁移系统
+6. [Failure-Based Testing for Deep Reinforcement Learning Agents](/202607/06/2606.31372v1-failure-based-testing-for-deep-reinforcement-learning-agents)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：深度强化学习智能体测试方法
+7. [Robots Ask the Way: Communication-Enabled Social Navigation](/202607/06/2607.01044v1-robots-ask-the-way-communication-enabled-social-navigation)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：基于通信的社交导航实现多智能体协调
+8. [ContextNest: Verifiable Context Governance for Autonomous AI Agent](/202607/06/2607.02116v1-contextnest-verifiable-context-governance-for-autonomous-ai-agent)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：自主AI智能体的上下文治理
 
 
 <div class="dpr-home-promo-card">
