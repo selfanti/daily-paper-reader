@@ -1,0 +1,403 @@
+Title: ASK in the Dark: Uncertainty-Gated LLM Assistance under Partial Observability
+
+URL Source: https://arxiv.org/pdf/2607.02686v1
+
+Published Time: Tue, 07 Jul 2026 00:07:14 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# ASK in the Dark: Uncertainty-Gated LLM Assistance under Partial Observability 
+
+Juarez Monteiro 1,*,†, Nathan Gavenski 2,†, Guilherme Lima 1, Francisco Galuppo 1,Odinaldo Rodrigues 2 and Adriano Veloso 1
+
+> 1
+
+Kunumi Institute, Belo Horizonte, MG, Brazil 
+
+> 2
+
+King’s College London, London, United Kingdom 
+
+Abstract 
+
+Reinforcement learning agents operating under partial observability must act on incomplete information, making them natural candidates for guidance from small language models (SLMs) that carry broad reasoning priors. Yet integrating SLM guidance into this setting has proven difficult: across all test environments, vanilla uncertainty-gated approaches achieve an overwrite rate at or near zero, meaning the SLM almost never contributes an independent action. We trace this failure to the bare egocentric prompt, which provides insufficient context for genuine reasoning, and identify it as a context problem rather than a capacity problem. We propose ASK+, which supplies the SLM with trajectory-aware context (a partially revealed map, visited positions, and action history) and structured chain-of-thought reasoning, converting it from a passive redundancy check into a more informative consultant that occasionally corrects the policy. We further establish that the predictive entropy signal used for selective querying measures action uncertainty rather than state uncertainty and remains informative in POMDPs, making uncertainty-gated assistance viable beyond fully observable settings. The stateful prompt drives substantial gains: on DoorKey, where vanilla ASK matches PPO (both 89% ), ASK+ reaches 93 % success; on FourRooms, success climbs from 53% to 70 %; on HigherLower, accuracy reaches 73 .7%, matching the SLM-only upper bound. Across all environments, Qwen3.5-2B matches or exceeds Qwen3.5-4B, confirming that prompt design and selective gating dominate the impact of model scale, enabling guidance without large models. 
+
+Keywords 
+
+partial observability, reinforcement learning, language models, uncertainty estimation, Monte Carlo Dropout 
+
+## 1. Introduction 
+
+Agents operating under partial observability must act on incomplete information, relying on egocentric observations that may be insufficient to distinguish between meaningfully different underlying states. This setting is particularly challenging for reinforcement learning (RL) agents, which learn during training to approximate a value function that reflects the specific structure of the training environment. When that structure changes, such as the repositioning of a door, the agent has no mechanism to detect the mismatch. Its observation looks familiar, and it follows its value function confidently toward failure. Recent work [ 1, 2] addresses this challenge by combining external guidance from language models (LMs) with the RL agent. LMs are a natural candidate for this role: trained on vast amounts of human knowledge, they can reason about goals, infer structure, and suggest sensible actions even in novel situations. However, this reasoning ability is contingent on having sufficient context. Under partial observability, the agent’s view of the world is inherently limited, and an LM consulting only a narrow, egocentric observation may lack the global context needed to reason reliably, producing guidance that is confidently wrong rather than helpfully corrective [3]. The ASK framework [ 1 ] addresses this by selectively gating small LM (SLM) queries, consulting the language model only when the policy’s uncertainty exceeds a threshold. In its original evaluation on FrozenLake, a fully observable environment, this selective strategy allowed ASK to approach PPO-level 
+
+PRL+CAIPI Workshop @ IJCAI-ECAI 2026 
+
+> *
+
+Corresponding author. 
+
+> †
+
+These authors contributed equally. 
+
+$ juarez@kunumi.com (J. Monteiro); nathan.schneider_gavenski@kcl.ac.uk (N. Gavenski); adriano@kunumi.com (G. Lima); francisco@kunumi.com (F. Galuppo); odinaldo.rodrigues@kcl.ac.uk (O. Rodrigues); adriano@kunumi.com (A. Veloso)  
+
+> ©2026 Copyright for this paper by its authors. Use permitted under Creative Commons License Attribution 4.0 International (CC BY 4.0).
+
+1Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+performance while keeping the number of model queries low. This suggests that a limited reasoning budget, spent wisely, can compensate for policy uncertainty without overwhelming it. Whether this gating mechanism remains effective under partial observability is a question the original work leaves open, and the one this paper sets out to answer. We evaluate an extension of ASK, which we coin ASK+, across three partially observable environments that stress-test its gating mechanism in complementary ways. MiniGrid-FourRooms-v0 [ 4 ] requires the agent to navigate a 19 ×19 grid from an egocentric 7 ×7 view to reach a sparse goal, isolating the challenge of spatial grounding under limited visibility. MiniGrid-DoorKey-8x8 [4 ] extends this with a sequential subtask structure requiring the agent to find a key, unlock a door, and reach the goal.  
+
+> POPGym-HigherLower
+
+[ 5 ] requires the agent to predict card ranks from a single observation per step, where optimal play depends on tracking all previously seen cards. Together, the three environments isolate distinct failure modes of language-model assistance under partial observability: spatial grounding, sequential task decomposition, and temporal memory. Our contributions are as follows. 1. We propose ASK+, which diagnoses vanilla ASK’s failure under partial observability as a context bottleneck rather than a capacity limitation, and addresses it with stateful, episodic prompting that supplies the SLM with a partially revealed map, visited positions, action history, and structured chain-of-thought reasoning. We show that the underlying entropy signal remains informative under partial observability, and that ASK+ consistently outperforms both vanilla ASK and the PPO baseline across three complementary partially observable Markov decision processes (POMDPs). 2. We provide an empirical comparison showing that prompt design and selective gating, rather than model scale, are the primary drivers of performance, with Qwen3.5-2B matching or exceeding Qwen3.5-4B throughout our experiments. 
+
+## 2. Background 
+
+We formulate the partial observability problem as a Partially Observable Markov Decision Process (POMDP) [ 6 ]. A POMDP is a tuple ℳ = ⟨𝑆, 𝐴, 𝑇, 𝑟, 𝛾, 𝑂, Ω⟩, where 𝑆 is the state-space set, 𝐴 the action-space set, 𝑇 : 𝑆 × 𝐴 → 𝑆 is the transition function, 𝑟 : 𝑆 × 𝐴 → R is the expected immediate reward for taking action 𝑎 in state 𝑠 , 𝛾 ∈ [0 , 1) is the discount factor, 𝑂 is the observation space set, and 
+
+Ω : 𝑆 → 𝑂 is the observation function. Note that, unlike traditional Markovian processes, in POMDPs, the agent observes the observation produced by Ω. Solving the POMDP yields a policy 𝜋 : 𝑂 → 𝐴 that maps observations to actions so as to maximize the expected discounted return E[︀∑︀ ∞ 
+
+> 𝑡 =0
+
+𝛾 𝑡 𝑟 (𝑠 𝑡 , 𝑎 𝑡 )]︀ .We treat observations as incomplete state representations: Ω is non-injective, so distinct states may produce identical observations and the agent cannot recover 𝑠 from 𝑜 alone. We use the ASK [ 1] framework to leverage both the RL policy and the SLM model. ASK is an extrinsic method that augments a trained RL policy with an SLM consultant without retraining or architectural modification. At each step, ASK applies MC Dropout [ 7] to the policy’s MLP (multi-layer perceptron): it executes 𝑁 stochastic forward passes with dropout active, producing a distribution over action probabilities whose entropy serves as the uncertainty signal. If the total predictive entropy 𝐻 (𝑜 ) meets or exceeds a threshold 𝜏 , the SLM is queried with the current observation (and the PPO suggestion, for ASK); its response overrides the policy if valid. The threshold 𝜏 is selected via Bayesian optimization on a held-out validation set; the test split is never accessed during tuning. ASK was originally evaluated on FrozenLake, a discrete, fully observable grid, where selective querying achieved robust out-of-distribution generalization at low intervention rates. We investigate whether the same entropy-based signal remains a reliable trigger when the policy operates on ambiguous partial observations, and whether SLM’s foundational knowledge is sufficient to solve partially observable tasks.                           
+
+> 2Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 Env. PPO Policy MC Dropout 𝐻 ≥𝜏 ?State (𝜎 )
+> map, visits, hist.
+> SLM
+> (𝑃 𝑟, 𝑜, 𝑎 )
+> 𝑜 𝑎 𝐻
+> yes
+> update
+> no
+> 𝑎 ′
+> Figure 1: Decision flow of ASK+. At each step, the PPO policy produces a default action 𝑎 , and MC Dropout estimates the total predictive entropy 𝐻 (𝑜 ). If 𝐻 (𝑜 )≥𝜏 , the SLM is queried via a prompt 𝑃 𝑟 constructed from the current observation, the PPO suggestion, and the episode state 𝜎 ; its output 𝑎 ′overrides 𝑎 when valid. The episode state 𝜎 (dashed arrow) accumulates observations, visited positions, and action history throughout the episode, providing global context that is absent from any single egocentric observation.
+
+## 3. Method 
+
+ASK+ extends ASK [ 1 ] to partially observable settings by augmenting its uncertainty-gated querying mechanism with stateful episode reasoning (Figure 1): MC Dropout estimates the total predictive entropy 𝐻 (𝑜 ) via 𝑁 stochastic forward passes; if 𝐻 (𝑜 ) < 𝜏 the PPO action executes directly and 𝜎 is updated, otherwise it queries the SLM via a prompt 𝑃 𝑟 built from 𝑜 , 𝑎 , and 𝜎 .The principal departure from ASK is in how ASK+ elicits the SLM’s reasoning capabilities. The original ASK supplies only the current observation, depriving the model of the context it needs to exercise its foundational knowledge: a language model restricted to the agent’s immediate field of view cannot reason spatially, track history, or justify its suggestions. ASK+ addresses this by designing the prompt interface to unlock three complementary reasoning capacities. The prompt is enriched 
+
+with derived environmental features and local action previews, enabling the SLM to perform spatial inference rather than reactive pattern matching on raw observations. It is stateful , appending episodic memory built from 𝜎 , i.e., a partially revealed map, visited positions, and action history, so that the SLM can reason over the trajectory rather than an isolated snapshot. Finally, it activates the SLM’s native thinking mode within a constrained budget, giving the model a bounded window of deliberate computation before it commits to an action, rather than forcing an immediate one-word reaction. 
+
+3.1. Language Model Assistance 
+
+ASK+ targets SLMs rather than frontier models, extending ASK’s original reliance on larger systems with models that are computationally viable for step-level inference. The rationale for this choice is that recent SLMs encode sufficient world knowledge and can perform structured reasoning [ 8]. Yet this capacity is latent and requires the right context to be activated. Supplying a single egocentric observation, as ASK does, provides neither the spatial grounding nor the sequential context that these models need to engage their reasoning mechanisms, resulting in insufficiently informed predictions. Therefore, ASK+ treats the prompt as an interface to the model’s reasoning rather than a query format, and systematically varies the amount of context provided through three configurations. The 
+
+enriched configuration extends the raw observation with derived environmental features and local action previews, giving the model the inputs it needs for spatial inference. The stateful configuration additionally injects episodic memory from 𝜎 , enabling the model to condition on trajectory history and reason about what regions have been explored or which moves have been attempted. The rationale 
+
+configuration further enables the SLM’s native thinking mode, allocating a constrained budget of 10 tokens for deliberate computation before committing to action, without incurring the computational overhead that would undermine the efficiency case for small models. The visible output still closes with a short justification line. Still, this line is a gloss on the decision rather than a verified trace of the thinking process itself, and we do not treat it as evidence of reasoning beyond the mechanism just described. These configurations form a progression: each adds a layer of context that makes a qualitatively different reasoning capacity accessible, rather than varying prompt style as a surface-level engineering choice. We present a thorough ablation study that explores each configuration in Section 6.1.   
+
+> 3Juarez Monteiro et al. CEUR Workshop Proceedings 1–14
+
+3.2. Policy Architecture and Uncertainty Estimation 
+
+The RL policy is a standard actor-critic whose neural network extractor incorporates Monte Carlo Dropout, following the uncertainty decomposition described in Section 2. Dropout is retained at inference time to produce a distribution of action estimates across 𝑁 stochastic passes, from which total predictive entropy 𝐻 (𝑜 ), aleatoric uncertainty, and epistemic uncertainty are derived. The gating threshold is applied to 𝐻 (𝑜 ) rather than the epistemic component alone, as both sources of uncertainty indicate that the policy’s action estimate is unreliable: aleatoric uncertainty reflects genuine obser-vation ambiguity, while epistemic uncertainty reflects insufficient training coverage. Although most works focus on epistemic uncertainty, we advocate for total uncertainty, since aleatoric uncertainty, while irreducible from the RL policy perspective, may still be solvable by leveraging the foundational knowledge and reasoning capabilities from SLMs. A key methodological implication of the hybrid architecture is that the RL policy no longer needs to generalize to high-uncertainty states. Generalization under partial observability is typically expensive to achieve through RL alone: the policy must implicitly learn to track history and resolve ambiguity from the reward signal alone, which requires high parametric capacity and extended training. In ASK+, those states are delegated to the SLM, whose pretraining has already instilled the broad world knowledge and reasoning structure that RL cannot easily acquire. This allows the PPO policy to remain small and focused on in-distribution states, where it is both efficient and accurate. The SLM’s overparametrisation relative to the immediate task is not a liability; it is the source of the generalization capacity the policy intentionally forgoes. The threshold 𝜏 then functions as a capacity allocation mechanism, determining how much of the SLM’s representational surplus is recruited to compensate for the policy’s constrained generalization. Nevertheless, we hypothesize that SLMs cannot solve these tasks on their own and require the RL policies’ local, task-specific knowledge to succeed. To understand the impact of the RL policy in ASK+, we experiment with different degrees of sub-optimality in Section 6.3. 
+
+## 4. Experiments and Metrics 
+
+In this work, we use Stable-Baselines3’s PPO implementation [ 9 ] as the base policy, trained for 2 × 10 6
+
+steps with default hyperparameters and a linear learning rate schedule. As for the SLM, we use the 2 and 4 billion parameter variants of the Qwen 3.5 family [ 8 ], which are publicly available and have demonstrated strong foundational knowledge and reasoning capabilities [ 10 ]. No fine-tuning is performed on the SLM, and the PPO model is trained independently without any SLM interaction, ensuring a clean evaluation of the ASK framework under partial observability. All agents are evaluated on the same 100 test episodes (seeds [100 , 199] ), with the validation split (seeds [0 , 99] ) reserved exclusively for threshold tuning. The official ASK+ codebase is available at https:// github.com/ jrzmnt/ ask-pomdp .As testbeds, we use the FourRooms [ 4], DoorKey [ 4 ], and HigherLower [ 5 ] environments, which are designed to stress spatial grounding and memory-based reasoning. Minigrid’s DoorKey and FourRooms are procedurally generated gridworlds with sparse rewards, while POPGym-HigherLower is a card game where optimal play requires tracking the full deck history from a single-rank observation. We select these environments since they are standard benchmarks in the literature. Moreover, they present complementary challenges that allow us to evaluate the ASK+ under varying degrees of partial observ-ability and reasoning complexity. We select the gating threshold 𝜏 ∈ [0 .1, 2.0] independently for each SLM-environment pair via Optuna [11], which uses the Tree-structured Parzen Estimator algorithm. We report the reward, success (for DoorKey and FourRooms) or accuracy (for HigherLower), inter-vention rate (IR), and overwrite rate (OR) for each baseline and ASK+ configuration. Reward is the accumulated return per episode, success/accuracy is the fraction of successful episodes (DoorKey and FourRooms) or correct decisions (HigherLower), IR is the fraction of steps where the SLM is queried, and OR is the fraction of steps where the SLM’s action differs from the PPO’s action. IR and OR together characterize the efficiency–performance trade-off: IR quantifies computational overhead; OR measures how often the SLM provides guidance beyond validating the policy’s own choice. We compare against three baselines: (i) PPO-only, which never queries the SLM; (ii) SLM-only, which always queries the 
+
+> 4
+
+Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+Table 1 
+
+Main results across all three environments. IR = 0 for PPO and 1.00 for SLM-only by design.                                                                                                                                                               
+
+> FourRooms HigherLower DoorKey-8 ×8Agent Model Reward ↑Succ ↑IR ↓OR ↓Reward ↑Acc ↑IR ↓OR ↓Reward ↑Succ ↑IR ↓OR ↓
+> PPO —0.50 ±0.48 0.53 0.00 —0.50 ±0.11 0.72 0.00 —0.87 ±0.31 0.89 0.00 —SLM 2B 0.30 ±0.43 0.34 1.00 —0.51 ±0.10 0.73 1.00 —0.00 ±0.00 0.00 1.00 —SLM 4B 0.57 ±0.42 0.69 1.00 —0.53 ±0.10 0.74 1.00 —0.58 ±0.46 0.62 1.00 —ASK 2B 0.51 ±0.47 0.54 0.32 0.00 0.50 ±0.11 0.73 0.69 0.00 0.87 ±0.31 0.89 0.06 0.01
+> ASK 4B 0.52 ±0.47 0.55 0.32 0.00 0.50 ±0.11 0.72 0.60 0.00 0.89 ±0.27 0.92 0.05 0.00
+> ASK+ (ours) 2B 0.64 ±0.43 0.70 0.20 0.02 0.52 ±0.11 0.74 0.69 0.06 0.91 ±0.25 0.93 0.03 0.02
+> ASK+ (ours) 4B 0.62 ±0.43 0.69 0.25 0.02 0.52 ±0.10 0.74 0.60 0.05 0.90 ±0.25 0.93 0.03 0.02
+
+SLM and ignores the PPO; and (iii) ASK, with the original prompting strategy. 
+
+## 5. Results 
+
+Table 1 reports mean reward, success/accuracy, IR, and OR across all three environments over 100 test episodes. ASK+ achieves the highest reward and success in both navigation environments, FourRooms and DoorKey-8 ×8, while matching or narrowly exceeding the baselines in HigherLower. SLM-only, without the RL backbone, degrades substantially on DoorKey, confirming that the RL policy’s task-specific knowledge remains indispensable even when the language model is given complete control. On FourRooms and HigherLower, however, SLM-only matches or approaches ASK+ on raw performance. In these settings ASK+’s contribution is efficiency rather than peak quality. The most consistent gains from ASK+ are observed in navigation environments, where spatial grounding is the dominant challenge. In FourRooms, ASK+-2B raises reward from 0.50 (PPO) and 
+
+0.51 –0.52 (ASK) to 0.64 , a difference of 0.12 –0.14 reward points, with a corresponding increase in success rate from 0.53 –0.55 to 0.70 . DoorKey shows a similar pattern: ASK+-2B reaches a success rate of 0.93 , improving over ASK-4B ( 0.92 ) and PPO ( 0.89 ). Note that ASK’s OR is at or near zero (0.00 –0.01 ) across all environments, meaning the SLM is queried but never produces an action that differs from the PPO’s suggestion, effectively functioning as a passive validator rather than an active corrector. By contrast, ASK+ yields nonzero ORs ( 0.01 –0.02 in the navigation tasks), indicating that the enriched, stateful prompt elicits genuinely informative responses rather than mere policy confirmation. HigherLower presents a different picture. The environment rewards accurate card prediction, and all methods cluster within a narrow performance band: reward ranges from 0.50 to 0.53 and accuracy from 0.72 to 0.74 . ASK+ improves accuracy from 0.72 –0.73 (PPO and ASK) to 0.74 , matching SLM-4B, but does not surpass it outright. The IR in HigherLower is notably higher than in the navigation tasks, reaching 0.60 –0.69 for both ASK and ASK+, reflecting that the entropy-gating fires more frequently in this memory-dependent setting where individual observations are inherently ambiguous. While ASK+ achieves nonzero ORs here as well ( 0.05 –0.06 ), the marginal performance gap suggests that the memory component of the prompt, though activated, is not sufficient to overcome the SLM’s advantage of observing the full card history at every step. Nevertheless, interpreting IR and OR jointly requires some care. A high IR is not inherently unde-sirable. The gating mechanism is designed to query the SLM precisely when the policy is uncertain, and doing so at those steps is the intended behavior regardless of whether the SLM ultimately changes the action. Conversely, an overwrite is not a reliable proxy for quality. That is, the SLM overriding the policy more frequently does not imply that the resulting trajectory is better. A query that confirms the policy’s predicted action under uncertainty still provides a meaningful check, and the performance gains reported here demonstrate that this can translate into measurable improvements over the baselines, even when OR remains low. What ASK’s near-zero OR reveals is not that its consultations are valuable confirmations, but rather that the bare egocentric prompt provides insufficient context for the SLM to form any independent judgment, leaving it unable to contribute beyond echoing the policy’s suggestion. These results show that ASK+’s stateful and enriched prompting converts the SLM from a passive 
+
+5Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+redundancy check into a more informative consultant, one that corrects the policy on a small but consistent fraction of steps, and that this conversion translates to meaningful performance gains in environments where spatial reasoning benefits from historical context. The narrower improvement in HigherLower suggests that the gains are most reliable when the SLM’s reasoning is grounded in navigational context, rather than when the task reduces to sequence memory, which the SLM-only baseline already handles well. 
+
+## 6. Ablations 
+
+We run four ablations to isolate the contribution of each design choice. First, we test the impact of prompt design by comparing the basic strategy (resembling ASK’s) against the enriched, stateful, and rationale-augmented variants. Second, we perform a grid search over the uncertainty threshold 𝜏 to confirm that it effectively controls the intervention rate and reward tradeoff. Finally, we evaluate ASK+ with suboptimal PPO checkpoints to test its robustness to a weak base policy. 
+
+6.1. Prompt Components Contribution 
+
+To understand how each prompt component contributes to ASK+’s performance, we design a systematic ablation of the prompt structure. The basic prompt, which resembles that of ASK, provides only the current observation and a few examples, while the enriched component adds derived features and action previews, the stateful component appends episodic memory and accumulated state information, and the rationale component enables the SLM’s native thinking mode, with a constrained budget of 10 tokens, before the SLM outputs the action, increasing the decision budget available to the model. All prompts follow a shared template consisting of: (i) a role declaration (e.g., “ You are a helpful assistant... ”); (ii) a VALID ACTIONS block; (iii) a RULES block specifying behavioural constraints (e.g., “you cannot move through walls”); (iv) a task-specific state description (e.g., The agent is in room A and can see a key on the ground ); (v) a small few-shot Examples section illustrating the correct action for a given state; and (vi) a strict OUTPUT FORMAT requiring a single action token. The three prompt components described in Section 3.1 are implemented as augmentations to the state description section, which is the most semantically rich part of the prompt and therefore the most likely to activate the SLM’s reasoning capabilities. Additionally, we add a “stateful_min” variant that includes only the episodic memory, without any map information. Appendix A contains the full prompt templates for each environment and configuration. Table 2 shows that prompt complexity interacts strongly with environment structure. In FourRooms, the basic and enriched variants perform nearly identically (reward ≈ 0.52 , success rate ≈ 0.55 for both model sizes), and adding episodic memory via the stateful and stateful_min components produces no measurable gain. However, the rationale component yields a pronounced jump: stateful + rationale 
+
+Table 2 
+
+ASK+ prompt ablation across the three environments (we keep 𝜏 fixed accross prompt strategies for consistency).                                                                                                                                   
+
+> Env Prompt ASK+ — Qwen3.5-2B ASK+ — Qwen3.5-4B
+> Rew. ↑Succ./Acc. ↑IR ↓OR ↓Rew. ↑Succ./Acc. ↑IR ↓OR ↓
+> FourRooms
+> basic 0.513 0.54 0.32 0.00 0.523 0.55 0.32 0.00
+> enriched 0.523 0.55 0.31 0.00 0.522 0.55 0.31 0.00
+> stateful_min 0.523 0.55 0.31 0.00 0.523 0.55 0.32 0.00
+> stateful 0.522 0.55 0.31 0.00 0.523 0.55 0.32 0.00
+> stateful + rationale 0.640 0.70 0.20 0.02 0.621 0.69 0.25 0.02
+> HigherLower
+> basic 0.501 0.726 0.69 0.00 0.495 0.723 0.60 0.00
+> enriched 0.525 0.738 0.69 0.06 0.524 0.738 0.60 0.06
+> stateful 0.515 0.733 0.69 0.03 0.516 0.734 0.60 0.03
+> stateful + rationale 0.521 0.736 0.69 0.06 0.520 0.736 0.60 0.05
+> DoorKey 8×8
+> basic 0.869 0.89 0.06 0.01 0.894 0.92 0.05 0.00
+> enriched 0.859 0.88 0.05 0.03 0.843 0.87 0.06 0.05
+> stateful_min 0.917 0.94 0.03 0.01 0.877 0.91 0.05 0.04
+> stateful 0.908 0.93 0.03 0.01 0.905 0.93 0.03 0.02
+> stateful + rationale 0.908 0.93 0.02 0.01 0.896 0.92 0.03 0.02
+
+6Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+raises reward to 0.640 and success rate to 0.70 for the 2B model, and to 0.621 and 0.69 for the 4B model, while simultaneously reducing the invalid-action rate. The pattern reverses in HigherLower, where the enriched component alone achieves the highest accuracy ( 0.738 for both models), and both the stateful and stateful+rationale variants fall marginally short; the comparatively low invalid-action rate across all conditions suggests that this task is lexically unambiguous and benefits more from derived feature context than from extended reasoning. DoorKey presents a third regime: the enriched component slightly underperforms the basic prompt, whereas the stateful_min and stateful variants attain the best results, and the addition of the rationale component offers no further improvement, indicating that explicit state tracking is sufficient once the task structure is well-defined. Taken together, these results demonstrate that no single prompt component is universally optimal across environments, and their relative contributions depend on the cognitive demands of each task. Environments requiring spatial planning benefit from extended reasoning budgets, those with rich observable structure are best served by derived feature augmentation, and environments with complex multi-step dependencies rely on accumulated state information. Omitting any one component risks a systematic deficit in at least one setting; the full prompt design provides complementary scaffolding that covers the range of demands across environments. 
+
+6.2. Threshold 𝜏 .
+
+We perform a grid search over 𝜏 ∈ [0 .1, 2.0] in increments of 0.2, bypassing Optuna, to confirm that it effectively controls the IR and reward tradeoff. We note that for each environment, the optimal 𝜏 
+
+varies because it depends on the distribution of predictive entropies observed during episodes, which is influenced by the environment’s complexity and the PPO policy’s performance. Figure 2 shows reward and IR across values of 𝜏 . In FourRooms and DoorKey, low 𝜏 yields high IR and degraded reward, whereas in HigherLower it improves average reward. In all environments, high 𝜏 recovers PPO-level performance as IR approaches zero, since the SLM is bypassed entirely. These results confirm that 𝜏 predictably controls the intervention rate, with its optimal value being environment-dependent rather than universal. The asymmetry between HigherLower and the nav-igation environments reflects differences in relative SLM–policy competence: in HigherLower, the SLM’s numerical reasoning is sufficiently reliable that aggressive intervention improves outcomes, whereas in FourRooms and DoorKey, excessive intervention degrades reward because the SLM cannot substitute for the spatial planning encoded in the policy. The Optuna-selected values consistently fall in intermediate regimes that balance these pressures, neither bypassing the SLM nor over-delegating, validating automated threshold selection over manual tuning. 
+
+6.3. PPO optimality 
+
+Finally, we test the robustness of SLM assistance to PPO suboptimality by reusing PPO checkpoints saved at different reward thresholds during training. We expect that the SLM will be able to compensate for some degree of suboptimality, but that performance will degrade as the PPO policy becomes too weak to provide useful local guidance or to reach states where the SLM’s reasoning can be effective. 0.0 0.5 1.0 1.5       
+
+> Uncertainty threshold
+> 0.50
+> 0.52
+> 0.54
+> 0.56
+> 0.58
+> 0.60
+> 0.62
+> 0.64
+> Reward (solid)
+> FourRooms
+> 0.0 0.5 1.0 1.5
+> Uncertainty threshold
+> 0.495
+> 0.500
+> 0.505
+> 0.510
+> 0.515
+> 0.520
+> Reward (solid)
+> HigherLower
+> 0.5 1.0 1.5
+> Uncertainty threshold
+> 0.750
+> 0.775
+> 0.800
+> 0.825
+> 0.850
+> 0.875
+> 0.900
+> 0.925
+> Reward (solid)
+> DoorKey-8x8
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Intervention rate (dashed)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Intervention rate (dashed)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Intervention rate (dashed)
+> Qwen3.5-2B Qwen3.5-4B
+
+Figure 2: Threshold 𝜏 for reward and IR effects, with the selected 𝜏 for each model marked with a line. 7Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+Table 3 shows that ASK+ consistently outperforms the corresponding PPO checkpoint at every level of policy suboptimality, and that the intervention rate scales inversely with checkpoint quality as expected. In FourRooms, where the absolute gains are largest, ASK+ nearly doubles the reward of the weakest checkpoint (PPO 0.18 versus ASK+ 0.34 –0.35 at the 0.1 checkpoint), and IR progressively decreases from 0.55 –0.73 at the weakest checkpoint to 0.20 –0.25 at the full checkpoint, confirming that the entropy signal correctly identifies poorly calibrated policies. DoorKey exhibits a similar pattern, with ASK+ recovering 0.50 -0.61 success from a PPO checkpoint at 0.30 and maintaining an advantage at every subsequent level. HigherLower is again distinctive: PPO reward plateaus early in training (all checkpoints hover around 0.47 –0.50 ), yet ASK+ reliably improves accuracy to 0.73 –0.74 across all checkpoints, with IR saturating at 1.00 for the weakest policies, indicating that the system correctly recognizes the PPO signal as uninformative and delegates almost entirely to the SLM. Taken together, these results demonstrate that ASK+ does not depend on a near-optimal PPO policy to deliver meaningful gains. The uncertainty-gating mechanism adapts its intervention intensity to the quality of the underlying policy, intervening aggressively when the policy is unreliable and sparingly when it is competent, without requiring any retraining or recalibration. This property is practically relevant because fully trained policies are not always available in deployment, and it suggests that ASK+ can function as a general-purpose corrective layer applied on top of policies at any stage of training. 
+
+## 7. Related Work 
+
+Integrating language models into reinforcement learning has been explored primarily as a means of improving generalisation beyond training conditions. Ahn et al. [2] score LM-proposed actions through a learned affordance function, selecting the highest-scoring feasible action at each step; this approach is effective in constrained robotics settings but queries the LM unconditionally and offers no mechanism for deferring to the policy when the model is unreliable. Carta et al. [12] couple language planning with policy learning through online reinforcement learning, reducing the mismatch between language priors and environment dynamics, though the language component remains continuously active rather than invoked selectively. ASK [ 1 ] addresses this by gating LM queries on the policy’s predictive entropy via MC Dropout [ 7], achieving out-of-distribution generalisation without retraining the policy. The motivation for selective rather than continuous consultation is reinforced by empirical evidence that LLMs struggle as autonomous sequential decision-makers [ 13 , 14 , 3 ], making indiscriminate querying likely to produce confidently incorrect guidance rather than useful correction. Standard approaches to partial observability augment the policy with recurrent architectures or attention to accumulate history [ 6 ]; POPGym [ 5 ] provides a systematic benchmark of such memory requirements across diverse tasks. Our work does not modify the policy architecture and instead asks whether an uncertainty-triggered language consultant can complement a memoryless policy in a 
+
+Table 3 
+
+Different results of ASK+ with different PPO checkpoints, which have different suboptimality levels.                                                                                                                                                                                                 
+
+> Env Ckpt PPO ASK+ — Qwen3.5-2B ASK+ — Qwen3.5-4B
+> Rew. ↑Suc. ↑IR ↓𝜏 Rew. ↑Suc. ↑IR ↓𝜏 Rew. ↑Suc. ↑IR ↓𝜏
+> FourRooms
+> 0.10.18 0.19 0.0—0.34 0.36 0.55 0.35 0.35 0.38 0.73 0.18 0.30.20 0.21 0.0—0.38 0.40 0.41 0.26 0.40 0.45 0.45 0.26 0.50.45 0.47 0.0—0.57 0.62 0.45 0.26 0.49 0.53 0.28 0.47 0.70.60 0.63 0.0—0.65 0.71 0.37 0.12 0.66 0.71 0.13 0.86
+> full 0.50 0.53 0.0—0.64 0.70 0.20 0.48 0.62 0.69 0.25 0.46
+> HigherLower
+> 0.10.47 0.71 0.0—0.51 0.73 1.00 0.42 0.52 0.74 1.00 0.69 0.20.47 0.71 0.0—0.51 0.73 1.00 0.55 0.52 0.74 1.00 0.07 0.30.47 0.71 0.0—0.51 0.73 1.00 0.13 0.52 0.74 1.00 0.11 0.40.47 0.71 0.0—0.52 0.74 0.83 0.91 0.52 0.74 1.00 0.13
+> full 0.50 0.72 0.0—0.52 0.74 0.69 0.01 0.52 0.74 0.60 0.02
+> DoorKey 8×8
+> 0.30.29 0.30 0.0—0.50 0.54 0.52 1.37 0.61 0.65 0.52 0.37 0.50.65 0.67 0.0—0.76 0.80 0.30 1.11 0.79 0.83 0.27 0.19 0.70.72 0.74 0.0—0.78 0.80 0.13 1.40 0.81 0.83 0.06 0.03
+> full 0.87 0.89 0.0—0.91 0.93 0.03 1.53 0.91 0.93 0.03 1.46
+
+8Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+POMDP, a setting that all prior LM-assisted RL work assumes away. The three environments isolate distinct challenges: FourRooms requires egocentric spatial grounding, DoorKey introduces sequential subtasks, and HigherLower creates an asymmetric information setting where the SLM prompt exposes deck composition hidden from the policy. 
+
+## 8. Conclusion 
+
+ASK+ extends ASK to partially observable settings by equipping the SLM with trajectory-aware context and structured chain-of-thought reasoning. The context comprises a partially-revealed map, visited positions, and action history. The key diagnostic that drives this design is that vanilla ASK achieves an overwrite rate at or near zero ( 0.00 –0.01 ) across all three environments: the SLM is queried but almost never deviates from the policy’s suggestion. This exposes the bare egocentric prompt as the bottleneck rather than model capacity. By closing this context gap, ASK+ provides the SLM with sufficient grounding to reason independently, lifting success from 53% to 70% in FourRooms, from 
+
+89% to 93% in DoorKey, and reaching 74% accuracy in HigherLower. The three environments were selected to isolate spatial grounding, sequential task decomposition and temporal memory as distinct failure modes of language-model assistance in the context of partial observability. The gains confirm that the approach generalizes beyond the fully observable settings originally studied by ASK. Taken together, these results show that uncertainty-gated SLM assistance is fundamentally sound under partial observability. The failure of vanilla ASK is not a limitation of the gating idea but of the prompt, which gives the SLM too little context to act on. The gating signal estimates total predictive entropy via MC Dropout, capturing both aleatoric uncertainty arising from genuine observational ambiguity and epistemic uncertainty due to insufficient training coverage. This makes it effective whether the policy’s unreliability stems from distributional shift or from the inherent state uncertainty of partial observability. Qwen3.5-2B matches or exceeds Qwen3.5-4B across all environments, showing that the bottleneck is prompt design rather than model scale. Ablations over 𝜏 , 𝑁 , PPO training quality, and prompting technique consistently identify selective querying and trajectory-aware context as the primary performance drivers, confirming that reasoning capacity can be leveraged without scaling up. The present work intentionally scopes its evaluation to three complementary environments to establish a clean proof of concept. Extending ASK+ to richer POMDPs, including settings in which the entropy signal misfires or stale history may mislead the SLM, is a natural next step. Fine-tuning the SLM on egocentric views or task-specific trajectories would isolate the contribution of the gating mechanism from improved grounding. Replacing the memoryless MLP with a recurrent policy in HigherLower would clarify how much of the ASK+ advantage stems from information asymmetry versus uncertainty gating. Spatial analyses of where queries concentrate and ablations of the policy hint in the SLM prompt remain open to provide finer-grained mechanistic evidence. 
+
+## Acknowledgments 
+
+This work was partially supported by UK Research and Innovation [grant number EP/S023356/1], in the UKRI Centre for Doctoral Training in Safe and Trusted Artificial Intelligence, and by the Kunumi Institute, through individual grants awarded to the authors. 
+
+## Declaration on Generative AI 
+
+During the preparation of this work, the authors used Claude (Anthropic), Grammarly in order to: improve writing style, grammar and spelling check. After using these tools, the authors reviewed and edited the content as needed and took full responsibility for the publication’s content.   
+
+> 9Juarez Monteiro et al. CEUR Workshop Proceedings 1–14
+
+## References 
+
+[1] J. Monteiro, N. Gavenski, G. Zuin, A. Veloso, When to ask: Uncertainty-gated language assistance for reinforcement learning, in: 2026 International Joint Conference on Neural Networks (IJCNN), 2026. [2] M. Ahn, A. Brohan, N. Brown, Y. Chebotar, O. Cortes, B. David, C. Finn, C. Fu, K. Gopalakrishnan, K. Hausman, et al., Do as i can, not as i say: Grounding language in robotic affordances, arXiv preprint arXiv:2204.01691 (2022). [3] K. Valmeekam, K. Stechly, A. Gundawar, S. Kambhampati, A systematic evaluation of the planning and scheduling abilities of the reasoning model o1, Transactions on Machine Learning Research (2025). [4] M. Chevalier-Boisvert, B. Dai, M. Towers, R. Perez-Vicente, L. Willems, S. Lahlou, S. Pal, P. S. Castro, J. K. Terry, Minigrid & miniworld: Modular & customizable reinforcement learning environments for goal-oriented tasks, Advances in Neural Information Processing Systems 36 (2023) 73383–73394. [5] S. Morad, R. Kortvelesy, M. Bettini, S. Liwicki, A. Prorok, Popgym: Benchmarking partially observable reinforcement learning, arXiv preprint arXiv:2303.01859 (2023). [6] L. P. Kaelbling, M. L. Littman, A. R. Cassandra, Planning and acting in partially observable stochastic domains, Artificial intelligence 101 (1998) 99–134. [7] Y. Gal, Z. Ghahramani, Dropout as a bayesian approximation: Representing model uncertainty in deep learning, in: international conference on machine learning, PMLR, 2016, pp. 1050–1059. [8] Qwen Team, Qwen3.5: Towards native multimodal agents, 2026. URL: https://qwen.ai/blog?id= qwen3.5. [9] A. Raffin, A. Hill, A. Gleave, A. Kanervisto, M. Ernestus, N. Dormann, Stable-baselines3: Reliable reinforcement learning implementations, Journal of machine learning research 22 (2021) 1–8. [10] N. Gavenski, J. Monteiro, F. Galuppo, A. Veloso, O. Rodrigues, When in doubt, plan it out: Committed small language model deliberation for reactive reinforcement learning, 2026. URL: https://arxiv.org/abs/2606.16995. arXiv:2606.16995 .[11] T. Akiba, S. Sano, T. Yanase, T. Ohta, M. Koyama, Optuna: A next-generation hyperparameter optimization framework, in: Proceedings of the 25th ACM SIGKDD international conference on knowledge discovery & data mining, 2019, pp. 2623–2631. [12] T. Carta, C. Romac, T. Wolf, S. Lamprier, O. Sigaud, P.-Y. Oudeyer, Grounding large language models in interactive environments with online reinforcement learning, in: International conference on machine learning, PMLR, 2023, pp. 3676–3713. [13] K. Valmeekam, M. Marquez, A. Olmo, S. Sreedharan, S. Kambhampati, Planbench: An extensi-ble benchmark for evaluating large language models on planning and reasoning about change, Advances in Neural Information Processing Systems 36 (2023) 38975–38987. [14] S. Kambhampati, K. Valmeekam, L. Guan, M. Verma, K. Stechly, S. Bhambri, L. P. Saldyt, A. B. Murthy, Position: Llms can’t plan, but can help planning in llm-modulo frameworks, in: Forty-first International Conference on Machine Learning, 2024. 
+
+> 10
+
+Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+## A. Prompt Templates 
+
+All ASK+ prompts share a common six-block structure. Block (i) Role and block (ii) Valid Actions are static per environment. Block (iii) Rules encodes hard constraints, output format, and the rationale instruction when the rationale augmentation is active. Block (iv) State carries the current observation and is the only block that changes at every step; the three augmentation layers ( enriched , stateful , rationale ) each extend this block with progressively richer context. Block (v) Examples provides one-shot demonstrations grounded in the environment’s action vocabulary. Block (vi) Output Format enforces the response schema. The color coding used throughout this section is as follows. Header colors identify block type: (i) Role (ii) Valid Actions (iii) Rules (iv) State (v) Examples (vi) Output Format . Background tints mark augmentation layers: enriched stateful rationale .
+
+A.1. FourRooms 
+
+The FourRooms agent navigates a 19 ×19 grid from a 7×7 egocentric view. The stateful augmentation injects a partially-revealed map assembled from visited cells and a visit counter at the current position, giving the SLM a growing spatial record of explored territory. The enriched augmentation adds adjacency symbols (forward/left/right/back), ahead-chain depth, visible door locations, longest-corridor estimates in both the local view and the global map, and per-action previews showing the cell type that would be entered. The rationale block constrains the reasoning step to one line of at most 15 words, limiting inference overhead while still activating deliberative reasoning before action selection. 
+
+(i) Role 
+
+You are a robot navigation policy in MiniGrid FourRooms (partially observed). Choose exactly ONE low-level action. 
+
+(ii) Valid Actions 
+
+TURN_LEFT TURN_RIGHT FORWARD 
+
+(iii) Rules                                                                
+
+> -Output only the action token line required below (no markdown). -Line 1: Reason: <one short line, max 15 words>. Line 2: Action: <one of VALID ACTIONS>. -If FORWARD is blocked (ahead is ’#’), do not choose FORWARD. Prefer doors (D) aligned with corridors /the cached goal. If ’G’ is visible, move toward it. -Follow planner hint and autopilot when consistent with safe previews.
+
+(iv) State + stateful augmentation              
+
+> CURRENT VIEW (egocentric): ....... .....#. .....#. .....#. .....#. ####### ??????? DISCOVERED MAP (11x11 around A): ?????...... ?????.#.... ?????.#.... ?????A#.... ?????.#.... ?????###### ########### STATE: Facing=EAST PathAhead=BLOCKED Goal=not visible Pos=(8,16) Room=SW Visits@here=1 Actions=(none)
+
+(iv) State + enriched augmentation                          
+
+> Adjacent F/L/R/B: #/././. Ahead chain: #..Doors visible: (none) Longest ray (view): fwd 3Longest ray (world): BACK 7Autopilot: FORWARD PREVIEW TURN_LEFT->N,’.’ TURN_RIGHT->S,’.’ FORWARD->blocked ’#’
+
+11 Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+(v) Examples                      
+
+> ahead=passable, goal visible (3 ahead) -> FORWARD ahead=BLOCKED, door visible to the right -> TURN_RIGHT visits high +loop hint +longest_corridor=right -> TURN_RIGHT
+
+(vi) Output Format        
+
+> Reason: <short> Action: TURN_LEFT or TURN_RIGHT or FORWARD
+
+A.2. HigherLower 
+
+HigherLower requires no spatial context: the observation is a single card rank, and optimal play requires tracking the full remaining deck composition. The stateful block records the current decision index, win and loss streaks, and the last three decisions with their outcomes, giving the SLM a short sequential record of recent play. The enriched block computes count-derived probabilities 𝑃 (next > 𝑐 ),
+
+𝑃 (next < 𝑐 ), and 𝑃 (push ) from the remaining deck, together with the recommended action and its margin of evidence. This gives the SLM informational access equivalent to an optimal card-counting strategy, which the memoryless PPO policy cannot replicate from a single-rank observation. 
+
+(i) Role 
+
+You are a card-game decision policy (Higher / Lower vs the next card from a finite shoe). Choose exactly ONE action. 
+
+(ii) Valid Actions 
+
+HIGHER LOWER 
+
+(iii) Rules                                                
+
+> -Line 1: Reason: <one short line, max 12 words>. Line 2: Action: <HIGHER|LOWER>. -No other text or markdown. -Choose HIGHER (resp. LOWER) if more remaining cards are strictly above (below) the current card. -If counts tie, use P(push) and recent streaks as tie-breakers. Follow autopilot when consistent.
+
+(iv) State + stateful augmentation                 
+
+> Decision idx: 3Win streak: 3Loss streak: 0Recent: on 3->HIGHER->WIN(4) |on 4->LOWER->WIN(A) |on A->HIGHER->WIN(9)
+
+(iv) State            
+
+> STATE Current card: 9Remaining higher: 16 Remaining lower :29 Remaining equal :2Autopilot: HIGHER
+
+(iv) State + enriched augmentation                        
+
+> Count-derived hints (current rank excluded) P(next higher |not push) =0.356 P(next lower |not push) =0.644 P(push) =0.043 Recommended from counts: LOWER (margin 13)
+
+(v) Examples                       
+
+> Card=A, many ranks above -> HIGHER Card=K, many ranks below -> LOWER Counts tie, pushes possible -> pick using push prob. and recent streaks
+
+(vi) Output Format      
+
+> Reason: <short> Action: HIGHER or LOWER
+
+A.3. DoorKey-8×8
+
+The DoorKey task extends FourRooms with a sequential subtask structure: the agent must find a key, pick it up, unlock a door, and reach the goal. The action space therefore includes PICKUP , DROP ,
+
+TOGGLE , and DONE in addition to the navigation primitives. The base State block carries a SUBTASK field 
+
+12 Juarez Monteiro et al. CEUR Workshop Proceedings 1–14 
+
+that tracks the current objective (find and pick up key → toggle locked door → reach goal), providing explicit task decomposition that the memoryless PPO policy cannot maintain internally. The enriched 
+
+block extends action previews to all seven actions and adds key and door visibility flags. 
+
+(i) Role 
+
+You are a navigation policy for a MiniGrid DoorKey task (partially observed). Choose exactly ONE action. 
+
+(ii) Valid Actions 
+
+TURN_LEFT TURN_RIGHT FORWARD PICKUP DROP TOGGLE DONE 
+
+(iii) Rules 
+
+- Output only the two lines below (no markdown). - Line 1: Reason: <one short line, max 15 words>. Line 2: Action: <one of VALID ACTIONS>. - PICKUP: only when ’k’ is directly ahead and nothing in hand. TOGGLE: only on L/D/o (L needs key). - FORWARD cannot enter ’#’ or a closed/locked door -- TOGGLE or turn first. DONE: only on G. - Follow autopilot when it matches the current subtask and previews. 
+
+(iv) State 
+
+LEGEND: A=agent k=key L=door(locked) D=door(closed) o=door(open) G=goal #=wall .=empty ?=unknown STATUS: Facing=SOUTH HasKey=NO Door=LOCKED SUBTASK: FIND AND PICK UP THE KEY (’k’) -- face it then PICKUP Autopilot: FORWARD 
+
+(iv) State + stateful augmentation 
+
+VIEW (7x7 egocentric): ### #.. ### DISCOVERED MAP (11x11): ####??????? ####??????? #####A#???? #####.#???? #######???? ########### Pos=(1,5) Step=0/640 Visits@here=1 Acts=(none) No subtask target cached --explore to discover key / door / goal. 
+
+(iv) State + enriched augmentation 
+
+Adjacent F/L/R/B: ./#/#/. Ahead chain: . # #Key visible: (none) Doors L/D/o: (none) Goal: (none) Longest ray (view): left 1 Longest ray (world): BACK 4PREVIEW TURN_LEFT->E,’#’ TURN_RIGHT->W,’#’ FORWARD->(1,6) ’.’ PICKUP->nothing TOGGLE->no door DONE->ends episode 
+
+(v) Examples 
+
+key visible (2 fwd, 1 right), no key in hand -> TURN_RIGHT facing ’k’, no key in hand -> PICKUP key in hand, facing ’L’ -> TOGGLE door open and goal 1 fwd -> FORWARD 
+
+(vi) Output Format 
+
+Reason: <short> Action: TURN_LEFT or TURN_RIGHT or FORWARD or PICKUP or DROP or TOGGLE or DONE 
+
+13
