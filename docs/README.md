@@ -6,94 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-07
-- 运行时间：2026-07-07 21:51:45 UTC
+- 最新运行日期：2026-07-08
+- 运行时间：2026-07-08 20:55:24 UTC
 - 运行状态：成功
-- 本次总论文数：24
-- 精读区：13
-- 速读区：11
+- 本次总论文数：19
+- 精读区：12
+- 速读区：7
 
 ### 今日简报（AI）
-今天精读13篇速读11篇，重点关注强化学习与AI智能体的高效协作。
-最值得看的是分级多智能体强化学习在碳感知数据中心的应用与LLM智能体测试时训练（均9.0分）。
-建议关注智能体在不确定性环境下的决策机制，如部分可观测的LLM协助和面向对象的环境建模。
-- 详情：[/202607/07/README](/202607/07/README)
+今日共推荐19篇论文（精读12篇，速读7篇），聚焦智能体强化学习与模型构建。最值得关注精读中两项9.0分工作：分层多智能体强化学习用于数据中心碳减排、任务充分世界模型的主动探索与结构化学习。建议从速读的《TRIAGE》和《STAPO》入手，探索角色型信用分配与选择性轨迹优化的前沿机制。
+- 详情：[/202607/08/README](/202607/08/README)
 
 ### 精读区论文标签
-1. [Hierarchical Multi-Agent Reinforcement Learning for Carbon-Aware AI Data Centers in Power Distribution Systems](/202607/07/2607.03324v1-hierarchical-multi-agent-reinforcement-learning-for-carbon-aware-ai-data-centers-in-power-distribution-systems)  
+1. [Hierarchical Multi-Agent Reinforcement Learning for Carbon-Aware AI Data Centers in Power Distribution Systems](/202607/08/2607.03324v2-hierarchical-multi-agent-reinforcement-learning-for-carbon-aware-ai-data-centers-in-power-distribution-systems)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：分层多智能体强化学习用于碳感知数据中心
-2. [No Time Like the Present: Agentic Test-Time Training for LLM Agents](/202607/07/2607.03441v1-no-time-like-the-present-agentic-test-time-training-for-llm-agents)  
+   evidence：层次化多智能体强化学习实现合作能源管理
+2. [Learning Task-Sufficient World Models by Synergizing Agentic Exploration and Structured Modeling](/202607/08/2607.04409v1-learning-task-sufficient-world-models-by-synergizing-agentic-exploration-and-structured-modeling)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体自我演化的自适应训练
-3. [SkillOpt-Lite: Better and Faster Agent Self-evolution via One Line of Vibe](/202607/07/2607.03451v1-skillopt-lite-better-and-faster-agent-self-evolution-via-one-line-of-vibe)  
+   evidence：协同智能体探索与结构化世界模型学习任务充分表征
+3. [Multi-Robot Open Adaptive Teaming Across Unseen Environments, Partners, and Scales](/202607/08/2607.04972v1-multi-robot-open-adaptive-teaming-across-unseen-environments-partners-and-scales)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：直接研究智能体自我进化中的技能优化问题
-4. [MUTE: Return-Preserving Communication Unlearning for Efficient Multi-Agent Coordination](/202607/07/2607.03473v1-mute-return-preserving-communication-unlearning-for-efficient-multi-agent-coordination)  
+   evidence：多机器人开放自适应团队，使用超图博弈形式化
+4. [CompactionRL: Reinforcement Learning with Context Compaction for Long-Horizon Agents](/202607/08/2607.05378v1-compactionrl-reinforcement-learning-with-context-compaction-for-long-horizon-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：研究多智能体强化学习中的通信缩减与协调问题
-5. [Agent Reinforcement Learning via Pivotal-Aware Self-Feedback Retry](/202607/07/2607.03702v1-agent-reinforcement-learning-via-pivotal-aware-self-feedback-retry)  
+   evidence：带上下文压缩的强化学习方法用于长时程智能体
+5. [Learning to Control LLM Agent Harnesses with Offline Reinforcement Learning](/202607/08/2607.05458v1-learning-to-control-llm-agent-harnesses-with-offline-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：使用自反馈重试的智能体强化学习框架
-6. [SelfMem: Self-Optimizing Memory for AI Agents](/202607/07/2607.03726v1-selfmem-self-optimizing-memory-for-ai-agents)  
+   evidence：使用优势加权回归的离线RL控制LLM代理执行框架
+6. [Memory in the Loop: In-Process Retrieval as ExtendedWorking Memory for Language Agents](/202607/08/2607.05690v1-memory-in-the-loop-in-process-retrieval-as-extendedworking-memory-for-language-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向AI智能体的自优化记忆框架
-7. [Harness-Aware Self-Evolving: Co-Evolving Model Weights, Harness, and Task Solutions](/202607/07/2607.03935v1-harness-aware-self-evolving-co-evolving-model-weights-harness-and-task-solutions)  
+   evidence：进程内记忆检索作为智能体的扩展工作记忆
+7. [From Passive Retrieval to Active Memory Navigation: Learning to Use Memory as a Structured Action Space](/202607/08/2607.05794v1-from-passive-retrieval-to-active-memory-navigation-learning-to-use-memory-as-a-structured-action-space)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：使用智能体强化学习的自进化框架
-8. [Progress- and Reliability-Oriented Group Policy Optimization for Agentic Reinforcement Learning](/202607/07/2607.04242v1-progress--and-reliability-oriented-group-policy-optimization-for-agentic-reinforcement-learning)  
+   evidence：将主动记忆导航作为结构化动作空间
+8. [StateFuse: Deterministic Conflict-Preserving Memory for Multi-Agent Systems](/202607/08/2607.05844v1-statefuse-deterministic-conflict-preserving-memory-for-multi-agent-systems)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：群组策略优化、步骤级优势估计、智能体强化学习
-9. [Regime-Conditional Stabilisation of LLM-Augmented Cooperative Multi-Agent Reinforcement Learning](/202607/07/2607.04470v1-regime-conditional-stabilisation-of-llm-augmented-cooperative-multi-agent-reinforcement-learning)  
+   evidence：基于CRDT的多智能体系统冲突保持记忆合约
+9. [Intercepting an Agile Target with Net-Carrying Drones using Competitive Multi-Agent Reinforcement Learning](/202607/08/2607.05939v1-intercepting-an-agile-target-with-net-carrying-drones-using-competitive-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：LLM增强合作多智能体强化学习的稳定化
-10. [MRMS: A Multi-Resolution Memory Substrate for Long-Lived AI Agents](/202607/07/2607.04617v1-mrms-a-multi-resolution-memory-substrate-for-long-lived-ai-agents)  
+   evidence：竞争性多智能体强化学习用于无人机拦截
+10. [Delay-Aware Active Triangulation with Uncertainty-Driven Multi-Agent Reinforcement Learning for Counter-UAS](/202607/08/2607.05957v1-delay-aware-active-triangulation-with-uncertainty-driven-multi-agent-reinforcement-learning-for-counter-uas)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：提出多分辨率记忆基底，同步结构化-向量-图记忆用于智能体
-11. [Relational Multi-Agent Reinforcement Learning for Dynamic Pricing in High-Speed Railway Markets](/202607/07/2607.05179v1-relational-multi-agent-reinforcement-learning-for-dynamic-pricing-in-high-speed-railway-markets)  
+   evidence：延迟感知的多智能体强化学习目标定位
+11. [Information Gain-based Rollout Policy Optimization: An Adaptive Tree-Structured Rollout Approach for Multi-Turn LLM Agents](/202607/08/2607.06223v1-information-gain-based-rollout-policy-optimization-an-adaptive-tree-structured-rollout-approach-for-multi-turn-llm-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：关系型多智能体强化学习用于动态定价
-12. [EvoAgentBench: Benchmarking Agent Self-Evolution via Ability Transfer](/202607/07/2607.05202v1-evoagentbench-benchmarking-agent-self-evolution-via-ability-transfer)  
+   evidence：基于信息增益的展开策略优化
+12. [Danus: Orchestrating Mathematical Reasoning Agents with Fact-Graph Memory](/202607/08/2607.06447v1-danus-orchestrating-mathematical-reasoning-agents-with-fact-graph-memory)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过能力迁移的智能体自我进化基准
-13. [MetaSkill-Evolve: Recursive Self-Improvement of LLM Agents via Two-Timescale Meta-Skill Evolution](/202607/07/2607.05297v1-metaskill-evolve-recursive-self-improvement-of-llm-agents-via-two-timescale-meta-skill-evolution)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：通过元技能进化实现LLM智能体的递归自我改进
+   evidence：事实图记忆用于编排推理智能体
 
 ### 速读区论文标签
-1. [ASK in the Dark: Uncertainty-Gated LLM Assistance under Partial Observability](/202607/07/2607.02686v1-ask-in-the-dark-uncertainty-gated-llm-assistance-under-partial-observability)  
+1. [TRIAGE: Role-Typed Credit Assignment for Agentic Reinforcement Learning](/202607/08/2606.32017v2-triage-role-typed-credit-assignment-for-agentic-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：利用小语言模型指导部分可观测环境下的强化学习智能体
-2. [Object-Centric Environment Modeling for Agentic Tasks](/202607/07/2607.02846v1-object-centric-environment-modeling-for-agentic-tasks)  
+   evidence：面向智能体强化学习的角色类型化信用分配
+2. [STAPO: Selective Trajectory-Aware Policy Optimization for LLM Agent Training](/202607/08/2607.04963v1-stapo-selective-trajectory-aware-policy-optimization-for-llm-agent-training)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：将经验组织成面向对象的环境模型以增强智能体记忆
-3. [Mask-based Predictive Representations for Reinforcement Learning](/202607/07/2607.04153v1-mask-based-predictive-representations-for-reinforcement-learning)  
+   evidence：面向LLM智能体训练的策略优化方法
+3. [EdgeBench: Unveiling Scaling Laws of Learning from Real-World Environments](/202607/08/2607.05155v1-edgebench-unveiling-scaling-laws-of-learning-from-real-world-environments)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：基于掩码预测的视觉强化学习表征方法
-4. [Spinning Straw into Gold: Relabeling LLM Agent Trajectories in Hindsight for Successful Demonstrations](/202607/07/2607.04235v1-spinning-straw-into-gold-relabeling-llm-agent-trajectories-in-hindsight-for-successful-demonstrations)  
+   evidence：环境学习的规模法则
+4. [CurateEvo: Data-Curation Evolving for Agentic Post-Training](/202607/08/2607.06140v1-curateevo-data-curation-evolving-for-agentic-post-training)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：利用后见之明监督重新标记智能体轨迹以改进学习
-5. [Ask the World Before Acting: Environment Probing for Calibrated Agent World Models](/202607/07/2606.31422v2-ask-the-world-before-acting-environment-probing-for-calibrated-agent-world-models)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：通过环境探测校准智能体世界模型
-6. [CRRL: A Causality-Based Reinforcement Learning Framework for Autonomous System Recovery](/202607/07/2607.03177v1-crrl-a-causality-based-reinforcement-learning-framework-for-autonomous-system-recovery)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：用于自主系统恢复和决策的因果引导强化学习
-7. [Multi-Turn On-Policy Distillation with Prefix Replay](/202607/07/2607.04763v1-multi-turn-on-policy-distillation-with-prefix-replay)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：用于智能体任务的在线策略蒸馏
-8. [GaP: A Graph-as-Policy Multi-Agent Self-Learning Harness For Variational Automation Tasks](/202607/07/2607.05369v1-gap-a-graph-as-policy-multi-agent-self-learning-harness-for-variational-automation-tasks)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：多智能体自学习框架用于机器人自动化
-9. [Automating the Design of Embodied Agent Architectures](/202607/07/2606.30111v2-automating-the-design-of-embodied-agent-architectures)  
+   evidence：通过动态数据策展实现智能体自演化
+5. [LLM Agents for Deliberative Collaboration: A Study on Joint Decision Making Under Partial Observability](/202607/08/2607.06157v1-llm-agents-for-deliberative-collaboration-a-study-on-joint-decision-making-under-partial-observability)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：部分可观察下LLM智能体的协商协作
+6. [Agentic-SecPBFT: Agentic AI-Driven Proactive Security Framework for Wireless PBFT Consensus in Mobile Ad-Hoc Networks](/202607/08/2607.03269v1-agentic-secpbft-agentic-ai-driven-proactive-security-framework-for-wireless-pbft-consensus-in-mobile-ad-hoc-networks)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：用类型图运行时和搜索自动设计具身智能体架构
-10. [Can Agents Generalize to the Open World? Unveiling the Fragility of Static Training in Tool Use](/202607/07/2607.01084v1-can-agents-generalize-to-the-open-world-unveiling-the-fragility-of-static-training-in-tool-use)  
+   evidence：使用层次化多智能体深度Q网络进行协作安全学习
+7. [Beyond Static Evaluation: Building Simulation Environments for Scalable Agentic Reinforcement Learning](/202607/08/2607.05773v1-beyond-static-evaluation-building-simulation-environments-for-scalable-agentic-reinforcement-learning)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：分析智能体在开放世界分布偏移下的泛化能力
-11. [SwarmResearch: Orchestrating Coding Agents for Open-Ended Discovery](/202607/07/2607.02807v1-swarmresearch-orchestrating-coding-agents-for-open-ended-discovery)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：多智能体编排协调实现开放发现
+   evidence：可扩展的智能体强化学习模拟环境
 
 
 <div class="dpr-home-promo-card">
