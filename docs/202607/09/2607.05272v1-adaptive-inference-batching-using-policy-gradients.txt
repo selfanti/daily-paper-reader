@@ -1,0 +1,146 @@
+Title: Adaptive Inference Batching using Policy Gradients
+
+URL Source: https://arxiv.org/pdf/2607.05272v1
+
+Published Time: Tue, 07 Jul 2026 03:45:54 GMT
+
+Number of Pages: 5
+
+Markdown Content:
+# Adaptive Inference Batching using Policy Gradients 
+
+Ruslan Sharifullin 
+
+Department of Computer Science Stanford University 
+
+rshar@stanford.edu 
+
+## Abstract 
+
+Machine learning inference serving systems face the challenge of balancing high throughput with low latency, especially under bursty and heterogeneous workloads. Static batching policies often fail to adapt to dynamic traffic patterns. In this work, we explore Reinforcement Learning (RL) approaches, specifically REINFORCE and Proximal Policy Optimization (PPO), for adaptive inference batching. We develop a custom discrete-event simulator validated against standard queuing models and real-world traces (Azure Functions, BurstGPT). Our extensive evaluation reveals that while simple static heuristics are surprisingly robust for standard single-GPU scenarios, RL provides significant value in multi-GPU environments. Specifically, we demonstrate that a Policy Gradient-based routing agent achieves a 3.5x performance improvement over Round-Robin scheduling by dynamically segregating heterogeneous workloads to minimize Head-of-Line blocking. This highlights the potential of RL not just for temporal batching, but for the joint optimization of request routing and batch composition in distributed inference systems. 
+
+## 1 Introduction 
+
+Inference serving is a critical component of the machine learning lifecycle, bridging the gap be-tween trained models and end-user applications. As Deep Learning models grow in size and com-plexity (e.g. Large Language Models), the com-putational cost of inference becomes a bottleneck. Batching requests improves throughput by amor-tizing fixed overheads (kernel launch, memory transfer) across multiple inputs. However, batch-ing introduces a fundamental trade-off: larger batches increase throughput but also increase la-tency for individual requests waiting in the queue. Static batching policies, such as ”wait 10ms or until 32 requests accumulate,” are the industry standard (NVIDIA Corporation, 2023). While simple to implement and robust in stable con-ditions, they are rigid and fail to adapt to dy-namic traffic patterns (Crankshaw et al., 2017; Ali et al., 2020). During periods of low traffic, a static timeout adds unnecessary latency; dur-ing high traffic bursts, a fixed batch size may un-derutilize the hardware if set too conservatively. Furthermore, in multi-model or multi-GPU envi-ronments, the complexity of scheduling increases exponentially. Heterogeneous requests (e.g., a mix of short ResNet inferences and long GPT gen-erations) can cause Head-of-Line (HoL) blocking, where fast requests are stuck behind slow ones. This project addresses the question: Can rein-forcement learning learn adaptive batching poli-cies that outperform static heuristics? We formu-late the batching problem as a Markov Decision Process (MDP) and apply Policy Gradient algo-rithms, specifically REINFORCE and PPO , to learn dynamic batch size selection and request routing . The agent observes the real-time system state (queue length, request types, and GPU avail-ability) and learns a policy that balances compet-ing objectives (throughput vs. latency) without manual tuning. 
+
+## 2 Related Work 
+
+The problem of adaptive serving has been studied from both systems and learning perspectives. 
+
+Heuristic-based Systems : Clipper (Crankshaw et al., 2017) introduced a modular serving architecture that uses an additive-increase-multiplicative-decrease (AIMD) scheme to adjust batch sizes. While effective, AIMD is a reac-tive heuristic that oscillates and may not converge to the optimal policy for complex distributions. 
+
+Triton Inference Server (NVIDIA Corporation, 
+
+> arXiv:2607.05272v1 [cs.LG] 6 Jul 2026
+
+2023) supports dynamic batching but relies on users to manually specify ”preferred batch sizes” and timeout windows, which requires extensive tuning for each new model and workload. 
+
+Continuous Batching : Recent advancements in LLM serving, such as Orca (Yu et al., 2022) and 
+
+vLLM (Kwon et al., 2023), introduced iteration-level scheduling (”continuous batching”) to miti-gate the impact of variable output lengths. While our work focuses on request-level batching, the routing policies we develop are complementary to these intra-GPU scheduling techniques. 
+
+Learning for Systems : DeepRM (Mao et al., 2016) was a pioneering work applying Deep RL to cluster resource management, visualizing the problem as a ”Tetris” game of packing tasks. 
+
+FaaSRank (Suresh et al., 2021) utilized learning-to-rank for scheduling serverless functions, opti-mizing for cold-start latency. Our work differs by focusing specifically on the micro-second scale decision of batch composition and routing in in-ference clusters, leveraging modern Policy Gra-dient methods (REINFORCE (Williams, 1992), PPO (Schulman et al., 2017)) which are well-suited for the stochastic nature of request arrivals. 
+
+## 3 Environment (Dataset and Features) 
+
+We built a custom discrete-event simulator to model the inference serving environment. This simulator serves as our ”dataset” generator, allow-ing us to test across various traffic patterns and system configurations that would be difficult to reproduce consistently on a physical cluster. 
+
+Fig. 1: Schematic of the RL Agent-Environment interaction. The agent observes state St (queue, GPU status), takes action At (batch size/routing), and receives reward Rt (throughput - latency). 
+
+3.1 Simulator Dynamics 
+
+The simulator operates on a continuous time-line, processing events such as ‘RequestArrival‘, ‘BatchCompletion‘, and ‘DecisionStep‘. • Request Model : Each request ri is character-ized by an arrival time ti, model type mi (e.g., ResNet-50, GPT-2), and input size si.• Execution Model : Inference latency is mod-eled as L(b) = α + β · b, where b is the batch size, α is the fixed overhead (e.g., kernel launch, PCI transfer), and β is the per-sample process-ing time. We profiled real NVIDIA V100 GPUs to obtain realistic parameters: α = 2 ms for all models, with β varying by model type (e.g., 5ms for ResNet, 20ms for GPT-2). • Queuing : We implement a First-In-First-Out (FIFO) queue with a configurable maximum length ( N = 100 ). If the queue is full, incom-ing requests are dropped (load shedding). • Multi-GPU Support : The simulator supports 
+
+K heterogeneous GPUs. A central dispatcher (the Agent) decides which GPU to route a batch to, or whether to wait for more requests. 
+
+3.2 Workloads 
+
+We evaluate on three distinct workload types to test the agent’s generalization capabilities: 1. Standard (Poisson) : Standard M/M/1 queue traffic with constant mean arrival rate λ = 10 
+
+req/s. This provides a baseline for stability. 2. Extreme Burst : A stress test where traffic shifts squarely between 0 and 100 req/s every 200 steps. This tests the agent’s ability to switch between ”latency-minimizing” (small batches) and ”throughput-maximizing” (large batches) modes. 3. Real-World Trace : A replay of production traffic traces from Azure Functions (Shahrad et al., 2020), characterized by diurnal patterns and unpredictable spikes. 4. Multi-GPU Routing (Heterogeneous) : A50/50 mix of ”Fast” (ResNet-50, 50ms la-tency) and ”Slow” (GPT-2, 200ms latency) requests. This scenario specifically tests the agent’s ability to handle Head-of-Line (HoL) blocking in the Multi-GPU setting. 
+
+## 4 Methods 
+
+We formulate the adaptive batching problem as a Markov Decision Process (MDP) and solve it using Policy Gradient methods. 
+
+4.1 MDP Formulation State Space : The state St ∈ R8 captures the system snapshot: • Normalized Queue Length: Qt/Q max .• Time since last batch: (t − tlast )/T window .• Current Request Type: One-hot encoding of the request at the head of the queue (Memory-bound vs Compute-bound). 2• GPU Status: Binary vector indicating if each GPU is currently busy. 
+
+Action Space :• Single GPU : Discrete batch size selection at ∈{0, 1, . . . , 32 }. Action 0 implies ”Wait”. • Multi-GPU : Joint routing and batching at ∈{0, . . . , 64 }. Actions select a specific (GPU, BatchSize) pair, optimizing both decisions si-multaneously. 
+
+Reward Function : We designed a composite reward to balance throughput and Service Level Agreements (SLAs). 
+
+Rt = Throughput t − X
+
+> r∈Batch
+
+wr · Latency r
+
+In the heterogeneous scenario, we use wf ast =200 .0 and wslow = 20 .0. This heavy penalty for delaying ”Fast” requests encourages the agent to prioritize them or segregate them from ”Slow” requests to avoid HoL blocking. 
+
+4.2 Policy Network Architecture 
+
+We use a neural network to approximate the stochastic policy πθ (a|s). The architecture: 1. Input Projection : A linear layer mapping the 8-dim. state to a 4-dim. embedding. 2. Multi-Head Attention : A self-attention layer (2 heads, embed dim=4) to capture dependen-cies between state features. We found that at-tention was particularly useful for correlating queue depth with GPU availability, allowing the agent to learn ”if queue is high AND GPU is free, dispatch immediately.” 3. Policy Head : A Multi-Layer Perceptron (MLP) with one hidden layer (64 units, GELU activation) outputting logits for the categorical action distribution. 4. Value Head : A separate MLP estimating the state-value function V (s) for baseline subtrac-tion in REINFORCE. 
+
+4.3 Algorithms 
+
+We compare two Policy Gradient algorithms: • REINFORCE : The standard Monte-Carlo pol-icy gradient. Discount factor γ = 0 .95 , update the policy at the end of each 1000-step episode. • PPO : Proximal Policy Optimization, which uses a clipped surrogate objective ( ϵ = 0 .2)to allow for multiple update epochs per batch of experience. We found that REINFORCE with a learned base-line often converged faster, likely due to the rel-atively short horizon and dense reward signal. PPO, while more stable, required more hyperpa-rameter tuning for the clipping range and entropy coefficient. 
+
+## 5 Experiments, Results, Discussion 
+
+5.1 Experimental Setup 
+
+All agents are implemented in PyTorch. We train for 2000 episodes, with each episode consisting of 1000 simulation steps. • Baselines :
+
+– Static-8 : A fixed batch size of 8 (tuned via grid search). 
+
+– Random : Randomly routes requests to avail-able GPUs. 
+
+– Round-Robin : Cyclically assigns requests (GPU 0 → GPU 1). 
+
+– Shortest-Queue (SQ) : Assigns to the GPU with fewer pending requests. • Evaluation : We report the average cumulative reward over 20 evaluation episodes with fixed random seeds distinct from training. 
+
+5.2 Results Single-GPU Results : In standard scenarios, RL matched but did not significantly outperform op-timized static batching. This is expected for Pois-son arrival processes, where static thresholds are known to be near-optimal policies. The reward landscape is dominated by throughput, making static batching a strong local optimum. Note the flat curves for single-GPU scenarios where the agent quickly converges to the static baseline, ver-sus the rising curve in the Multi-GPU scenario. Scenario Static Baseline REINFORCE Agent Improvement Standard (Single GPU) 254.03 254.30 +0.1% Extreme Burst 329.91 333.26 +1.0% Real-World Trace 86.89 87.11 +0.2%    
+
+> Multi-GPU Routing 203.23 910.52 +348.0%
+
+Table 1: Performance comparison (Reward) across different scenarios. 
+
+Fig. 2: Training progress (Reward vs Episode) across four scenarios. RL struggles to improve in single-GPU cases but learns effectively in the Multi-GPU Routing task. 3Multi-GPU Results : In the heterogeneous rout-ing scenario, the RL agent demonstrated a mas-sive advantage. Figure 3 shows the performance comparison against three baselines: • Random : Blindly assigns requests (Return: 105.5). • Round-Robin : Assigns cyclically (Return: 203.2). • Shortest-Queue (SQ) : Assigns to the shortest queue (Return: 612.8). 
+
+Fig. 3: Performance comparison in Multi-GPU Routing. RL outperforms even the strong Shortest-Queue heuristic by 48% by learning to segregate request types. While SQ improves over Round-Robin by bal-ancing load counts, it fails to account for request heterogeneity (Fast vs Slow). The REINFORCE agent (Return: 910.5) learns to segregate work-loads , routing fast requests to one GPU and slow requests to another, eliminating Head-of-Line blocking. 
+
+Fig. 4: Learning curve of the REINFORCE agent. Dashed lines indicate baseline performance. To understand the training dynamics, we an-alyze the learning curve of the REINFORCE agent in the multi-GPU scenario (Fig. 4). The agent begins with performance comparable to the Round-Robin baseline but rapidly improves within the first 100 episodes, eventually surpass-ing the Shortest-Queue heuristic. This rapid con-vergence suggests that the reward signal is dense enough for the agent to quickly identify the ”seg-regation” strategy, effectively learning to classify requests by their computational cost. Finally, we evaluate the Latency-Throughput tradeoff (Fig. 5). The REINFORCE agent achieves 60% higher throughput than Shortest-Queue (17.98 vs 11.18 req/s) while maintaining 25% lower latency than Round-Robin (2.59s vs 3.46s). The red dashed line marks the SLA thresh-old (3.0s). Round-Robin violates this threshold despite higher throughput (22.42 req/s). The RL agent finds the ”Sweet Spot”, maximizing throughput within SLA constraints while avoid-ing congestion. 
+
+Fig. 5: Latency-Throughput tradeoff with SLA line (3.0s). RL balances throughput and latency, stopping before congestion. 
+
+5.3 Discussion 
+
+Our experiments reveal several key insights into the application of RL for systems. 
+
+Reward Shaping and SLA Compliance : The choice of weights wf ast and wslow in the reward function was critical. We observed that setting equal weights led the agent to treat all requests interchangeably, resulting in a policy similar to Shortest-Queue. By heavily penalizing latency for ”Fast” requests ( wf ast = 200 .0), we explic-itly encoded the SLA requirement into the opti-mization objective. This demonstrates that RL agents in systems contexts often require domain-specific reward shaping to discover non-trivial policies. 
+
+Generalization to Unseen Traces : A major con-cern with RL is overfitting to the training dis-tribution. We trained our agent on a synthetic Poisson process but evaluated it on the ”Extreme Burst” and ”Real-World Trace” scenarios. The results (Table 1) show that the policy generalized well, maintaining performance parity with static 4baselines even on out-of-distribution traffic. This suggests that the learned policy relies on imme-diate state features (queue length, GPU status) rather than memorizing arrival patterns. 
+
+Impact of Attention Mechanism : Ablation stud-ies (not shown for brevity) indicated that the Multi-Head Attention layer improved conver-gence speed by approximately 20% compared to a simple MLP. The attention mechanism likely helps the agent focus on the most relevant parts of the state space, for instance, ignoring the queue length when all GPUs are busy, or focusing in-tensely on the head-of-line request type when a routing decision must be made. 
+
+5.4 Limitations 
+
+While our results are promising, there are limita-tions. First, our simulator assumes deterministic execution times for a given batch size, whereas real GPUs exhibit variance due to thermal throt-tling and background processes. Second, we fo-cused on discrete batch sizes, but modern systems like vLLM use continuous batching (iteration-level scheduling). Extending our action space to support continuous batching would require a more complex policy network. Finally, we as-sumed zero network latency for the dispatcher; in a real distributed cluster, the communication overhead of the central agent could become a bottleneck. 
+
+## 6 Conclusion and Future Work 
+
+We investigated the application of Policy Gra-dients to adaptive inference batching. While single-GPU temporal batching is well-served by static heuristics, we found that RL shines in the complex combinatorial problem of Multi-GPU Load Balancing . By jointly optimizing routing and batch composition, our REINFORCE agent demonstrated a 348% improvement (which is 3.5x performance improvement) over standard scheduling techniques. Future work should explore integrating this rout-ing policy with continuous batching mecha-nisms (e.g., Orca, vLLM) used in modern LLM serving systems. Additionally, deploying the RL agent on a real cluster with network latency would validate its robustness to distributed system noise. Investigating offline RL could also allow for safer policy updates in production environments with-out the need for online exploration. 
+
+## 7 Contributions 
+
+Ruslan Sharifullin implemented the simulator, the RL agents (REINFORCE, PPO), and conducted all experiments. 
+
+## References 
+
+Ahsan Ali, Riccardo Pinciroli, Feng Yan, and Evgenia Smirni. Batch: Machine learning inference serving on serverless platforms with adaptive batching. In 
+
+SC20: International Conference for High Perfor-mance Computing, Networking, Storage and Analy-sis , pages 1–15. IEEE, 2020. Daniel Crankshaw, Xin Wang, Guilio Zhou, Michael J Franklin, Joseph E Gonzalez, and Ion Stoica. Clip-per: A low-latency online prediction serving system. In 14th USENIX Symposium on Networked Systems Design and Implementation (NSDI 17) , pages 613– 627, 2017. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th Symposium on Operating Systems Principles , pages 611–626, 2023. Hongzi Mao, Mohammad Alizadeh, Ishai Menache, and Srikanth Kandula. Resource management with deep reinforcement learning. In Proceedings of the 15th ACM Workshop on Hot Topics in Networks ,pages 50–56, 2016. NVIDIA Corporation. Dynamic batching in triton inference server. https://docs.nvidia.com/ deeplearning/triton-inference-server/ ,2023. John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Mohammad Shahrad, Rodrigo Fonseca, ´I ˜nigo Goiri, Gohar Chaudhry, Paul Batum, Jason Cooke, Ed-uardo Laureano, Colby Tresness, Mark Russinovich, and Ricardo Bianchini. Serverless in the wild: Char-acterizing and optimizing the serverless workload at a large cloud provider. In 2020 USENIX Annual Technical Conference (USENIX ATC 20) , pages 205– 218, 2020. Amoghavarsha Suresh, Gagan Soumya, Animesh Kapil, Sriram Kaler, and Anshul Gandhi. Faasrank: Learning to schedule functions in serverless plat-forms. In 2021 IEEE International Conference on Autonomic Computing and Self-Organizing Systems (ACSOS) , pages 41–50. IEEE, 2021. Ronald J Williams. Simple statistical gradient-following algorithms for connectionist reinforce-ment learning. Machine learning , 8(3):229–256, 1992. Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soo-jeong Kim, and Byung-Gon Chun. Orca: A dis-tributed serving system for transformer-based gener-ative models. 16th USENIX Symposium on Operat-ing Systems Design and Implementation (OSDI 22) ,pages 521–538, 2022. 
+
+5
