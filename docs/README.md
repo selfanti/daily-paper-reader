@@ -6,85 +6,64 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-11
-- 运行时间：2026-07-11 21:19:48 UTC
+- 最新运行日期：2026-07-12
+- 运行时间：2026-07-12 20:56:42 UTC
 - 运行状态：成功
-- 本次总论文数：21
-- 精读区：10
+- 本次总论文数：14
+- 精读区：3
 - 速读区：11
 
 ### 今日简报（AI）
-1) 今日共处理21篇论文，精读10篇，速读11篇，重点聚焦具身智能与终身学习代理系统。  
-2) 精读阶段最高分9.0的两篇论文——《PLACEMEM》提出计算感知记忆平面，《ACE-Brain-0.5》构建统一具身基础模型，是本周最值得深挖的方向。  
-3) 建议优先阅读《PLACEMEM》与《ACE-Brain-0.5》的全文，并速读《Self-Reference in Large Language Models》了解递归自我改进机制。
-- 详情：[/202607/11/README](/202607/11/README)
+今日精选14篇论文，精读聚焦LLM智能体记忆安全与扩散策略优化两大焦点。  
+最值得看的两篇8分工作：智能体记忆的伪造推理攻击及防御、不确定性感知的延迟策略优化，均具启发性。  
+建议优先深入理解智能体安全漏洞，再速读约束感知的LLM规划与多机器人操作框架。
+- 详情：[/202607/12/README](/202607/12/README)
 
 ### 精读区论文标签
-1. [PLACEMEM: Toward a Compute-Aware Memory Plane for Lifelong Agents](/202607/11/2607.04089v1-placemem-toward-a-compute-aware-memory-plane-for-lifelong-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：提出PLACEMEM，一种面向终身智能体的计算感知记忆平面，使用版本化胶囊
-2. [ACE-Brain-0.5: A Unified Embodied Foundational Model for Physical Agentic AI](/202607/11/2607.04426v1-ace-brain-05-a-unified-embodied-foundational-model-for-physical-agentic-ai)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：自我改进与经验学习
-3. [Akashic: A Low-Overhead LLM Inference Service with MemAttention](/202607/11/2607.05708v1-akashic-a-low-overhead-llm-inference-service-with-memattention)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向LLM智能体的低开销记忆系统
-4. [DeepSearch-World: Self-Distillation for Deep Search Agents in a Verifiable Environment](/202607/11/2607.07820v1-deepsearch-world-self-distillation-for-deep-search-agents-in-a-verifiable-environment)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：DeepSearch-Evolve通过自蒸馏使网络智能体从自身轨迹中不断改进
-5. [Feedback Manipulation Regularization: Enabling Offline Agent Alignment for Imitation Learning](/202607/11/2607.07859v1-feedback-manipulation-regularization-enabling-offline-agent-alignment-for-imitation-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：用于序列决策中智能体对齐的离线强化学习
-6. [Tool-Making and Self-Evolving LLM Agents in Low-Latency Systems](/202607/11/2607.08010v1-tool-making-and-self-evolving-llm-agents-in-low-latency-systems)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：通过工具制造管道实现智能体自我进化
-7. [What to Keep, What to Forget: A Rate--Distortion View of Memory Compaction in LLMs and Agents](/202607/11/2607.08032v1-what-to-keep-what-to-forget-a-rate--distortion-view-of-memory-compaction-in-llms-and-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：大语言模型和智能体的记忆压缩技术
-8. [Open-ended Multi-agent Autocurricula via Visual Inspection of Policies with Multi-modal LLMs](/202607/11/2607.08193v1-open-ended-multi-agent-autocurricula-via-visual-inspection-of-policies-with-multi-modal-llms)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：通过多模态大模型视觉检测策略实现多智能体自动课程学习
-9. [Cognitive-structured Multimodal Agent for Multimodal Understanding, Generation, and Editing](/202607/11/2607.08497v1-cognitive-structured-multimodal-agent-for-multimodal-understanding-generation-and-editing)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：具有情景视觉记忆的认知结构多模态智能体
-10. [Remember When It Matters: Proactive Memory Agent for Long-Horizon Agents](/202607/11/2607.08716v1-remember-when-it-matters-proactive-memory-agent-for-long-horizon-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向长周期任务的主动记忆代理，具有结构化记忆库和基于记忆的提醒
+1. [Your Agent's Memories Are Not Its Own: Forged Reasoning Attacks on LLM Agent Memory and Defenses](/202607/12/2607.05029v1-your-agents-memories-are-not-its-own-forged-reasoning-attacks-on-llm-agent-memory-and-defenses)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：针对大语言模型智能体持久记忆的攻击与防御
+2. [Diffusion-Guided Uncertainty-Aware Delayed Policy Optimization](/202607/12/2607.05064v1-diffusion-guided-uncertainty-aware-delayed-policy-optimization)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：利用扩散模型处理延迟反馈的策略优化
+3. [Multi-Modal, Multi-Environment Machine Teaching for Robust Reward Learning](/202607/12/2607.08647v1-multi-modal-multi-environment-machine-teaching-for-robust-reward-learning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：面向自主智能体的跨环境鲁棒逆强化学习
 
 ### 速读区论文标签
-1. [Self-Reference in Large Language Models: The Introspection Threshold for Recursive Self-Improvement](/202607/11/2607.04277v1-self-reference-in-large-language-models-the-introspection-threshold-for-recursive-self-improvement)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：大型语言模型中递归自我改进的理论框架
-2. [Multi-Agent Robotic Control with Onboard Vision-Language Models](/202607/11/2607.07403v1-multi-agent-robotic-control-with-onboard-vision-language-models)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：基于机载VLM的多智能体机器人协同控制
-3. [Provably Optimal Learning Algorithms for Assistance Games](/202607/11/2607.08012v1-provably-optimal-learning-algorithms-for-assistance-games)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：辅助博弈中的多智能体合作与可证明遗憾界
-4. [Harness VLA: Steering Frozen VLAs into Reliable Manipulation Primitives via Memory-Guided Agents](/202607/11/2607.08448v1-harness-vla-steering-frozen-vlas-into-reliable-manipulation-primitives-via-memory-guided-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：基于记忆增强的智能体操作框架
-5. [Entropy Regularization Improves Policy Robustness in Continuous-Time Reinforcement Learning](/202607/11/2607.03168v1-entropy-regularization-improves-policy-robustness-in-continuous-time-reinforcement-learning)  
+1. [CARL: Constraint-Aware Reinforcement Learning for Planning with LLMs](/202607/12/2607.04854v1-carl-constraint-aware-reinforcement-learning-for-planning-with-llms)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：熵正则化强化学习鲁棒性的理论保证，与策略梯度方法相关
-6. [Autonomous Information Seeking: A Roadmap for Agentic Recommender Systems](/202607/11/2607.04433v1-autonomous-information-seeking-a-roadmap-for-agentic-recommender-systems)  
+   evidence：面向LLM规划的约束感知强化学习
+2. [UP: Unbounded Positive Asymmetric Optimization for Breaking the Exploration-Stability Dilemma](/202607/12/2607.06987v1-up-unbounded-positive-asymmetric-optimization-for-breaking-the-exploration-stability-dilemma)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：推荐系统中的自主智能体决策
-7. [TurnOPD: Making On-Policy Distillation Turn-Aware for Efficient Long-Horizon Agent Training](/202607/11/2607.05804v1-turnopd-making-on-policy-distillation-turn-aware-for-efficient-long-horizon-agent-training)  
+   evidence：无界正不对称优化解决RL探索-稳定性困境
+3. [A Closed-Loop Multi-Agent Framework for Robust Multi-Robot Manipulation](/202607/12/2607.06990v1-a-closed-loop-multi-agent-framework-for-robust-multi-robot-manipulation)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：长时域智能体训练的在线策略蒸馏
-8. [Collaborative Multi-Agent Testing for Emergent Failure Discovery in Autonomous Driving Systems](/202607/11/2607.06078v1-collaborative-multi-agent-testing-for-emergent-failure-discovery-in-autonomous-driving-systems)  
+   evidence：闭环多智能体框架用于鲁棒的多机器人操作
+4. [Think Big, Search Small: Where Capacity Matters in Hierarchical Search Agents?](/202607/12/2607.07548v1-think-big-search-small-where-capacity-matters-in-hierarchical-search-agents)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：协作式多智能体测试框架
-9. [AgentGym2: Benchmarking Large Language Model Agents in De-Idealized Real-World Environments](/202607/11/2607.05174v1-agentgym2-benchmarking-large-language-model-agents-in-de-idealized-real-world-environments)  
+   evidence：多智能体搜索架构，角色分工与容量分配
+5. [Collective Intelligence with Foundation Models](/202607/12/2607.07729v1-collective-intelligence-with-foundation-models)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：基于基础模型的多智能体协作推理框架
+6. [Securing Autonomous Vehicle Systems via Twin-Aware Federated Reinforcement Learning](/202607/12/2607.08137v1-securing-autonomous-vehicle-systems-via-twin-aware-federated-reinforcement-learning)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：面向自动驾驶安全的联邦强化学习
+7. [Agentic IoT: Architectures, Applications, and Challenges Toward the Internet of Agents](/202607/12/2607.04219v1-agentic-iot-architectures-applications-and-challenges-toward-the-internet-of-agents)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：面向LLM智能体在真实环境中决策的基准
-10. [Dynamics and Convergences for Markov Coevolutionary Opinion Formation Games in Dynamic Social Networks](/202607/11/2607.05580v1-dynamics-and-convergences-for-markov-coevolutionary-opinion-formation-games-in-dynamic-social-networks)  
+   evidence：将AI智能体与网络物理系统整合的Agentic IoT范式
+8. [Biological Motifs for Agentic Control](/202607/12/2607.04240v1-biological-motifs-for-agentic-control)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：分析多智能体强化学习在共演化博弈中的收敛性
-11. [Collective Cognition in Hybrid Groups: A Network Science Synthesis](/202607/11/2607.05593v1-collective-cognition-in-hybrid-groups-a-network-science-synthesis)  
+   evidence：利用生物控制基序设计自主智能体控制
+9. [A toy framework for single and multi-agent human-AI curiosity ecosystems](/202607/12/2607.06214v1-a-toy-framework-for-single-and-multi-agent-human-ai-curiosity-ecosystems)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：综合多智能体系统与注意力、记忆、推理
+   evidence：多智能体好奇心生态框架
+10. [Task Decomposition-Guided Reranking for Adaptive Agent Skill Retrieval](/202607/12/2607.06283v1-task-decomposition-guided-reranking-for-adaptive-agent-skill-retrieval)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：基于任务分解的自适应智能体技能检索
+11. [An Experimental Design Approach to Evaluating Agentic AI's Autonomous Model Discovery](/202607/12/2607.06413v1-an-experimental-design-approach-to-evaluating-agentic-ais-autonomous-model-discovery)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：评估LLM编码智能体的自主适应行为
 
 
 <div class="dpr-home-promo-card">
