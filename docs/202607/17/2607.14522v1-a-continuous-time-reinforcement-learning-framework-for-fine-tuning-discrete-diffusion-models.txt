@@ -1,0 +1,2919 @@
+Title: A Continuous-Time Reinforcement Learning Framework for Fine-Tuning Discrete Diffusion Models
+
+URL Source: https://arxiv.org/pdf/2607.14522v1
+
+Published Time: Fri, 17 Jul 2026 00:47:59 GMT
+
+Number of Pages: 36
+
+Markdown Content:
+# A Continuous-Time Reinforcement Learning Framework for Fine-Tuning Discrete Diffusion Models 
+
+Zikun Zhang ∗ Jiayuan Sheng ∗ David D. Yao ∗ Wenpin Tang ∗
+
+Abstract 
+
+We formulate reinforcement learning (RL) in continuous time with discrete state spaces and possibly arbitrary action spaces via a stochastic control approach, where the state dynamics are modeled as a controlled continuous-time Markov chain (CTMC). We consider policy optimization problems and derive the corresponding policy gradient methods, leading to continuous-time variants of proximal policy optimization (PPO) and group relative policy optimization (GRPO). As a primary application, we develop a complete continuous-time RL framework for fine-tuning score-based discrete diffusion models. The proposed framework enables reward-driven optimization without requiring differentiability on the reward signals. In contrast to the existing GRPO-based approaches that only rely on terminal rewards, our formulation allows intermediate reward or advantage signals to be incorporated throughout the denoising trajectory. Importantly, when specialized to masked diffusion models (MDMs), our framework encompasses a rich class of policy parameterizations over the vocabulary simplex with analytically tractable probability ratios, providing a unified perspective on exploration and policy optimization in MDMs. For masked diffusion large language models (dLLMs), we further propose trajectory subsampling techniques to efficiently estimate computationally prohibitive trajectory likelihoods, reducing the computational cost of computing per-position probability ratios. We showcase the effectiveness of our methods on both low-dimensional entropy-regularized optimization problems and RL post-training of dLLMs on mathematical reasoning and coding tasks. 
+
+# 1 Introduction 
+
+Score-based diffusion models, which was originally designed for image generation in continuous space (Ho et al., 2020; Song et al., 2021), have recently emerged as a powerful paradigm for discrete data generation in the context of LLMs (Austin et al., 2021; Campbell et al., 2022; Sun et al., 2023; Lou et al., 2024). For discrete diffusion models with the forward process formulated by a continuous-time Markov chain (CTMC), one learns the discrete score function (Lou et al., 2024; Meng et al., 2022; Benton et al., 2024), i.e., the probability ratio of the forward marginals, to generate the reverse process. A notable example is masked diffusion models (Shi et al., 2024; Sahoo et al., 2024) that corrupt data into fully masked sequences and train a denoiser to predict the clean data from the masked tokens. As was shown by Shi et al. (2024), the score function reduces to the denoiser probability vector on the vocabulary space for masked positions, making the model formulation, training, and inference much simpler by directly predicting the clean data at each denoising step ( x0-prediction). This simplified structure gains dominant popularity, and further enhances the rapid development of mask-based diffusion large language models (Nie et al., 2026b; 
+
+> ∗
+
+Department of Industrial Engineering and Operations Research, Columbia University, New York, NY 10027. Emails: zz3367@columbia.edu , js6646@columbia.edu , yao@columbia.edu , wt2319@columbia.edu .
+
+1arXiv:2607.14522v1 [cs.LG] 16 Jul 2026 Ye et al., 2025; Khanna et al., 2025; Liu et al., 2025; Cheng et al., 2025; Zhu et al., 2026; Nie et al., 2026a). DLLMs mark a promising generative modeling paradigm for text generation because they enable more flexible parallel and any-order token decoding, in contrast to the traditional left-to-right sequence decoding in autoregressive large language models (ARMs). Fine-tuning discrete diffusion models via reinforcement learning (RL) is challenging because sampling from the discrete categorical distribution is non-differentiable, so standard gradient methods are not applicable. Specific to language models, the ARM fine-tuning process is naturally constructed as a Markov Decision Process (MDP) thanks to the left-to-right decoding, in which the action is to predict the next token with the state being the current decoded sequence, leading to a factorized policy likelihood by the chain rule. However, it is difficult to scale and enhance the reasoning capabilities of dLLMs by online RL that has been well-developed in ARM post-training, because of the intractable likelihood of the generated sequences in any-order decoding. Recent methods, e.g., d1 (Zhao et al., 2025c), UniGRPO (Yang et al., 2026), wd1 (Tang et al., 2026), SPG (Wang et al., 2026b), and d2 (Wang et al., 2026c), focused on estimating the trajectory log-likelihood, either by heuristic estimators lacking a clear probabilistic interpretation or by tractable evidence lower and upper bounds. While these approaches have achieved promising empirical performance, they often suffer from coarse likelihood approximations and limited control over the estimation errors. More fundamentally, existing GRPO methods are not grounded in a unified MDP formulation, leaving the connection between iterative diffusion denoising for rollout generation and RL policy optimization largely heuristic and inconsistent. Moreover, most GRPO-based algorithms rely on reward signals only at the final completion, resulting in coarse credit assignment for the intermediate token-unmask decisions that shape the generation process. Although a recent work (Oba et al., 2026) introduced branching-based resampling at selected intermediate steps to provide intermediate feedback, the rewards are still being derived from the terminal evaluation, and are potentially computation-expensive due to branching. The purpose of this work is to tackle the aforementioned issues by developing an RL framework for CTMC models, which enables us to propose a principled approach for fine-tuning any score-based discrete diffusion model via continuous-time reinforcement learning (CTRL). To see the motivation, Zhao et al. (2024, 2025a) and Gao et al. (2025) first proposed to fine-tune diffusion models in continuous spaces via CTRL. In that setting, the score function is the only unknown component in the generative process, so one can treat it as a control/action/policy, and hence, the reverse process is a state-controlled stochastic differential equation (SDE). Then a score-related stochastic policy is designed for exploration, and the corresponding policy gradient and estimation can be obtained by the well-developed stochastic control and RL theory in continuous time and space (Wang et al., 2020; Jia and Zhou, 2022a,b, 2023; Zhao et al., 2023, 2026; Tang and Zhou, 2024). Since the state dynamics of diffusion models are inherently formulated as continuous-time processes (either SDEs or CTMCs), fine-tuning them via CRTL is a natural choice, which not only exhibits robustness to time discretization (Zhao et al., 2025a), but also allows us to carry out all clean theoretical derivations in continuous time, while retain great flexibility for discretizing the continuous-time processes at the final algorithmic stage. However, RL in continuous time and discrete spaces has yet been developed, and it remains unclear whether controlled-based RL fine-tuning carries over to discrete diffusion models. In this work, we address these problems affirmatively by formulating a CTRL framework for discrete state spaces with potentially arbitrary action spaces. On one hand, this framework opens a new gate for research at the intersection of control theory and RL in discrete spaces, where policy evaluation, policy gradient theory, and practical algorithms remain underexplored. On the other hand, we demonstrate its 2application to fine-tuning discrete diffusion models by treating the denoiser probability vector as the action, which offers flexibility for policy parameterization design. This perspective naturally induces a controlled CTMC that explores the output distribution of the denoiser, and yields a clean analytical expression for the policy log-likelihood. Consequently, it bridges the gap between autoregressive-style policy optimization objectives and diffusion-based generative modeling, providing a principled RL framework for fine-tuning discrete diffusion models. 
+
+1.1 Contributions 
+
+1. RL theory and algorithms . We first formally propose a CTRL framework in discrete spaces, which to our best knowledge, is novel. Analogous to classical stochastic control and RL in continuous time and space (Wang et al., 2020; Jia and Zhou, 2023; Zhao et al., 2023), we define controlled CTMC state dynamics and the (optimal) value function, and derive the corresponding analytical forms of Hamilton-Jacobi-Bellman (HJB) equation, optimal control, instantaneous advantage rate ( q-function), and policy gradient. By utilizing these, we propose PPO and GRPO algorithms for general CTRL in discrete spaces. 2. Fine-tuning discrete diffusion models . Inspired by the works (Zhao et al., 2025a; Gao et al., 2025), we view the sampling process of discrete diffusion models as a stochastic control problem, where the discrete score function is viewed as the control/action/policy. So the problem of fine-tuning discrete diffusion models naturally fits into the CTRL in discrete spaces, thereby solving it via the aforementioned RL algorithms. To this end, we propose several policy parameterization methods (Dirichlet policy, temperature softmax policy, and logistic normal policy), and derive the corresponding policy probability ratios. Our framework is flexible with any predefined process reward models that assign credits to intermediate partially denoised states. We also adopt trajectory subsampling to reduce the number of forward passes during training. 3. Experiments . We conduct experiments on both low-dimensional synthetic data (So et al., 2026), and LLaDA (Nie et al., 2026b), an open-sourced 8B dLLM, for reasoning and coding tasks. For the low-dimensional synthetic example, we illustrate that the PPO algorithm outperforms its alternatives (d1 (Zhao et al., 2025c) and DAM (So et al., 2026)) in both generation performance and convergence. For LLaDA experiments, we train our CTRL on the GRPO algorithms, demonstrating strong effectiveness in both mathematical reasoning tasks (Sudoku, GSM8K and MATH500), and coding tasks (HumanEval and MBPP) compared to the state of the arts algorithms – d1 (Zhao et al., 2025c), d2 (Wang et al., 2026c) and SPG (Wang et al., 2026b). For instance, we achieve 88 .2% accuracy on Sudoku with 0-shot prompting training. 
+
+1.2 Related Works 
+
+Continuous-Time RL for Fine-Tuning Diffusion Models. Zhao et al. (2024, 2025a) intro-duced a continuous-time RL pipeline to fine-tune continuous diffusion models, where the action is parameterized by Gaussian with mean as the score network, and proposed an actor-critic type PPO algorithm by leveraging q-function. Gao et al. (2025) used a similar idea but enabled pretraining a diffusion model without knowing any prior of score function or learning the score. They theoreti-cally proved that the optimal control is Gaussian distribution, and developed an actor–critic type 
+
+q-learning algorithm to solve the continuous-time RL problem. 
+
+Fine-Tuning Discrete Diffusion Models via RL. In the early stage, policy gradient methods for fine-tuning score-based discrete diffusion models were proposed to tackle the non-differentiability of categorical distribution inherent in discrete diffusion model sampling or non-differentiability of 3reward models when maximizing the entropy-regularized reward objective. DRAKES (Wang et al., 2025) made the originally non-differentiable trajectories differentiable using the Gumbel-Softmax trick for the general CTMC-based discrete diffusion models, but the reward function is required to be differentiable. Similar to our work, they also derived the optimal value function and HJB equation specified to CTMC-based diffusion model dynamics, while our derivation is for the more general controlled CTMC diffusion processes. Score Entropy Policy Optimization (Zekri and Boullé, 2026) fine-tuned general discrete diffusion models over non-differentiable rewards by deriving importance sampling gradient. Later, the rising of mask-based dLLMs (Nie et al., 2026b; Ye et al., 2025) drived a line of work focusing on enhancing their reasoning abilities via RL post-training. Due to fundamental modeling differences between the auto-regressive and diffusion generative paradigms for LLMs, dLLMs enable parallel or any-order decoding at the cost of intractable or computationally prohibitive trajectory likelihood. D1 (Zhao et al., 2025c) was the first to scale the reasoning ability of dLLMs with GRPO by using mean-field approximation to estimate the intractable policy log probability in a single forward pass. SPG (Wang et al., 2026b) utilized the advantage-weighted GRPO framework and estimated the log likelihood by sandwiching its evidence lower bound (ELBO) and deriving an evidence upper bound (EUBO), where the evidence bounds are estimated via Monte Carlo sampling so multiple forward passes are needed. WD1 (Tang et al., 2026) adopted the probability ratio estimation from d1 but integrated the estimation of the old and reference policy log likelihoods into an exponential-weighted objective. UniGRPO (Yang et al., 2026) estimated the log likelihoods via either a one-step unmasking from d1 or Monte Carlo estimation using the ELBO. DIFFPO (Zhao et al., 2025b) proposed a two-times mean-field approximation by conditioning on one additional latent at a randomly sampled timestep at each optimization step, yielding a better surrogate policy and a loss contained two importance sampling probability ratios. D2 (Wang et al., 2026c) approximated trajectory likelihood by products of tractable factors over blocks, reducing the number of forward passes from the number of denoising steps to the number of blocks. ESPO (Ou et al., 2026) modeled entire-sequence generation as a single action and uses the ELBO as a tractable approximation to the sequence-level likelihood. LFPO (Wei et al., 2026) overcame the likelihood intractability by directly optimizing denoising logits via contrastive positive/negative trajectories with significantly faster inference. In order to exploit the information of intermediate sequence, DISPO (Oba et al., 2026) proposed to branch from an intermediate sequence by resampling the currently masked positions from rollout-cached logits, scores the resulting completions by the reward model, and updates only the newly filled tokens. TraceRL (Wang et al., 2026d) introduced a diffusion-based value model that enhances training stability and accommodates the process rewards, providing stronger reward supervision. DTRPO (Zhang et al., 2026) adapted direct policy optimization (DPO) (Rafailov et al., 2023) to dLLM policy optimization and proposed to estimate the trajectory log likelihood by leveraging subsampling denoising time steps and block-attention mask. Although this estimator can be implemented in a single forward pass, dTRPO is an offline RL method via constructed preference set; estimating the trajectory likelihood in online RL methods like GRPO in a single forward pass is still challenging. LLaDOU (Huang et al., 2026) defined action at each step to be first determine the set of tokens to unmask and second predict the values of these tokens to obtain the next-time sequence, where some score is predicted to rank masked tokens under the current state, which can be viewed as a specific action policy in our framework. Although JustGRPO (Ni et al., 2026) indicated that any-order generation during RL training may limit the reasoning capabilities of dLLMs, we still focus on maintaining consistency between rollout generation and policy optimization to align with the continuous-time RL dynamics, as our fine-tuning framework is designed to be general rather than specific to dLLMs. 
+
+Organization of the paper : The remainder of the paper is organized as follows. In Section 2, we 4formulate a general RL framework in continuous time and discrete spaces. Section 3 focuses on the application to fine-tuning discrete diffusion models, with the special case of masked diffusion models discussed in Section 4. We report the experimental results in Section 5. Concluding remarks are provided in Section 6. 
+
+# 2 An RL Framework in Continuous Time and Discrete Spaces 
+
+2.1 Model Formulation 
+
+We formulate CTRL for CTMCs with discrete state spaces. Let S be a discrete state space, and 
+
+A be an action space. With an abuse of notation, for continuous-time dynamics (and theoretical development), t ∈ [0 , T ] where T ∈ R+ is a finite time horizon; while in the final algorithmic stage where the continuous time range is discretized, t ∈ [T ] denotes the time step with T ∈ N+ being the number of time discretization steps. We first introduce a controlled transition-rate map R : [0 , T ] × S × A → R|S| , such that for each fixed (t, x, a ) ∈ [0 , T ] × S × A , it holds that 
+
+R(t, x, a )y ≥ 0 for y̸ = x, y ∈ S , and R(t, x, a )x = − ∑ 
+
+> y̸=x
+
+R(t, x, a )y. (1) If we ignore the control a in (1) , R is the rate matrix of a time-inhomogeneous CTMC, with the 
+
+(x, y )-th entry given by R(t, x )y at a fixed time t ∈ [0 , T ] (see e.g., Liggett (2010, Chapter 2)). Thus, (1) can be understood as an action-controlled rate matrix for any fixed t. For the realization of such an R, we give an example that is linear in a, encompassing a rich family of transition-rate maps. 
+
+Example 1 (Rate with Linear Action) . Let the action space be A ⊂ Rd
+
+> +
+
+. For any matrix-valued map Φ : [0 , T ] × S → R|S|× d such that for any (t, x ) ∈ [0 , T ] × S , all columns of Φ( t, x ) sum to zero: 
+
+> ∑
+> y∈S
+
+Φ( t, x )y,i = 0 , ∀i ∈ [d],R(t, x, a ) = Φ( t, x )·a is a valid rate map if the off-diagonal rates are nonnegative on A: R(t, x, a )y ≥ 0
+
+for all y̸ = x and a ∈ A , because it holds that 
+
+> ∑
+> y∈S
+
+R(t, x, a )y = ∑
+
+> y∈S
+> d∑
+> i=1
+
+Φ( t, x )y,i ai =
+
+> d∑
+> i=1
+
+ai
+
+> ∑
+> y∈S
+
+Φ( t, x )y,i = 0 .
+
+As will be clear in Proposition 3, this linear action structure is satisfied by the discrete diffusion embedding. □
+
+Next, given an action sequence a = ( at)t∈[0 ,T ] ∈ A [0 ,T ], we define the controlled state dynamics 
+
+(Xa 
+
+> t
+
+)t∈[0 ,T ] on S by a CTMC with infinitesimal transition probability: 
+
+pt+∆ t|t(y | xa 
+
+> t
+
+) = δ{xa 
+
+> t
+
+, y } + R(t, x a 
+
+> t
+
+, a t)y · ∆t + o(∆ t), y ∈ S , x a 
+
+> 0
+
+∼ ρ, (2) where δ{· , ·} denotes the Kronecker delta, xa 
+
+> t
+
+is a realization of Xa 
+
+> t
+
+, at stands for the action/control at time t, and ρ is the initial state distribution. The zero-sum condition in (1) ensures that (2) is a valid infinitesimal transition probability, and (2) means that R(t, x a 
+
+> t
+
+, a t)y is the rate at which the probability mass moves from state xa 
+
+> t
+
+to y under the control at.5Commonly, we consider stochastic policy in RL by exploration to interact with and learn the unknown environment through trial and error. At each time t with the current state xt, an action 
+
+at is generated or sampled from the distribution π(· | t, x t). A policy π(· | t, x ) is a probability distribution over A given the current time-state pair (t, x ). Formally, π(· | · , ·) is a function 
+
+π : [0 , T ] × S → ∆( A). Denote by (Xπt )t∈[0 ,T ] the state dynamics governed by a feedback policy 
+
+π(· | · , ·), which is a CTMC with infinitesimal transition probability: 
+
+pt+∆ t|t(y | xπt ) = δ{xπt , y } + R(t, x πt , a πt )y · ∆t + o(∆ t), y ∈ S , x π 
+
+> 0
+
+∼ ρ, (3) where xπt is a realization of Xπt and aπt ∼ π(· | t, x πt ). To evaluate such a policy π, we consider an 
+
+exploratory version of state dynamics ( ˜Xπt )t∈[0 ,T ] in the same spirit as RL in continuous time and space (Wang et al., 2020). Define its transition mechanism by 
+
+pt+∆ t|t(y | ˜xπt ) = δ{˜xπt , y } + ˜R(t, ˜xπt ; π(· | t, ˜xπt )) y · ∆t + o(∆ t), y ∈ S , ˜xπ 
+
+> 0
+
+∼ ρ, (4) where ˜xπt is a realization of ˜Xπt and ˜R(t, x ; π(·)) := ∫ 
+
+> A
+
+R(t, x, a )π(a) d a = Ea∼π R(t, x, a ). Note that the external randomization of action a is removed by taking the expectation, leaving a chain governed by the averaged transition rate ˜R. Importantly, we have the following proposition that allows us to perform theoretical analysis with the action-averaged exploratory state dynamics (4) ,while observing real trajectories by simulating (3). The proof is deferred to Appendix A.1. 
+
+Proposition 1. The CTMC (Xπt )t∈[0 ,T ] has the same distribution as the exploratory state dynamics 
+
+( ˜Xπt )t∈[0 ,T ] under another probability measure. 
+
+Performance Metric. The goal is to find the optimal feedback policy π∗ that maximize the expected reward: 
+
+π∗ = arg max 
+
+> π
+
+E 
+
+> [∫T
+> 0
+
+r(t, X πt , a πt ) d t + h(XπT ) | Xπ 
+
+> 0
+
+∼ ρ
+
+> ]
+
+, (5) where r : [0 , T ] × S × A → R is the running reward function, and h : S → R is the terminal reward function. Also denote the value function of a policy π by 
+
+V (t, x ; π) = E 
+
+> [∫Tt
+
+r(s, X πs , a πs ) d s + h(XπT ) | Xπt = x
+
+> ]
+
+= E 
+
+> [∫Ts
+
+˜r(s, ˜Xπs ; π(· | s, ˜Xπs )) d s + h( ˜XπT ) | ˜Xπt = x
+
+> ]
+
+,
+
+where ˜r(t, x ; π(·)) := ∫ 
+
+> A
+
+r(t, x, a )π(a) d a = Ea∼π r(t, x, a ) is the exploratory reward for any policy 
+
+π ∈ ∆( A).
+
+2.2 Feynman-Kac Formula 
+
+Given a ∈ A , let La be the infinitesimal generator associated with the process (Xat )t∈[0 ,T ] defined by (2) (see e.g., Benton et al. (2024, Example 2)): 
+
+Laf (t, x ) := ∂f ∂t (t, x ) + ⟨R(t, x, a ), f (t, ·)⟩, f : [0 , T ] × S → R.
+
+Here ⟨· , ·⟩ denotes inner product between two vectors, i.e., ⟨R(t, x, a ), f (t, ·)⟩ = ∑ 
+
+> y∈S
+
+R(t, x, a )yf (t, y ).With the action-aware infinitesimal generator in place, we now state the Feynman-Kac formula for discrete state spaces. The proof is deferred to Appendix A.3. 6Lemma 1 (Feynman-Kac Formula) . There exists v satisfying 
+
+E
+
+> a∼π(·| t,x )
+
+(Lav(t, x ) + r(t, x, a )) = 0 , v(T, x ) = h(x), ∀x ∈ S .
+
+Then v is the value function: v(t, x ) = V (t, x ; π), ∀(t, x ) ∈ [0 , T ] × S .
+
+Remark 1. For any (t, x, a ) ∈ [0 , T ] × S × A and f : [0 , T ] × S → R, let 
+
+H(t, x, a, f ) := ⟨R(t, x, a ), f (t, ·)⟩ + r(t, x, a ).
+
+Then H is the (generalized) Hamiltonian, an analogue to Hamiltonian in classical stochastic control. The optimal value function is given by 
+
+V ∗(t, x ) := sup  
+
+> a=( as)s∈[t,T ]
+
+E
+
+[∫ Tt
+
+r(s, X a 
+
+> s
+
+, a s) d s + h(Xa 
+
+> T
+
+) | Xa 
+
+> t
+
+= x
+
+]
+
+,
+
+where (t, x ) ∈ [0 , T ] × S . The associated HJB equation for V ∗ is: 
+
+∂v ∂t (t, x ) + sup 
+
+> a∈A
+
+H(t, x, a, v ) = 0 , v(T, x ) = h(x), ∀x ∈ S ,
+
+and the optimal feedback policy is a∗ 
+
+> t
+
+= a∗(t, x ) = arg max a∈A H(t, x, a, V ∗), where (t, x ) is the current time-state pair. In the standard control setting where the model is fully known (i.e., functional forms of R, r and h
+
+are specified), the opitmal policy can be derived at t = T and will be carried out through [0 , T ]
+
+by dynamic programming, so the learning and exploration are not needed. In the RL setting, an additional entropy regularizer is usually adopted to encourage exploration (but for our purpose of fine-tuning diffusion models, this term is not needed): 
+
+Vγ (t, x ; π) := E
+
+[∫ Tt
+
+(r(s, X πs , a πs ) − γ log π(aπs )) d s + h(XπT ) | Xπt = x
+
+]
+
+.
+
+The value function V ∗ 
+
+> γ
+
+(t, x ) := sup π Vγ (t, x ; π) satisfies the exploratory HJB equation (Tang et al., 2022): 
+
+∂v ∂t (t, x ) + sup 
+
+> π
+
+E
+
+> a∼π
+
+(H(t, x, a, v ) − γ log π(a)) = 0 , v(T, x ) = h(x), ∀x ∈ S ,
+
+and the optimal feedback policy is π∗ 
+
+> γ
+
+(a | t, x ) ∝ exp 
+
+( 1 
+
+> γ
+
+H(t, x, a, V ∗ 
+
+> γ
+
+)
+
+)
+
+. □
+
+2.3 Policy Gradient 
+
+In practice, the policy is parameterized by a function family {πθ(· | · .·)}θ. We write (Xθt )t∈[0 ,T ] for the process (Xπθ 
+
+> t
+
+)t∈[0 ,T ] governed by the policy πθ. Its transition probability is: 
+
+pθt+∆ t|t(y | xθt ) = δ{xθt , y } + ˜R(t, x θt ; πθ(· | t, x θt )) y · ∆t + o(∆ t), y ∈ S , x θ 
+
+> 0
+
+∼ ρ, 
+
+where xθt is a realization of Xθt , and we denote by pθt its distribution (a probability mass function). Also denote its corresponding value function by V θ(t, x ) = V (t, x ; πθ(· | t, x )) and V θ = Ex∼ρ V θ(0 , x ).The following theorem computes ∇θV θ, whose proof is given in Appendix A.4. 7Theorem 1 (Policy Gradient) . We have 
+
+∇θV θ = E 
+
+> [∫T
+> 0
+
+∇θ log πθ(aθt | t, X θt ) · q(t, X θt , a θt ; πθ) d t
+
+> ]
+
+,
+
+where q(t, x, a ; π) := LaV (t, x ; π) + r(t, x, a ) = ∂V ∂t (t, x ; π) + ⟨R(t, x, a ), V (t, ·; π)⟩ + r(t, x, a ) =  
+
+> ∂V ∂t
+
+(t, x ; π) + H(t, x, a, V (·, ·; π)) .
+
+Remark 2. The q(t, x, a ; π) function defined in Theorem 1 is the instantaneous advantage rate analogue to the continuous space counterpart (Jia and Zhou, 2023). Following the presentation of Jia and Zhou (2023), given π and (t, x, a ) ∈ [0 , T ) × S × A , consider a perturbed policy ˆπ of π,which takes the constant action a ∈ A on [t, t + ∆ t) for ∆t > 0 and then follows π on [t + ∆ t, T ].Specifically, the corresponding state process X ˆπ, given X ˆπt = x, is broken into two pieces: on 
+
+[t, t + ∆ t), it is Xa following the rate matrix (1) , and on [t + ∆ t, T ] it is Xπ following the transition probability (3) with initial time-space pair (t + ∆ t, X at+∆ t). The q-function measures the rate of the performance difference between the two policies π and ˆπ when t → 0, as shown in the following proposition whose proof is provided in Appendix A.5. 
+
+Proposition 2. Let ( ∆t-parametrized) Q-function, denoted by Q∆t(t, x, a ; π), be the expected reward of the perturbed policy ˆπ:
+
+Q∆t(t, x, a ; π) := E 
+
+> [∫t+∆ tt
+
+r(s, X as , a ) d s + 
+
+> ∫Tt+∆ t
+
+r(s, X πs , a πs ) d s + h(XπT ) | X ˆπt = x
+
+> ]
+
+.
+
+Then we have: 
+
+q(t, x, a ; π) = lim 
+
+> ∆t→0
+
+Q∆t(t, x, a ; π) − V (t, x ; π)∆t .
+
+By the zero-sum condition in (1), we get 
+
+q(t, x, a ; π) = ∂V ∂t (t, x ; π) + ∑ 
+
+> y̸=x
+
+R(t, x, a )y(V (t, y ; π) − V (t, x ; π)) + r(t, x, a ).
+
+This expression has an intuitive interpretation of the advantage rate. The first term is independent of the action and captures the temporal change of the value function. The second term is the value difference weighted by the transition rates, reflecting the space change of the value. In particular, if 
+
+V (t, y ; π) − V (t, x ; π) > 0, so that transiting from x to y is advantageous, then a larger transition rate R(t, x, a )y leads to a higher q-value. The final term corresponds to the running reward and quantifies the immediate contribution of the time-state-action triple (t, x, a ). □
+
+Based on the derived q-function, we present a PPO algorithm in Algorithm 1, where the value and policy networks are optimized iteratively. Note that we subtract the action-independent term 
+
+∂V /∂t when computing q-function qb,t . We also present a GRPO algorithm that provides process supervision (Shao et al., 2024; Wang et al., 2026a) in Algorithm 2, eliminating the need for a value network by directly leveraging the intermediate (running) reward r and the terminal reward h. While both algorithms employ a uniform time discretization by default, the continuous-time formulation allows for arbitrary discretization schemes. Consequently, more flexible time discretizations in the final algorithmic stage can be adopted for efficiency or accuracy. 8Algorithm 1 Proximal Policy Optimization for Continuous-Time Discrete-Space RL 
+
+Input: Initial policy parameter θ0 and value network parameter ϕ0, trajectory batch size B, number of time discretization steps T , step size m, clip parameter ϵ.
+
+1: θ ← θ0, ϕ ← ϕ0
+
+2: repeat 
+
+3: θold ← θ, ϕold ← ϕ
+
+4: Collect B trajectories {τb}Bb=1 , where τb = {xb,t , a b,t , r b,t }T −1 
+
+> t=0
+
+∪{ tb,T , x b,T } for t ∈ [T −1] ∪{ 0}
+
+by running policy πθn
+
+5: Compute rewards-to-go ˆrb,t = m ∑T −1 
+
+> t′=t
+
+rb,t ′ + rb,T for all b ∈ [B] and t ∈ [T − 1] ∪ { 0}
+
+6: Perform multiple value network updates starting from ϕold :
+
+ϕ ← arg min 
+
+> ϕ
+
+1
+
+B
+
+> B
+
+∑
+
+> b=1
+
+1
+
+T 
+
+> T−1
+
+∑
+
+> t=0
+
+|V ϕ(tm, x b,t ) − ˆrb,t |2
+
+7: Compute qb,t = ∑  
+
+> y̸=xb,t
+
+R(tm, x b,t , a b,t )y · (V ϕn+1 (tm, y ) − V ϕn+1 (tm, x b,t )) + r(tm, x b,t , a b,t )
+
+for all b ∈ [B] and t ∈ [T − 1] ∪ { 0}
+
+8: Perform multiple policy updates starting from θold :
+
+θ ← arg max 
+
+> θ
+
+1
+
+B
+
+> B
+
+∑
+
+> b=1
+
+1
+
+T 
+
+> T−1
+
+∑
+
+> t=0
+
+min( ρθb,t · qb,t , clip (ρθb,t , 1 − ϵ, 1 + ϵ) · qb,t ),
+
+where ρθb,t = πθ (ab,t |tm,x b,t ) 
+
+> πθold (ab,t |tm,x b,t )
+
+9: until Convergence 
+
+Output: θ
+
+Note: Here for sampled trajectories, xb, 0 ∼ ρ, ab,t ∼ πθold (· | tm, x b,t ), xb,t +1 ∼ Cat (·; exb,t + R(tm, x b,t , a b,t ) · m),
+
+rb,t = r(tm, x b,t , a b,t ) for all b, t , and rb,T = h(xb,T ).
+
+# 3 A General Framework for Fine-Tuning Score-Based Discrete Diffusion Models 
+
+3.1 Discrete Diffusion Models 
+
+In score-based discrete diffusion models (Lou et al., 2024; Sun et al., 2023; Campbell et al., 2022), the forward and reverse processes are formulated as CTMCs. Let Qt ∈ R|S|×|S| be the transition rate matrix of the forward process (Yt)t∈[0 ,T ] at time t ∈ [0 , T ] such that Law (Y0) = pdata and 
+
+Law (YT ) ≈ pnoise . The reverse process (Xt)t∈[0 ,T ] is the exact time reversal of (Yt)t∈[0 ,T ] (Kelly, 2011), that is, Xt d
+
+= YT −t, with the rate matrix Q← 
+
+> t
+
+given by 
+
+Q← 
+
+> t
+
+(x, y ) = QT −t(y, x ) · s(T − t, x )y for y̸ = x, y ∈ S , and Q← 
+
+> t
+
+(x, x ) = − ∑ 
+
+> y̸=x
+
+Q← 
+
+> t
+
+(x, y ), ∀x ∈ S .
+
+Here s(t, x ) := ( qt(y)/q t(x)) y̸ =x ∈ R|S|− 1+ is called discrete score function (Lou et al., 2024; Meng et al., 2022), which is a collection of probability ratios of forward marginal distributions. Here, qt is the forward marginal at time t, i.e., the distribution (a probability mass function) of Yt.In practice, the score s(t, x ) is parameterized by a function family {sθ(t, x )}θ, and is then learned by score matching methods, such as denoising score entropy (Lou et al., 2024; Benton et al., 2024). 9Algorithm 2 Group Relative Policy Optimization for Continuous-Time Discrete-Space RL 
+
+Input: Initial policy parameter θ0, trajectory batch size B, trajectory group size G, number of time discretization steps T , step size m, clip parameter ϵ.
+
+1: θ ← θ0
+
+2: repeat 
+
+3: θold ← θ
+
+4: Sample B initial states {xb}Bb=1 ∼ ρ
+
+5: For each xb, collect G trajectories, {τb,g }Gg=1 , starting from xb, where τb,g =
+
+{xb,g,t , a b,g,t , r b,g,t }T −1 
+
+> t=0
+
+∪ { tT , x b,g,T , r b,g,T } by running policy πθold 
+
+6: Compute group mean μb = 1
+
+> GT
+
+∑Gg=1 
+
+∑T −1 
+
+> t=0
+
+rb,g,t and νb = 1
+
+> G
+
+∑Gg=1 rb,g,T , group standard deviation σb =
+
+√ 1
+
+> GT
+
+∑Gg=1 
+
+∑T −1 
+
+> t=0
+
+(rb,g,t − μb)2 and ωb =
+
+√ 1
+
+> G
+
+∑Gg=1 (rb,g,T − νb)2, normalized reward ˆrb,g,t = rb,g,t −μb 
+
+> σb
+
+and ˆrb,g,T = rb,g,T −νb 
+
+> ωb
+
+, and advantage Ab,g,t = 1
+
+> T
+
+∑T −1 
+
+> t′=t
+
+ˆrb,g,t ′ + ˆ rb,g,T 
+
+7: Perform multiple policy updates starting from θold :
+
+θ ← arg max 
+
+> θ
+
+1
+
+B
+
+> B
+
+∑
+
+> b=1
+
+1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+1
+
+T 
+
+> T−1
+
+∑
+
+> t=0
+
+min( ρθb,g,t Ab,g,t , clip (ρθb,g,t , 1 − ϵ, 1 + ϵ)Ab,g,t ),
+
+where ρθb,g,t = πθ (ab,g,t |tm,x b,g,t ) 
+
+> πθold (ab,g,t |tm,x b,g,t )
+
+8: until Convergence 
+
+Output: θ
+
+Note: For sampled trajectories, xb,g, 0 = xb, ab,g,t ∼ πθold (· | tm, x b,g,t ), xb,g,t +1 ∼ Cat (·; exb,g,t +
+
+R(tm, x b,g,t , a b,g,t ) · m), rb,g,t = r(tm, x b,g,t , a b,g,t ), and rb,g,T = h(xb,g,T ) for all b ∈ [B], g ∈ [G], t ∈
+
+[T − 1] ∪ { 0}.Once we have a pretrained estimator sθpre (·, ·), we can perform generative modeling by discretizing the continuous-time reverse process: 
+
+pθpre 
+
+> t+∆ t|t
+
+(y | xt) = δ{xt, y }+QT −t(y, x t)sθpre (T −t, x t)y ·∆t+o(∆ t), y̸ = xt, y ∈ S , x 0 ∼ pnoise , (6) where xt is a realization of Xt and pθpre  
+
+> t
+
+is the marginal distribution of the pretraining sampling process with score sθpre (·, ·) at time t.
+
+3.2 Score as Action 
+
+To draw connections between CTRL and discrete diffusion models, we compare the RL process (4) with the diffusion sampling process (6) . Given the forward diffusion rate matrix (Qt)t∈[0 ,T ], we choose the transition-rate map R in the RL dynamics (4) as 
+
+R(t, x, a )y = QT −t(y, x ) · ay for y̸ = x, y ∈ S , (7) for any (t, x, a ) ∈ [0 , T ] × S × A . Here the action space is specified as A = R|S|− 1+ , because we are only concerned with the off-diagnal entries. The following proposition shows that the rate map (7) belongs to the family of rate maps in Example 1. We give the proof in Appendix A.6. 
+
+Proposition 3. Given any (t, x ) ∈ [0 , T ] × S , index the action by the off-diagonal targets, a =
+
+10 (ay)y̸ =x ∈ R|S|− 1+ (so d = |S| − 1 in Example 1), and set 
+
+Φ( t, x )y,i := 
+
+
+
+QT −t(i, x ), y = i, 
+
+− QT −t(i, x ), y = x, 
+
+0, otherwise ,
+
+for all y ∈ S and i ∈ S : i̸ = x. 
+
+Then each column of Φ( t, x ) sums to zero, and the rate map (7) satisfies R(t, x, a ) = Φ( t, x ) · a for all (t, x, a ) ∈ [0 , T ] × S × A .
+
+Suppose that we have access to a pretrained score function sθpre (·, ·), and hence a pretrained model. Let πθpre (· | t, x ) be a deterministic policy δsθpre (T −t,x ); that is, if aθpre  
+
+> t
+
+∼ πθpre (· | t, x t), then 
+
+aθpre  
+
+> t
+
+= sθpre (T − t, x t). So the reverse CTMC (6) becomes 
+
+pθpre 
+
+> t+∆ t|t
+
+(y | xt) = δ{xt, y } + R(t, x t, a θpre  
+
+> t
+
+)y · ∆t + o(∆ t) for y ∈ S .
+
+As a result, analogous to Zhao et al. (2025a), the score function is replaced by the action, and the problem of finding the optimal score becomes finding the optimal action/policy, which can be tackled by policy optimization. 
+
+3.3 Post-Training 
+
+Generally, for a parameterized policy πθ(· | · , ·), we denote the control aθt ∼ πθ(· | t, X θt ), where Xθt
+
+is short for the reverse process Xπθ 
+
+> t
+
+driven by πθ:
+
+pθt+∆ t|t(y | xθt ) = δ{xθt , y } + R(t, x θt , a θt )y · ∆t + o(∆ t) for y ∈ S , x θ 
+
+> 0
+
+∼ pnoise ,
+
+where xθt is a realization of Xθt and pθt is the distribution of Xθt . The post-training objective is: 
+
+max  
+
+> θ
+
+E
+
+[
+
+TRF( XθT ) + 
+
+∫ T
+
+> 0
+
+IRF( Xθt ) d t − βD KL (Pθ ∥ Pθpre )
+
+]
+
+. (8) Here TRF (·) denotes the terminal reward function for the final output XθT , IRF (·) denotes the intermediate reward function (possibly time-dependent) for the intermediate state Xθt , Pθ and Pθpre 
+
+are the path measures of the processes (Xθt )t∈[0 ,T ] and (Xθpre  
+
+> t
+
+)t∈[0 ,T ], respectively, and β > 0 is a penalty hyperparameter. The following theorem connects the post-training objective (8) with the RL objective (5). The proof will be given in Appendix A.7. 
+
+Theorem 2. The KL divergence between Pθ and Pθpre can be expressed as: 
+
+DKL (Pθ ∥ Pθpre ) = E 
+
+> Xθt∼pθt
+
+∫ T
+
+> 0
+
+∑ 
+
+> y̸=Xθt
+
+QT −t(y, X θt )DI
+
+(
+
+E   
+
+> aθt∼πθ(·| t,X θt)
+
+(aθt )y ∥ sθpre (T − t, X θt )y
+
+)
+
+dt, 
+
+where DI (· ∥ · ) is the generalized I-divergence (Amari, 2012) given by DI (x ∥ y) = −x+y +x log (x/y ).
+
+By Theorem 2, the objective in (8) is 
+
+E 
+
+> Xθt∼pθt
+
+
+
+TRF( XθT )
+
+︸ ︷︷ ︸ 
+
+> h(XθT)
+
++
+
+∫ T
+
+> 0
+
+
+
+IRF( Xθt ) − β ∑ 
+
+> y̸=Xθt
+
+QT −t(y, X θt )DI ( E   
+
+> aθt∼πθ(·| t,X θt)
+
+(aθt )y ∥ sθpre (T − t, X θt )y)
+
+︸ ︷︷ ︸   
+
+> ˜r(t,X θt;πθ(·| t,X θt))
+
+
+
+dt
+
+
+
+.
+
+(9) 11 The objective (9) coincides with the RL objective (5) . With this expression, for any (t, x ) ∈ [0 , T ]×S ,we define the value function 
+
+V θ(t, x ) = E 
+
+> Xθs∼pθs
+
+[
+
+TRF( XθT ) + 
+
+∫ Tt
+
+(
+
+IRF( Xθs )
+
+− β ∑ 
+
+> y̸=Xθs
+
+QT −s(y, X θs )DI
+
+(
+
+E    
+
+> aθs∼πθ(· | s,X θs)
+
+(aθs)y
+
+∥∥∥∥∥ sθpre (T − s, X θs )y
+
+) ) 
+
+ds
+
+∣∣∣∣∣ Xθt = x
+
+]
+
+. (10) To design the fine-tuning algorithms, it suffices to inject the functions R, r, and h in (7) and (10) into Algorithms 1 and 2, and replace the initial distribution ρ with pnoise and the initial parameter θ0
+
+with θpre . Notably, our framework naturally accommodates arbitrary intermediate rewards, does not require the reward function to be differentiable, and avoids the non-differentiability issue of sampling from a categorical distribution when maximizing the reward (see Wang et al. (2025, Section 4.2)). 
+
+# 4 Fine-Tuning Masked Diffusion Models 
+
+Although our framework applies to general high-dimensional CTMC-based diffusion models as discussed in Section 3, our focus will be on the widely adopted masked diffusion models (MDMs). In this setting, the score function has a direct correspondence with the denoiser, allowing the policy to be naturally parameterized as a probability distribution over the simplex. 
+
+Notations. We use lowercase letters to denote scalars, and boldface lowercase letters to denote vectors. The i-th entry of a vector x is denoted by xi, or simply xi when the context is clear. We use x\i to refer to all dimensions of x except the i-th, and x\i ⊙ ˆxi to denote a vector whose i-th dimension takes the value ˆxi, while the other dimensions remain as x\i. For a positive integer n, we denote 1n ∈ Rn as the column vector of ones, and In ∈ Rn×n as the identity matrix. The notation 
+
+ej refers to a one-hot column vector with a 1 in the j-th position. We use Cat (·; p) for a categorical distribution over a one-hot column vector with probabilities given by the column vector p. 1{·} is the indicator function. 
+
+4.1 Preliminaries on Masked Diffusion Models 
+
+Let S = ( V ∪ { m})L be the state space, where V := {1, · · · , V } is the vocabulary space, m is the special “mask” token, and L is the sequence length. The continuous time horizon is set to 1. We use superscript i ∈ [L] for the sequence index, subscript j ∈ V for the token vocabulary index, subscript 
+
+t for the current time (continuous-time, t ∈ [0 , 1] ) or time step (discrete-time, t ∈ [T ]), and subscript 
+
+g ∈ [G] for a specific sample trajectory. 
+
+Forward Process. The forward process is factorized as pt|0(xt | x0) = ∏Li=1 pt|0(xit | xi
+
+> 0
+
+), where 
+
+pt|0(xit | xi
+
+> 0
+
+) = Cat( xit; αtexi 
+
+> 0
+
++ (1 − αt)em), t ∈ [0 , 1] .αt is the noise scheduled to satisfy α0 ≈ 1 and α1 ≈ 0. A common choice is αt = 1 − t (Nie et al., 2026b), which we adopt throughout this work. The forward process interpolates the clean data and pure mask noise. The resulting forward rate matrix for each dimension is 
+
+Qtok  
+
+> t
+
+= − 1
+
+αt
+
+∂α t
+
+∂t (1V +1 · e⊤ 
+
+> m
+
+− IV +1 ) ∈ R(V +1) ×(V +1) ,
+
+12 and the full-dimensional rate matrix Qt = ⊕Li=1 Qtok  
+
+> t
+
+∈ R(V +1) L×(V +1) L
+
+is the Kronecker sum of L
+
+dimension-wise rate matrices, with non-diagnal entries given by 
+
+Qt(x, x\i ⊙ m) = − 1
+
+αt
+
+∂α t
+
+∂t = 11 − t , xi̸ = m.
+
+Reverse Process. Given x0 ∼ pdata , for 0 ≤ s ≤ t, the reverse transition probability is 
+
+ps|t, 0(xis | xt, x0) = 
+
+
+
+Cat( xis; exit ), xit̸ = m;Cat( xis; 1−αs 
+
+> 1−αt
+
+em + αs−αt 
+
+> 1−αt
+
+exi 
+
+> 0
+
+), xit = m.
+
+Note that conditional on x0, if xit = m, then with probability αs−αt 
+
+> 1−αt
+
+, xit will jump to xi 
+
+> 0
+
+at time s;once xit is unmasked, it remains the same until t = 0 . Thus, one can parameterize a denoiser pθ(xt),which takes all the dimensions of xt as the input and predicts masked tokens ( xit = m, i ∈ [L])simultaneously. To be more specific, for any i ∈ [L], a neural network p(i) 
+
+> θ
+
+(xt), the i-th output of 
+
+pθ(xt), outputs a probability distribution of xi
+
+> 0
+
+:
+
+p(i) 
+
+> θ
+
+(xt) = 
+
+
+
+softmax( f (i) 
+
+> θ
+
+(xt)) , i ∈ [L] : xit = m,
+
+exit , i ∈ [L] : xit̸ = m ∈ ∆V −1,
+
+where ∆V −1 := {x ∈ RV 
+
+> +
+
+: ∑Vi=1 xi = 1 } ⊂ RV is the (V − 1) -dimensional simplex. For i : xit = m,
+
+f (i) 
+
+> θ
+
+(xt) ∈ RV is the model logits and p(i) 
+
+> θ
+
+(xt) ∈ ∆V −1 is a probability vector with the j-th component, denoted by p(i) 
+
+> θ
+
+(xt)j or p(i) 
+
+> θ
+
+(j | xt), predicting the conditional probability p0|t(xi 
+
+> 0
+
+= j | xt) for all 
+
+j ∈ V . Notably, by the identity (Shi et al., 2024; Ou et al., 2025; Hasan et al., 2026): 
+
+s(t, xt)i,j := pt(x\it ⊙ j)
+
+pt(xt) = δ{m, j } + αt
+
+1 − αt
+
+p0|t(xi 
+
+> 0
+
+= j | xt), xit = m,
+
+parameterizing the denoising probability is equivalent to parametrizing the score function up to some scalar: 
+
+sθ(t, xt)i,j = αt
+
+1 − αt
+
+p(i) 
+
+> θ
+
+(xt)j , xit = m, j ∈ V .
+
+Here the denoiser network does not depend on the time t because the partially unmasked sequence 
+
+xt implicitly contained the time information (Shi et al., 2024; Kim et al., 2025; Nie et al., 2026b). In the remainder of this work, we always consider the denoiser parameterization pθ(xt) (which will be replaced by actions) instead of the score parameterization. Also, the reverse rate matrix is 
+
+Q←
+
+> 1−t
+
+(x, x\i⊙j) = − 1
+
+αt
+
+∂α t
+
+∂t s(t, x)i,j = − 11 − αt
+
+∂α t
+
+∂t p0|t(xi 
+
+> 0
+
+= j | x) = 1
+
+t p0|t(xi 
+
+> 0
+
+= j | x), xi = m, j ∈ V ,
+
+Hence, the reverse process parametrized by pθ has rate matrix 
+
+Qθt (x, x\i ⊙ j) = 11 − t p(i) 
+
+> θ
+
+(x)j , xi = m, j ∈ V . (11) 
+
+4.2 Post-Training 
+
+Policy Parameterization. In RL, an action at is sampled from a parameterized stochastic policy to encourage exploration: at ∼ πθ(· | t, xt) given the current time-state pair (t, xt). Since the reverse 13 masked diffusion dynamics (11) is fully determined by the denoiser probability vector, we consider the action space A = (∆ V −1)L. Then π(· | t, x) is a distribution over the product simplex (∆ V −1)L.For simplicity, we let the parameterized policy πθ factorize over all dimensions: 
+
+πθ(at | t, xt) = 
+
+> L∏
+> i=1
+
+πθ, (i)(a(i) 
+
+> t
+
+| t, xt),
+
+where πθ, (i)(· | t, xt) is a distribution over ∆V −1, and a(i) 
+
+> t
+
+∈ ∆V −1 is a probability vector over V for all i ∈ [L]. At time t, we sample from Cat (·; a(i) 
+
+> t
+
+), instead of Cat (·; p(i) 
+
+> θ
+
+(xt)) , to predict the clean token at the i-th position. So a(i) 
+
+> t
+
+can be viewed as performing exploration over the denoiser p(i) 
+
+> θ
+
+(xt).As a result, we need to specify the dimension-wise policies πθ, (i)(· | t, x) for all i.We emphasize that the policy parameterization must be chosen carefully. In particular, πθ(· | t, x)
+
+should have a tractable likelihood, and the resulting probability ratio ρθt := πθ(at | t, xt)/π θold (at |
+
+t, xt) should be amenable to stable optimization. Several policy parameterizations that perform full-logit exploration and induce distributions supported on the full simplex, including Dirichlet, temperature softmax, and logistic-normal policies, are summarized in Appendix B.1, together with their practical implementation details. However, for masked dLLMs with a large vocabulary size 
+
+(|V| ≈ 1.2 × 10 5), it is inefficient to explore the full simplex: the learned denoiser distribution pθ is typically highly concentrated, with probabilities spanning several orders of magnitude and effectively residing on a much lower-dimensional region of the simplex, often near a small number of vertices. As discussed in Appendix B.1, applying full-simplex exploration in this regime amounts to exploring the entire vocabulary, which can lead to unstable optimization due to the large vocabulary size. Motivated by the empirical success of d1 (Zhao et al., 2025c), we consider a policy family whose support is concentrated on the V vertices of the simplex ∆V −1, assigning probability mass directly to the vertices rather than exploring its interior through a continuous density. Nevertheless, the CTRL perspective suggests that broader exploration of the denoiser distribution still be beneficial. Consequently, while vertex-supported policies are used for optimization, we retain simplex-level exploration during rollout generation in our experiments. Following prior works (Zhao et al., 2025c,b; Wang et al., 2026b,d; Oba et al., 2026), we focus on the GRPO algorithm for fine-tuning masked dLLMs to avoid training an expensive value network in PPO, though we also describe a possible value function approximation without training a network in Appendix C. Let (xt)Tt=0 be a decoding trajectory, where x0 is a prompt concatenated with mask tokens of the completion length L, xT is the final output corresponding to the prompt, and T ∈ Z+
+
+is the number of denoising steps. The trajectory can be generated by any inference strategy, while we adopt a semi-autoregressive strategy with low-confidence remasking and random sampling (Nie et al., 2026b; Zhao et al., 2025c). Specifically, at time step t, we first select the k masked positions with the highest confidence score in the current block Bt ⊂ [L], denoted by 
+
+MTopkConf  
+
+> t
+
+:= 
+
+> {
+
+i ∈ Bt : xit = m, c it ∈ Topk 
+
+> (
+
+{cit}i∈Bt:xit=m
+
+> )}
+
+, cit := max  
+
+> j∈V
+
+p(i) 
+
+> θ
+
+(xt)j ,
+
+to unmask, and then sample according to Cat( ·; a(i) 
+
+> t
+
+) for all i ∈ M TopkConf  
+
+> t
+
+:
+
+a(i) 
+
+> t
+
+∼ πθ, (i)(· | t, xt) then a(i) 
+
+> t
+
+=
+
+> 
+
+ej w.p. p(i) 
+
+> θ
+
+(xt)j , j ∈ V , for i ∈ M TopkConf  
+
+> t
+
+,
+
+exit , for i / ∈ M TopkConf 
+
+> t
+
+∈ ∆V −1. (12) 14 The corresponding intermediate and terminal reward functions are given by (9): 
+
+˜r(t, xt; πθ(· | t, xt)) = IRF( xt) − β
+
+1 − t
+
+∑
+
+> i:xit=m
+
+DKL (p(i) 
+
+> θ
+
+(xt) ∥ p(i) 
+
+> θpre
+
+(xt)) and h(x1) = TRF( x1),
+
+(13) and the probability ratio is 
+
+ρθt = πθ(at | t, xt)
+
+πθold (at | t, xt) =
+
+∏
+
+> i∈M TopkConf
+> t
+
+πθ, (i)(a(i) 
+
+> t
+
+| t, xt)
+
+∏
+
+> i∈M TopkConf
+> t
+
+πθold ,(i)(a(i) 
+
+> t
+
+| t, xt) = ∏
+
+> i∈M TopkConf
+> t
+
+p(i) 
+
+> θ
+
+(xiT | xt)
+
+p(i) 
+
+> θold
+
+(xiT | xt) . (14) Thus, the GRPO loss is 
+
+L(θ) = E  
+
+> (xg, 0,xg, 1,··· ,xg,T )}Gg=1 ∼πθold
+
+ 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+1
+
+T
+
+> T
+
+∑
+
+> t=1
+
+min 
+
+(
+
+ρθg,t Ag,t , clip 
+
+(
+
+ρθg,t , 1 − ϵ, 1 + ϵ
+
+)
+
+Ag,t 
+
+) , (15) where T = L/k , ρθg,t = ∏
+
+> i∈M TopkConf
+> g,t
+
+p(i) 
+
+> θ
+
+(xig,T | xg,t )/p (i) 
+
+> θold
+
+(xig,T | xg,t ), and the computation of Ag,t is implied by (13) and Algorithm 2. 
+
+Practical Considerations. Our CTRL-based GRPO loss in (15) cannot be evaluated in a single causal forward pass over an entire denoising trajectory due to the evaluation of {ρθg,t }t∈[T ]. In online GRPO-based methods for dLLMs, this leads to a fundamental trade-off: on one hand, accurate likelihood computation under a CTRL formulation and the incorporation of intermediate rewards to optimize intermediate steps both require conditioning on the intermediate state xt at each time step t; on the other hand, this necessitates multiple forward passes along the trajectory, incurring computational and memory costs proportional to the prompt batch size, group size G, and number of denoising steps T , as all intermediate activations must be stored for backpropagation. Existing approaches make different compromises. For instance, d1 (Zhao et al., 2025c) computed the loss using a single forward pass by conditioning only on the perturbed prompt. DTRPO (Zhang et al., 2026) estimated the trajectory probability via a single forward pass of a re-masked final state; however, it is designed for offline DPO-style objectives and is difficult to extend to online GRPO settings. D2 (Wang et al., 2026c) utilized block composite likelihood as an estimator to reduce the number of forward passes. In practice, to reduce the number of required forward passes in our framework, we propose trajectory subsampling, which yields an unbiased estimator of the full GRPO loss in (15) . At each optimizer update we draw a subset T ⊂ [T ] of size N = |T | uniformly at random without replacement, the same subset being reused for the policy, old, and reference passes so the ratio (14) is consistent. We then form the subsampled estimator 
+
+ˆLT (θ) = E  
+
+> (xg, 0,xg, 1,··· ,xg,T )}Gg=1 ∼πθold
+
+ 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+1
+
+N
+
+∑
+
+> t∈T
+
+min 
+
+(
+
+ρθg,t Ag,t , clip 
+
+(
+
+ρθg,t , 1 − ϵ, 1 + ϵ
+
+)
+
+Ag,t 
+
+) ,
+
+which reduces the number of forward passes from T to N per rollout. One can easily see that this estimator is unbiased by the fact that P(t ∈ T ) = N/T : ET [ ˆLT (θ)] = L(θ). When N is too small, the model fails to reliably converge to competitive performance due to inaccurate loss estimation. Conversely, increasing N substantially raises the number of forward passes, thereby 15 Figure 1: Three-way comparison. PPO and DAM converge toward p∗; d1 plateaus far above it. reducing training efficiency. Our experiments indicate that N = 8 provides a favorable trade-off, achieving performance comparable to N = 16 and N = 32 while requiring substantially fewer function evaluations. More theoretical derivation and practical implementation details including the ablation study on N are provided in Appendix B.2. 
+
+# 5 Experiments 
+
+We showcase our method for fine-tuning MDMs on two benchmarks: 2-dimensional synthetic example with PPO, and higher-dimensional reasoning and coding dataset for dLLMs with GRPO. 
+
+5.1 Synthetic Example 
+
+Setup. We consider a synthetic example described in Discrete Adjoint Matching (DAM) (So et al., 2026), where we fine-tune an MDM on a 90 × 90 discrete grid so that its terminal sampling distribution matches a prescribed checkerboard target (the first subfigure in Figure 1). The target is the entropy-regularized optimum p∗ ∝ pbase eh/β . We solve the task with our proposed PPO algorithm. We use a two-dimensional discrete space X = {m, 1, 2, . . . , 90 }2, and a state is a pair x = ( x1, x 2)
+
+in which each coordinate is either masked or holds a token. The MDM begins at the fully masked state X0 = ( m, m) and unmasks exactly one token per step, so there are T = 2 denoising steps. The base/pretrained denoiser is uniform: at every masked position it predicts a uniform distribution over the V tokens, so the base terminal distribution pbase 1 is uniform on the grid and all target structure is induced by the reward. We use the softmax exponential-temperature exploration policy described in Appendix B.1.2. The PPO advantage is the value difference across one unmasking step. Because only the states reachable in the two-step process matter, we store an explicit logit table indexed by the context (position, other coordinate), where the other coordinate is a revealed token in {1, · · · , 90 } or the mask token, and we evaluate the value V θ exactly by computing the surrogate’s expectation over all V tokens for each visited context in closed-form. Further implementation details are provided in Appendix D.1. 
+
+Results. We select DAM (So et al., 2026) and d1 (Zhao et al., 2025c) as the baselines. The experimental results are presented in Figure 1. PPO aligns most closely with p∗, both visually and numerically. In this L = 2 tabular setting, PPO uses an exact critic, so it converges faster and tighter than DAM’s sample-based adjoint. d1 was designed for large-vocabulary reasoning with informative prompts, so this synthetic distribution-matching task isolates the objective rather than d1’s intended use case. 16 Figure 2: Correctness reward dynamics of CTRL during RL training with a completion length of 
+
+128 , compared with d1, d2, and SPG. 
+
+GSM8K MATH500 Countdown Sudoku Model / Seq Len 128 256 128 256 128 256 128 256 
+
+LLaDA-8B-Instruct 67.9 76.1 26.8 33.4 21.2 17.2 11.5 7.1 D1 70.9 76.6 28.2 36.6 28.4 29.5 22.9 15.7 D2 74.8 78.9 32.2 37.8 47.8 49.2 29.9 21.4 SPG 75.7 78.1 32.0 37.8 64.9 57.0 26.1 26.0 CTRL 74.3 80.3 32.6 38.2 58.7 52.8 88.2 51.7 Table 1: Evaluation results in 1000 training steps for each method on reasoning tasks. All evaluations are conducted using the evaluation code from d1 with 0-shot prompting. CTRL significantly outperforms all baselines on Sudoku and achieves the best performance on GSM8K and MATH500. 
+
+5.2 Mathematical Reasoning and Coding Tasks 
+
+Setup. We evaluate our GRPO algorithm on four standard mathematical reasoning tasks: GSM8K (Cobbe et al., 2021), which consists of multi-step grade-school math word problems; MATH500 (Lightman et al., 2024), a collection of high-school competition mathematics problems; 3-number Countdown, a combinatorial arithmetic game in which models must reach a target number using basic arithmetic operations on three given numbers; and 4 × 4 Sudoku, which requires constraint satisfaction and systematic reasoning to complete the grid. We employ LLaDA-8B-Instruct (Nie et al., 2026b) without supervised fine-tuning as the base model, and adopt the experiment setting in d1 (Zhao et al., 2025c). We choose d1 (Zhao et al., 2025c), SPG with mixture (Wang et al., 2026b), and d2 (Wang et al., 2026c) as the baselines: d1 is the first GRPO-based fine-tuning algorithm for dLLMs, and SPG and d2 are included because they are representative methods that outperform d1, while requiring multiple forward passes during training. For each method, we fine-tune a separate model on each task with completion lengths of 128 and 256 in 1000 steps (due to the time cost), and evaluate each resulting model at completion lengths of 128 and 256 , accordingly. 
+
+Results. The correctness reward curves during the RL training with a completion length of 128 are depicted in Figure 2. For the Sudoku experiments, we note that SPG uses 3-shot prompting during training, whereas all four methods in our experiments are trained with 0-shot prompting. Despite this more challenging setting, CTRL consistently converges to a correctness reward of 0.92 on Sudoku in 1000 training steps, whereas d2 converges much more slowly, and both d1 and SPG plateau at around 0.25 . We note that our success on Sudoku can be attributed to using the intermediate 17 HumanEval MBPP Model / Seq Len 128 256 128 256 
+
+LLaDA-8B-Instruct 24.8 34.8 39.7 40.5 D1 29.3 39.0 42.0 45.5 D2 39.6 48.7 45.6 46.8 SPG 29.3 40.2 44.4 44.8 CTRL 62.8 66.2 52.9 57.7 Table 2: Evaluation results in 1000 training steps for each method on coding tasks. CTRL consistently outperforms all baselines on HumanEval and MBPP benchmarks. reward as process supervision, which guides the model to generate valid answers (see Figure 5 in Appendix). Further experimental details including the specification of intermediate reward functions are provided in Appendix D.2. Table 1 reports the best evaluation results achieved by each method over all checkpoints. For fair comparison, all evaluations are conducted with 0-shot prompting, using the evaluation code from d1 with a batch size of 8. Across nearly all experimental settings except Countdown, CTRL achieves comparable or superior accuracy to all baselines, demonstrating its effectiveness for fine-tuning moderate-sized dLLMs with moderate sequence lengths. In particular, CTRL substantially outperforms the competing methods on Sudoku with a completion length of 
+
+128 ; all methods collapse when the completion length is increased to 256 , suggesting that shorter sequence lengths are better suited to this task. By contrast, the performance gains on GSM8K and MATH500 are more modest across different baseline methods, which likely reflects the limited pretraining capability of the base model. 
+
+Extension to Coding. We further extend CTRL to coding tasks, fine-tuning the LLaDA-8B-Instruct base model on the KodCodeLight-RL-10K dataset (Xu et al., 2025) and evaluating on HumanEval and MBPP benchmarks. As shown in Table 2, CTRL consistently improves the accuracy on all benchmarks over the baselines across different generation lengths, demonstrating its strong ability in the coding domain. 
+
+# 6 Conclusion and Future Work 
+
+We introduce a theoretical framework of reinforcement learning in continuous time and discrete spaces, with applications to fine-tuning score-based discrete diffusion models, especially masked diffusion models by setting the score/denoiser as the action. Our framework naturally accommodates intermediate rewards into the RL objective, and leads to algorithms that do not require differentiable rewards. We demonstrate the effectiveness of our methods by both solving low-dimensional entropy-regularized optimization problems and fine-tuning diffusion large language models on reasoning and coding tasks. Future work will focus on developing refined techniques to reduce the number of function evaluations associated with the computation of importance sampling probability ratios under the continuous-time RL framework, and improve the computational efficiency of PPO-based RL post-training for large-scale problems. 18 Acknowledgement 
+
+Tang is supported by NSF CAREER Award DMS-2538791 and the Tang Family Assistant Profes-sorship. Sheng and Zhang are supported by NSF Grant DMS-2206038. This research is part of a Columbia-CityU/HK collaborative project that is supported by InnoHK Initiative, The Government of the HKSAR and the AIFT Lab. 
+
+# References 
+
+Shun-ichi Amari. Differential-geometrical methods in statistics , volume 28. Springer Science & Business Media, 2012. Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow, and Rianne Van Den Berg. Structured denoising diffusion models in discrete state-spaces. Advances in Neural Information Processing Systems , 34:17981–17993, 2021. Joe Benton, Yuyang Shi, Valentin De Bortoli, George Deligiannidis, and Arnaud Doucet. From denoising diffusions to denoising markov models. Journal of the Royal Statistical Society Series B: Statistical Methodology , 86(2):286–301, 2024. Andrew Campbell, Joe Benton, Valentin De Bortoli, Thomas Rainforth, George Deligiannidis, and Arnaud Doucet. A continuous time framework for discrete denoising models. Advances in Neural Information Processing Systems , 35:28266–28279, 2022. Shuang Cheng, Yihan Bian, Dawei Liu, Linfeng Zhang, Qian Yao, Zhongbo Tian, Wenhai Wang, Qipeng Guo, Kai Chen, and Biqing Qi. Sdar: A synergistic diffusion-autoregression paradigm for scalable sequence generation. arXiv preprint arXiv:2510.06303 , 2025. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, and Reiichiro Nakano. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 , 2021. Stewart N Ethier and Thomas G Kurtz. Markov processes: characterization and convergence . John Wiley & Sons, 2009. Griffin Floto, Thorsteinn Jonsson, Mihai Nica, Scott Sanner, and Eric Zhengyu Zhu. Diffusion on the probability simplex. arXiv preprint arXiv:2309.02530 , 2023. Xuefeng Gao, Jiale Zha, and Xun Yu Zhou. Reward-directed score-based diffusion models via q-learning. Journal of Machine Learning Research , 26(302):1–46, 2025. Mohsin Hasan, Viktor Ohanesian, Artem Gazizov, Yoshua Bengio, Alán Aspuru-Guzik, Roberto Bondesan, Marta Skreta, and Kirill Neklyudov. Discrete feynman-kac correctors. arXiv preprint arXiv:2601.10403 , 2026. Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Advances in neural information processing systems , 33:6840–6851, 2020. Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Liang Wang, and Weizhu Chen. Lora: Low-rank adaptation of large language models. Iclr , 1(2):3, 2022. 19 Zemin Huang, Zhiyang Chen, Zijun Wang, Tiancheng Li, and Guo-Jun Qi. Reinforcing the diffusion chain of lateral thought with diffusion language models. Advances in Neural Information Processing Systems , 38:152677–152710, 2026. Yanwei Jia and Xun Yu Zhou. Policy gradient and actor-critic learning in continuous time and space: Theory and algorithms. Journal of Machine Learning Research , 23(275):1–50, 2022a. Yanwei Jia and Xun Yu Zhou. Policy evaluation and temporal-difference learning in continuous time and space: A martingale approach. Journal of Machine Learning Research , 23(154):1–55, 2022b. Yanwei Jia and Xun Yu Zhou. q-learning in continuous time. Journal of Machine Learning Research ,24(161):1–61, 2023. Frank P Kelly. Reversibility and Stochastic Networks . Cambridge University Press, 2011. Samar Khanna, Siddhant Kharbanda, Shufan Li, Harshit Varma, Eric Wang, Sawyer Birnbaum, Ziyang Luo, Yanis Miraoui, Akash Palrecha, and Stefano Ermon. Mercury: Ultra-fast language models based on diffusion. arXiv e-prints , pages arXiv–2506, 2025. Jaeyeon Kim, Kulin Shah, Vasilis Kontonis, Sham M. Kakade, and Sitan Chen. Train for the worst, plan for the best: Understanding token ordering in masked diffusions. In Forty-second International Conference on Machine Learning , 2025. URL https://openreview.net/forum?id=DjJmre5IkP .Thomas M. Liggett. Continuous time Markov processes , volume 113 of Graduate Studies in Mathematics . American Mathematical Society, Providence, RI, 2010. An introduction. Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations , volume 2024, pages 39578–39601, 2024. Aiwei Liu, Minghua He, Shaoxun Zeng, Sijun Zhang, Linhao Zhang, Chuhan Wu, Wei Jia, Yuan Liu, Xiao Zhou, and Jie Zhou. Wedlm: Reconciling diffusion language models with standard causal attention for fast inference. arXiv preprint arXiv:2512.22737 , 2025. Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Conference on Learning Representations , 2019. URL https://openreview.net/forum?id=Bkg6RiCqY7 .Aaron Lou, Chenlin Meng, and Stefano Ermon. Discrete diffusion language modeling by estimating the ratios of the data distribution. In International Conference on Machine Learning , 2024. Chenlin Meng, Kristy Choi, Jiaming Song, and Stefano Ermon. Concrete score matching: Generalized score matching for discrete data. Advances in Neural Information Processing Systems , 35:34532– 34545, 2022. Zanlin Ni, Shenzhi Wang, Yang Yue, Tianyu Yu, Weilin Zhao, Yeguo Hua, Tianyi Chen, Jun Song, Cheng Yu, Bo Zheng, and Gao Huang. The flexibility trap: Rethinking the value of arbitrary order in diffusion language models. In Forty-third International Conference on Machine Learning ,2026. URL https://openreview.net/forum?id=kpgURPRMGf .Shen Nie, Qiyang Min, Shaoxuan Xu, Zihao Huang, Yuxuan Song, Yong Shan, Yankai Lin, Wayne Xin Zhao, Chongxuan Li, and Ji-Rong Wen. Improved large language diffusion models. arXiv preprint arXiv:2606.25331 , 2026a. 20 Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Large language diffusion models. Advances in Neural Information Processing Systems , 38:50608–50646, 2026b. Daisuke Oba, Hiroki Furuta, and Naoaki Okazaki. Diffusion-state policy optimization for masked diffusion language models. arXiv preprint arXiv:2602.06462 , 2026. Jingyang Ou, Shen Nie, Kaiwen Xue, Fengqi Zhu, Jiacheng Sun, Zhenguo Li, and Chongxuan Li. Your absorbing discrete diffusion secretly models the conditional distributions of clean data. In 
+
+International Conference on Learning Representations , volume 2025, pages 64972–65009, 2025. Jingyang Ou, Jiaqi Han, Minkai Xu, Shaoxuan Xu, Jianwen Xie, Stefano Ermon, Yi Wu, and Chongxuan Li. Principled RL for diffusion LLMs emerges from a sequence-level perspective. In The Fourteenth International Conference on Learning Representations , 2026. URL https: //openreview.net/forum?id=S5YeC9llIL .Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36:53728–53741, 2023. Pierre H Richemond, Sander Dieleman, and Arnaud Doucet. Categorical sdes with simplex diffusion. 
+
+arXiv preprint arXiv:2210.14784 , 2022. Subham S Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T Chiu, Alexander Rush, and Volodymyr Kuleshov. Simple and effective masked diffusion language models. 
+
+Advances in Neural Information Processing Systems , 37:130136–130184, 2024. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, and Yang Wu. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis Titsias. Simplified and generalized masked diffusion for discrete data. Advances in neural information processing systems , 37:103131– 103167, 2024. Oswin So, Brian Karrer, Chuchu Fan, Ricky T. Q. Chen, and Guan-Horng Liu. Discrete adjoint matching. In The Fourteenth International Conference on Learning Representations , 2026. URL 
+
+https://openreview.net/forum?id=VXB4xxAgOf .Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole. Score-based generative modeling through stochastic differential equations. In International Conference on Learning Representations , 2021. Haoran Sun, Lijun Yu, Bo Dai, Dale Schuurmans, and Hanjun Dai. Score-based continuous-time discrete diffusion models. In The Eleventh International Conference on Learning Representations ,2023. URL https://openreview.net/forum?id=BYWWwSY2G5s .Wenpin Tang and Xun Yu Zhou. Regret of exploratory policy improvement and q-learning. arXiv preprint arXiv:2411.01302 , 2024. Wenpin Tang, Yuming Paul Zhang, and Xun Yu Zhou. Exploratory HJB equations and their convergence. SIAM Journal on Control and Optimization , 60(6):3191–3216, 2022. 21 Xiaohang Tang, Rares Dolga, Sangwoong Yoon, and Ilija Bogunovic. wd1: Weighted policy opti-mization for reasoning in diffusion language models. In The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview.net/forum?id=L2rfd2Czbj .Chao Wang, Hongtao Tian, Tao Yang, Yunsheng Shi, Ting Yao, and Wenbo Ding. Process advantage signal shaping: A paradigm-agnostic middleware for process-supervised rl in llm reasoners. arXiv preprint arXiv:2606.29296 , 2026a. Chenyu Wang, Masatoshi Uehara, Yichun He, Amy Wang, Avantika Lal, Tommi Jaakkola, Sergey Levine, Aviv Regev, Hanchen Wang, and Tommaso Biancalani. Fine-tuning discrete diffusion models via reward optimization with applications to dna and protein design. In International Conference on Learning Representations , volume 2025, pages 47871–47899, 2025. Chenyu Wang, Paria Rashidinejad, DiJia Su, Song Jiang, Sid Wang, Siyan Zhao, Cai Zhou, Shannon Zejiang Shen, Feiyu Chen, Tommi Jaakkola, Yuandong Tian, and Bo Liu. SPG: Sandwiched policy gradient for masked diffusion language models. In The Fourteenth International Conference on Learning Representations , 2026b. URL https://openreview.net/forum?id= 18j5Q49GwN .Guanghan Wang, Gilad Turok, Yair Schiff, Marianne Arriola, and Volodymyr Kuleshov. d2: Improved techniques for training reasoning diffusion language models. In The Forty-third International Conference on Machine Learning , 2026c. Haoran Wang and Xun Yu Zhou. Continuous-time mean–variance portfolio selection: A reinforcement learning framework. Mathematical Finance , 30(4):1273–1308, 2020. Haoran Wang, Thaleia Zariphopoulou, and Xun Yu Zhou. Reinforcement learning in continuous time and space: A stochastic control approach. Journal of Machine Learning Research , 21(198): 1–34, 2020. Yinjie Wang, Ling Yang, Bowen Li, Ye Tian, Ke Shen, and Mengdi Wang. Revolutionizing reinforce-ment learning framework for diffusion large language models. In The Fourteenth International Conference on Learning Representations , 2026d. URL https://openreview.net/forum?id= KNAyc9DMe3 .Chenxing Wei, Jiazhen Kang, Hong Wang, Jianqing Zhang, Hao Jiang, Xiaolong Xu, Ningyuan Sun, Ying He, F Richard Yu, and Yao Shu. Lfpo: Likelihood-free policy optimization for masked diffusion models. arXiv preprint arXiv:2603.01563 , 2026. Zhangchen Xu, Yang Liu, Yueqin Yin, Mingyuan Zhou, and Radha Poovendran. Kodcode: A diverse, challenging, and verifiable synthetic dataset for coding. In Findings of the Association for Computational Linguistics: ACL 2025 , pages 6980–7008, 2025. Ling Yang, Ye Tian, Bowen Li, Xinchen Zhang, Ke Shen, Yunhai Tong, and Mengdi Wang. MMaDA: Multimodal large diffusion language models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2026. URL https://openreview.net/forum?id=wczmXLuLGd .Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. Dream 7b: Diffusion large language models. arXiv preprint arXiv:2508.15487 , 2025. Oussama Zekri and Nicolas Boullé. Fine-tuning discrete diffusion models with policy gradient methods. Advances in Neural Information Processing Systems , 38:152868–152906, 2026. 22 Wenxuan Zhang, Lemeng Wu, Changsheng Zhao, Ernie Chang, Mingchen Zhuge, Zechun Liu, Andy Su, Hanxian Huang, Jun Chen, and Chong Zhou. dtrpo: Trajectory reduction in policy optimization of diffusion large language models. arXiv preprint arXiv:2603.18806 , 2026. Zikun Zhang, Zixiang Chen, and Quanquan Gu. Convergence of score-based discrete diffusion models: A discrete-time analysis. In The Thirteenth International Conference on Learning Representations ,2025. URL https://openreview.net/forum?id=pq1WUegkza .Hanyang Zhao, Wenpin Tang, and David Yao. Policy optimization for continuous reinforcement learning. Advances in Neural Information Processing Systems , 36:13637–13663, 2023. Hanyang Zhao, Haoxian Chen, Ji Zhang, David D Yao, and Wenpin Tang. Scores as actions: a framework of fine-tuning diffusion models by continuous-time reinforcement learning. arXiv preprint arXiv:2409.08400 , 2024. Hanyang Zhao, Haoxian Chen, Ji Zhang, David Yao, and Wenpin Tang. Score as action: Fine tuning diffusion generative models by continuous-time reinforcement learning. In Forty-second International Conference on Machine Learning , 2025a. URL https://openreview.net/forum? id=V5HEX6stS2 .Hanyang Zhao, Dawen Liang, Wenpin Tang, David Yao, and Nathan Kallus. Diffpo: Training diffu-sion llms to reason fast and furious via reinforcement learning. arXiv preprint arXiv:2510.02212 ,2025b. Hanyang Zhao, Wenpin Tang, and David D Yao. Policy optimization for reinforcement learning in continuous time and space. Applied Mathematics & Optimization , 94(1):16, 2026. Siyan Zhao, Devaansh Gupta, Qinqing Zheng, and Aditya Grover. d1: Scaling reasoning in diffusion large language models via reinforcement learning. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025c. URL https://openreview.net/forum?id= 7ZVRlBFuEv .Fengqi Zhu, Rongzhen Wang, Shen Nie, Xiaolu Zhang, Chunwei Wu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Llada 1.5: Variance-reduced preference optimization for large language diffusion models. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 11425–11460, 2026. 
+
+# A Proofs 
+
+A.1 Proof of Proposition 1 
+
+A.1.1 Heuristic Law-of-Large-Numbers Argument 
+
+Analogous to the law-of-large-numbers argument in Wang and Zhou (2020), we first give a heuristic proof. Fix (t, x ) ∈ [0 , T ] × S . Consider N independent copies of the controlled problem run under the same feedback policy π(· | t, x ). In copy i, an action ait ∼ π(· | t, x ) is drawn independently, and over [t, t + ∆ t) the copy attempts a jump to y̸ = x with probability R(t, x, a it)y ∆t + o(∆ t). Let 
+
+Jit (y) := 1{copy i jumps to y over [t, t + ∆ t)}.
+
+Then E[Jit (y) | ait] = R(t, x, a it)y ∆t + o(∆ t), and taking expectation over ait ∼ π,
+
+E[Jit (y)] = 
+
+> ( ∫
+> A
+
+R(t, x, a )y π(a | t, x ) d a
+
+> )
+
+∆t + o(∆ t) = ˜R(t, x ; π(· | t, x )) y ∆t + o(∆ t).
+
+23 Since the copies are i.i.d., the law of large numbers gives, as N → ∞ ,
+
+1
+
+N
+
+> N∑
+> i=1
+
+Jit (y) a.s. 
+
+−−→ E[Jit (y)] = ˜R(t, x ; π(· | t, x )) y ∆t + o(∆ t).
+
+Thus the empirical infinitesimal jump frequency from x to y, averaged over the externally randomized copies, equals the exploratory rate ˜R(t, x ; π(· | t, x )) y.
+
+A.2 Rigorous Proof 
+
+Now we give a rigorous proof by showing that both processes solve the same martingale problem, which for time-inhomogeneous CTMCs on a discrete space has a unique solution. The controlled process Xπ is built by: in state x at time t, first sample a ∼ π(· | t, x ), then evolve infinitesimally under generator La. To identify the law of Xπ we compute the infinitesimal evolution of E[f (t, X πt )] , i.e. the generator obtained after averaging over the action. Let f : [0 , T ] × S → R be bounded. By (3) , conditioning on the state xπt = x and the sampled action aπt = a,
+
+E [f (t + ∆ t, X πt+∆ t) | xπt = x, a πt = a] = ∑
+
+> y∈S
+> (
+
+δ{x, y } + R(t, x, a )y ∆t + o(∆ t)
+
+> )
+
+f (t + ∆ t, y ).
+
+Using ∑ 
+
+> y
+
+δ{x, y }f (t + ∆ t, y ) = f (t + ∆ t, x ) = f (t, x ) + ∂f ∂t (t, x ) ∆ t + o(∆ t) and ⟨R(t, x, a ), f (t +∆t, ·)⟩ = ⟨R(t, x, a ), f (t, ·)⟩ + o(1) , this becomes 
+
+f (t, x ) +   
+
+> (∂f ∂t
+
+(t, x ) + ⟨R(t, x, a ), f (t, ·)⟩
+
+> )
+
+∆t + o(∆ t) = f (t, x ) + Laf (t, x ) ∆ t + o(∆ t).
+
+Now average over a ∼ π(· | t, x ). By linearity of La in R(t, x, a ), and finiteness of S (so the sum over y and the expectation over a may be interchanged), 
+
+E
+
+> a∼π(·| t,x )
+> [
+
+Laf (t, x )] = ∂f ∂t (t, x ) + 
+
+> 〈
+
+E 
+
+> a∼π(·| t,x )
+
+R(t, x, a )  
+
+> ︸︷︷ ︸
+> = ˜R(t,x ;π(·| t,x ))
+
+, f (t, ·)
+
+> 〉
+
+.
+
+Define the averaged generator 
+
+˜Lf (t, x ) := E
+
+> a∼π(·| t,x )
+> [
+
+Laf (t, x )] = ∂f ∂t (t, x ) + ⟨ ˜R(t, x ; π(· | t, x )) , f (t, ·)⟩.
+
+Therefore, we have 
+
+E [f (t + ∆ t, X πt+∆ t) | xπt = x] = f (t, x ) + ˜Lf (t, x ) ∆ t + o(∆ t). (16) On the other hand, the exploratory process ˜Xπ jumps directly with rate ˜R(t, x ; π(· | t, x )) , with no external action sampling. Repeating the identical one-step computation using (4), 
+
+E [f (t + ∆ t, ˜Xπt+∆ t) | ˜Xπt = x] = f (t, x ) + ˜Lf (t, x ) ∆ t + o(∆ t). (17) Comparing (16) and (17) , both processes have the same infinitesimal generator ˜L, and thus have equal one-step transition rates. 24 To conclude equality of the full path laws, we invoke uniqueness of the martingale problem. Define 
+
+M ft := f (t, X t) − f (0 , X 0) − 
+
+> ∫t
+> 0
+
+˜Lf (s, X s) d s
+
+for bounded f : [0 , T ] × S → R. A process X with X0 ∼ ρ solves the martingale problem for ( ˜L, ρ ) if 
+
+M ft is a martingale for every bounded f . Hence, it suffices to prove that both Xπ and ˜Xπ solve this martingale problem. For ˜Xπ, this is the standard Dynkin’s formula (see, e.g., Benton et al. (2024, Lemma 3)) applied to the CTMC with rate ˜R, so M ft ( ˜Xπ) is a martingale by construction. For Xπ,we must check the controlled process is also a martingale solution for the averaged generator ˜L. Let 
+
+Ft = σ(Xπs : s ≤ t). For u < t , we have 
+
+E [M ft (Xπ) − M fu (Xπ) | F u 
+
+> ]
+
+= E
+
+> [
+
+f (t, X πt ) − f (u, X πu ) − 
+
+> ∫tu
+
+˜Lf (s, X πs ) d s 
+
+> ∣∣∣
+
+Fu
+
+> ]
+
+.
+
+Partition [u, t ] into mesh ∆s. By (16) , the conditional increment of f over each subinterval, after averaging the external action aπs (sampled independently of the past given the current state), is 
+
+E [f (s + ∆ s, X πs+∆ s) − f (s, X πs ) | F s 
+
+> ]
+
+= ˜Lf (s, X πs ) ∆ s + o(∆ s).
+
+Crucially, the averaging in (16) uses the Markov property: the action aπs at time s depends on the past only through Xπs , so conditioning on Fs and then on aπs collapses to the state-conditional average Ea∼π(·| s,X πs ), yielding ˜L. Summing over the partition and letting ∆s → 0 (dominated convergence is valid since S is finite and the rates are bounded), the telescoping sum gives 
+
+E [f (t, X πt ) − f (u, X πu ) | F u 
+
+> ]
+
+= E 
+
+> [ ∫tu
+
+˜Lf (s, X πs ) ds  
+
+> ∣∣∣
+
+Fu
+
+> ]
+
+,
+
+and thus E[M ft − M fu | F u] = 0 . Hence, Xπ also solves the martingale problem for ( ˜L, ρ ).Finally, for a CTMC on a finite state space with measurable, bounded time-dependent rate matrix 
+
+˜R(t, ·; π), the martingale problem for ( ˜L, ρ ) is well posed: there exists a unique law on D([0 , T ], S)
+
+solving it (Ethier and Kurtz, 2009, Theorem 4.1). Since both Xπ and ˜Xπ solve the same well-posed martingale problem ( ˜L, ρ ), by uniqueness, they induce the same law on path space: 
+
+Law ((Xπt )t∈[0 ,T ] 
+
+> )
+
+= Law (( ˜Xπt )t∈[0 ,T ]
+
+> )
+
+.
+
+□
+
+A.3 Proof of Lemma 1 
+
+Proof of Lemma 1. Note that 
+
+E
+
+> a∼π(·| t,x )
+
+(Lav(t, x ) + r(t, x, a )) = 
+
+> ∫
+> A
+
+(Lav(t, x ) + r(t, x, a )) π(a | t, x ) d a
+
+= ∂v ∂t (t, x ) + ⟨ ˜R(t, x ; π(· | t, x )) , v (t, ·)⟩ + ˜ r(t, x ; π(· | t, x )) = ˜Lv(t, x ) + ˜ r(t, x ; π(· | t, x )) ,
+
+where we denote ˜Lv(t, x ) = Ea∼π(·| t,x ) Lav(t, x ). Then Lemma 1 follows from Benton et al. (2024, Theorem 5). □
+
+25 A.4 Proof of Theorem 1 
+
+Proof of Theorem 1. The proof is similar to that of Theorem 5 in Jia and Zhou (2022a). By Lemma 1, we replace v(t, x ) by V θ(t, x ) and obtain that for any (t, x ) ∈ [0 , T ] × S ,
+
+∫
+
+> A
+
+(LaV θ(t, x ) + r(t, x, a )) πθ(a | t, x ) d a = 0 .
+
+Taking derivative w.r.t. θ on both sides, we have 
+
+∫
+
+> A
+
+[
+
+(La∇θV θ(t, x )) πθ(a | t, x ) + ( LaV θ(t, x ) + r(t, x, a )) ∇θπθ(a | t, x )
+
+]
+
+da
+
+=
+
+∫
+
+> A
+
+[( 
+
+La∇θV θ(t, x ) + ( LaV θ(t, x ) + r(t, x, a )) ∇θ log πθ(a | t, x )
+
+)
+
+πθ(a | t, x )
+
+]
+
+da = 0 .
+
+By again Lemma 1, we have 
+
+∇θV θ(t, x ) = E
+
+[∫ Tt
+
+(LaV θ(s, x ) + r(s, x, a )) ∇θ log πθ(a | s, x ) d s | Xθt = x
+
+]
+
+.
+
+By letting t = 0 and integrating x, we conclude the proof. □
+
+A.5 Proof of Proposition 2 
+
+Proof of Proposition 2. The proof is similar to that of Theorem 3 in Jia and Zhou (2023). We have 
+
+Q∆t(t, x, a ; π)= E
+
+[∫ t+∆ tt
+
+r(s, X as , a ) d s + E
+
+[∫ Tt+∆ t
+
+r(s, X πs , a πs ) d s + h(XπT ) | Xat+∆ t
+
+]
+
+| X ˆπt = x
+
+]
+
+= E
+
+[∫ t+∆ tt
+
+r(s, X as , a ) d s + V (t + ∆ t, X at+∆ t; π) | X ˆπt = x
+
+]
+
+= E
+
+[∫ t+∆ tt
+
+r(s, X as , a ) d s + V (t + ∆ t, X at+∆ t; π) − V (t, X at ; π) | X ˆπt = x
+
+]
+
++ V (t, x ; π)= E
+
+[∫ t+∆ tt
+
+r(s, X as , a ) d s +
+
+∫ t+∆ tt
+
+LaV (s, X as ; π) d s | X ˆπt = x
+
+]
+
++ V (t, x ; π)= V (t, x ; π) + q(t, x, a ; π) · ∆t + o(∆ t),
+
+where the second to the last equality follows from Dynkin’s formula (Benton et al., 2024, Lemma 3) and the last equality is because of the definition of q and the approximation of the integral. □
+
+A.6 Proof of Proposition 3 
+
+Proof of Proposition 3. For the off-diagonal target y = i̸ = x, the only column contributing to row y is column i, giving (Φ a)y = Φ y,y ay = QT −t(y, x ) ay, matching the embedding. For the diagonal row y = x, (Φ a)x = ∑ 
+
+> i̸=x
+
+Φx,i ai = − ∑ 
+
+> i̸=x
+
+QT −t(i, x ) ai = − ∑  
+
+> y̸=x
+
+R(t, x, a )y, matching the conservative diagonal. Each column i has exactly two nonzero entries, +QT −t(i, x ) in row i and 
+
+−QT −t(i, x ) in row x, so its column sum is QT −t(i, x ) − QT −t(i, x ) = 0 . □
+
+26 A.7 Proof of Theorem 2 
+
+Proof of Theorem 2. The proof follows by applying Lemma 1 in Zhang et al. (2025), where two CTMCs with rate matrices ˜R(t, x ; πθ(· | t, x )) y = QT −t(y, x ) Ea∼πθ (·| t,x ) ay and ˜R(t, x ; πθpre (· | 
+
+t, x )) = QT −t(y, x )sθpre (T − t, x )y are applied to Girsanov’s theorem. □
+
+# B Policy Parameterization Choices 
+
+B.1 Policy over the Full Simplex 
+
+In this section, we present several policy parameterizations that explore the full simplex (and therefore full-vocabulary exploration) and are applicable to fine-tuning MDMs when the vocabulary size V is reasonably small. 
+
+B.1.1 Dirichlet Policy 
+
+We first introduce an unbiased policy by leveraging Dirichlet distribution. Consider 
+
+a(i) 
+
+> t
+
+∼ πθ, (i)(· | t, xt) := 
+
+
+
+Dir( ·; kt · p(i) 
+
+> θ
+
+(xt)) , i ∈ [L] : xit = m,δCat( ·;exit
+
+> )
+
+, i ∈ [L] : xit̸ = m ∈ ∆(∆ V −1).
+
+Here, p(i) 
+
+> θ
+
+(xt) determines the mean of the Dirichlet distribution and the time-dependent positive scalar kt ∈ R+ controls its variance. Then we have Ea(i)  
+
+> t∼πθ, (i)(·| t, xt)
+
+a(i) 
+
+> t
+
+= p(i) 
+
+> θ
+
+(xt) ∈ ∆V −1.
+
+Remark 3 (Interpretation and Intuition of Using Dirichlet Distribution) . The Dirichlet distribution is defined over the simplex as the conjugate prior of the categorical distribution, playing a role somewhat analogous to that of the Gaussian distribution in continuous diffusion models (Richemond et al., 2022). Note that given α ∈ RV
+
+> +
+
+, for any k ∈ R+, it holds that E(Dir (·; α)) = E(Dir (·; k · α)) = (α1/α 0, · · · , α V /α 0)⊤ with α0 := ∑Vj=1 αj . Thus, we can tune k to control the variance of πθ while preserving the mean. Further let ˜αj := αj /α 0, then Var (Dir (·; α)) = ( ˜αj (1 − ˜αj )/(1 + α0)) j∈[V ], from which we can see that if fixing the mean ( pθ(xt)), tuning k (kt) small leads to a large variance and thus adds more exploration; in contrast, tuning k large reduces stochasticity. On the other hand, given a fixed α0 (kt), if ˜αj (pθ(xt)j ) is too large or small (close to 1 or 0), meaning that the model gives a very high or low confidence for the token j, then the variance of aj is small and thus the predicted probability value of the token j is more deterministic; else if ˜αj lies in the middle of [0 , 1] ,meaning that the model is not confident enough on the outcome of token j, then the variance of aj
+
+is large and more exploration and stochasticity are injected in the dynamics by the algorithm. □
+
+Value and Reward Functions. For Dirichlet policy, the value function in (10) becomes 
+
+V θ(t, x)= E
+
+> Xs∼pθs
+
+TRF( X1) + 
+
+∫ 1
+
+> t
+
+IRF( Xs) − β
+
+1 − s
+
+∑
+
+> i:Xis=m
+
+∑
+
+> j∈V
+
+DI (p(i) 
+
+> θ
+
+(Xs)j ∥ p(i) 
+
+> θpre
+
+(Xs)j )
+
+ ds
+
+∣∣∣∣∣ Xt = x
+
+
+
+= E
+
+> Xs∼pθs
+
+TRF( X1) + 
+
+∫ 1
+
+> t
+
+IRF( Xs) − β
+
+1 − s
+
+∑
+
+> i:Xis=m
+
+DKL (p(i) 
+
+> θ
+
+(Xs) ∥ p(i) 
+
+> θpre
+
+(Xs)) 
+
+ ds
+
+∣∣∣∣∣ Xt = x
+
+ .
+
+27 Consequently, for t ∈ [0 , 1) , the intermediate and terminal reward functions are specified as 
+
+˜r(t, xt; πθ(· | t, xt)) = IRF( xt) − β
+
+1 − t
+
+∑
+
+> i:xit=m
+
+DKL (p(i) 
+
+> θ
+
+(xt) ∥ p(i) 
+
+> θpre
+
+(xt)) and h(x1) = TRF( x1).
+
+We can therefore define 
+
+r(t, xt, at) := IRF( xt) + β
+
+1 − t
+
+∑
+
+> i:xit=m
+
+(
+
+DKL (a(i) 
+
+> t
+
+∥ p(i) 
+
+> θ
+
+(xt)) − DKL (a(i) 
+
+> t
+
+∥ p(i) 
+
+> θpre
+
+(xt)) 
+
+)
+
+= IRF( xt) − β
+
+1 − t
+
+∑
+
+> i:xit=m
+
+∑
+
+> j∈V
+
+(a(i) 
+
+> t
+
+)j log p(i) 
+
+> θ
+
+(xt)j
+
+p(i) 
+
+> θpre
+
+(xt)j
+
+, at ∼ πθ(· | t, xt).
+
+We can see that a large r corresponds to a large DKL (a(i) 
+
+> t
+
+∥ p(i) 
+
+> θ
+
+(xt)) , encouraging exploration beyond the current mean pθ, while maintaining a small DKL (a(i) 
+
+> t
+
+∥ p(i) 
+
+> θpre
+
+(xt)) , thereby keeping the exploration close to the pretrained model pθpre .
+
+q-Function. For at ∼ πθ(· | t, xt), we can write 
+
+q(t, xt, at; πθ(· | t, xt)) = IRF( xt)+ 11 − t
+
+∑
+
+> i:xit=m
+
+∑
+
+> j∈V
+
+(a(i) 
+
+> t
+
+)j
+
+V θ(t, x\it ⊙ j) − V θ(t, xt) − β log p(i) 
+
+> θ
+
+(xt)j
+
+p(i) 
+
+> θpre
+
+(xt)j
+
+ .
+
+Probability Ratio. To sample a ∼ πθ(· | t, x) = Dir (·; αθ(t, x)) where αθ(t, x) ∈ RV
+
+> +
+
+, one can first sample V independent Gamma random variables gj ∼ Γ( αθ(t, x )j , 1) , and then set aj = gj / ∑Vk=1 gk
+
+for all j ∈ [V ]. Since the density of Dir( ·; α) is 
+
+Dir( a; α) = Γ( ∑Vj=1 αj )
+
+∏Vj=1 Γ( αj )
+
+> V
+
+∏
+
+> j=1
+
+aαj −1 
+
+> j
+
+,
+
+we have 
+
+log Dir( a; α) = 
+
+> V
+
+∑
+
+> j=1
+
+(αj − 1) log aj −
+
+> V
+
+∑
+
+> j=1
+
+log Γ( αj ) + log Γ( 
+
+> V
+
+∑
+
+> j=1
+
+αj ).
+
+Then we obtain the probability ratio 
+
+πθ(a)
+
+πθold (a) = exp(log πθ(a) − log πθold (a)) = exp 
+
+
+
+> V
+
+∑
+
+> j=1
+
+(αθj − αθold  
+
+> j
+
+) log aj −
+
+> V
+
+∑
+
+> j=1
+
+log Γ( αθj )Γ( αθold  
+
+> j
+
+) + log Γ( ∑Vj=1 αθj )Γ( ∑Vj=1 αθold  
+
+> j
+
+)
+
+ .
+
+28 Specific to MDMs, we have 
+
+ρθt = πθ(at | t, xt)
+
+πθold (at | t, xt)= ∏
+
+> i∈Bt:xit=m
+
+πθ, (i)(a(i) 
+
+> t
+
+| t, xt)
+
+πθold ,(i)(a(i) 
+
+> t
+
+| t, xt)= ∏
+
+> i∈Bt:xit=m
+
+exp 
+
+∑
+
+> j∈V
+
+kt(p(i) 
+
+> θ
+
+(xt)j − p(i) 
+
+> θold
+
+(xt)j ) log( a(i) 
+
+> t
+
+)j − ∑
+
+> j∈V
+
+log Γ( kt · p(i) 
+
+> θ
+
+(xt)j )Γ( kt · p(i) 
+
+> θold
+
+(xt)j )
+
+
+
+= exp 
+
+ ∑
+
+> i∈Bt:xit=m
+
+∑
+
+> j∈V
+
+kt(p(i) 
+
+> θ
+
+(xt)j − p(i) 
+
+> θold
+
+(xt)j ) log( a(i) 
+
+> t
+
+)j − log Γ( kt · p(i) 
+
+> θ
+
+(xt)j )Γ( kt · p(i) 
+
+> θold
+
+(xt)j )
+
+ , (18) where Bt ⊂ [L] is the sequence indices of the current block corresponding to the current time step t.
+
+B.1.2 Temperature Softmax Policy 
+
+Although Dirichlet policy is unbiased, the probability ratio has a complicated expression and suffers from high numerical instability, leading to unstable training. In dLLMs, people typically sample rollouts according to softmax (f (i) 
+
+> θ
+
+(xt)/τ ) (Zhao et al., 2025c), where the temperature τ ≥ 0 control the sampling stochasticity (and exploration), and higher temperature leads to higher stochasticity: if τ = 0 , it reduces to perform deterministic greedy sampling by unmasking the token with the largest logit value, arg max j∈V f (i) 
+
+> θ
+
+(xt)j ; if τ = 1 , then it is vanilla sampling according to the softmax applied to the model logits f (i) 
+
+> θ
+
+(xt); and if τ = + ∞, it corresponds to sampling from the uniform distribution over V, which is totally random. Zhao et al. (2025c) chose τ = 0 .9 for training. Here, since we view the probability simplex ∆V −1 as the action space, dividing the logits by a single τ followed by applying softmax cannot make the resulting probability vectors cover the whole high-dimensional simplex ∆V −1 by varying a one-dimensional τ . Thus, we turn to consider 
+
+dimension-aware temperature softmax exploration: 
+
+a(i) 
+
+> t
+
+∼ πθ, (i)(· | t, xt) then a(i) 
+
+> t
+
+=
+
+
+
+softmax 
+
+(
+
+(f (i) 
+
+> θ
+
+(xt)j /τ j )j∈V 
+
+)
+
+, i ∈ [L] : xit = m,
+
+Cat( ·; exit ), i ∈ [L] : xit̸ = m ∈ ∆V −1.
+
+where τj i.i.d. 
+
+∼ p, j ∈ V and p is a continuous probability distribution over (0 , +∞) which is to be picked. Here, each dimension of the logit f (i) 
+
+> θ
+
+(xt)j is perturbed by a different but i.i.d. τj , therefore enhancing the degree of freedom of τ to V while avoiding increasing much complexity by specifying only a one-dimensional probability density p, in contrast to a complicated (V − 1) -dimensional Dirichlet density. The dimension-aware temperature softmax approach also allows us to give an estimation of the probability ratio. Suppose a(i) 
+
+> t
+
+= softmax (( f (i) 
+
+> θold
+
+(xt)j /τ j )j∈V ) for some {τj }j∈V . One can see that there exists τ ′ 
+
+> j
+
+= f (i) 
+
+> θ
+
+(xt)j · τj /f (i) 
+
+> θold
+
+(xt)j such that a(i) 
+
+> t
+
+= softmax (( f (i) 
+
+> θold
+
+(xt)j /τ j )j∈V ) = softmax(( f (i) 
+
+> θ
+
+(xt)j /τ ′ 
+
+> j
+
+)j∈V ). Hence, we obtain that 29 ρθt = πθ(at | t, xt)
+
+πθold (at | t, xt) = ∏
+
+> i∈Bt:xit=m
+
+πθ, (i)(a(i) 
+
+> t
+
+| t, xt)
+
+πθold ,(i)(a(i) 
+
+> t
+
+| t, xt)
+
+≈ ∏
+
+> i∈Bt:xit=m
+
+∏
+
+> j∈V
+
+f (i) 
+
+> θ
+
+(xt)j
+
+f (i) 
+
+> θold
+
+(xt)j
+
+· p(τ ′ 
+
+> j
+
+)
+
+p(τj )= ∏
+
+> i∈Bt:xit=m
+
+∏
+
+> j∈V
+
+f (i) 
+
+> θ
+
+(xt)j
+
+f (i) 
+
+> θold
+
+(xt)j
+
+· p(f (i) 
+
+> θ
+
+(xt)j · τj /f (i) 
+
+> θold
+
+(xt)j )
+
+p(τj ) , (19) where the approximation arises because the softmax function is not injective. One can also consider adaptive τt, where (τt)j i.i.d. 
+
+∼ pt, j ∈ V for a time-dependent continuous distribution pt. In particular, if we choose time-dependent pt as Exp (λt) which we refer to as exponential-temperature softmax policy, then 
+
+ρθt ≈ exp 
+
+ ∑
+
+> i∈Bt:xit=m
+
+∑
+
+> j∈V
+
+log f (i) 
+
+> θ
+
+(xt)j
+
+f (i) 
+
+> θold
+
+(xt)j
+
++ λt(τt)j
+
+1 − f (i) 
+
+> θ
+
+(xt)j
+
+f (i) 
+
+> θold
+
+(xt)j
+
+ .
+
+B.1.3 Logistic-Normal Policy 
+
+Although the temperature-softmax policy is easy to implement, its probability ratio cannot be computed exactly because the softmax mapping is not injective: softmax (f ) = softmax (f + c) for any c ∈ R. We therefore consider the logistic-normal distribution as the policy distribution, which admits an analytical probability density (Floto et al., 2023). Logistic Transform LT : RV −1 → ∆V −1 defined by 
+
+LT( y) := 
+
+
+
+> eyi
+> 1+
+
+∑V −1  
+
+> j=1 eyj
+
+, if i ∈ [V − 1] ,
+
+> 11+
+
+∑V −1  
+
+> j=1 eyj
+
+, if i = V
+
+is a bijection. At time t given partially masked sequence (state) xt, we have model logits fθ(xt) ∈ RV .Vanilla sampling: softmax (fθ(xt)) . Now consider exploring this logits via Logistic-Normal. Let 
+
+pθ(xt)j := fθ(xt)j − fθ(xt)V (subtracting a baseline to reduce one dimension) for all j ∈ [V − 1] .Then pθ(xt) ∈ RV −1. Then let the action be 
+
+at ∼ LT( N (pθ(xt), σ 2 
+
+> t
+
+IV −1)) .
+
+If σt = 0 , then at = softmax (fθ(xt)) . The density of at has a closed form (see, e.g., Floto et al. (2023, Equation (4))). Now given stored a ∼ πθold , let y = LT −1(a) ∈ RV −1 and suppose yj = pθold ,j + σϵ j
+
+for j = 1 , · · · , V − 1 (In practice, we store ϵj and pθold ,j for all j = 1 , · · · , V − 1 during rollout), we have the probability ratio 
+
+ρθ = πθ(a|x)
+
+πθold (a|x) = exp 
+
+ 12σ2 
+
+> V−1
+
+∑
+
+> j=1
+
+(
+
+(yj − pθold ,j )2 − (yj − pθ,j )2)
+
+= exp 
+
+ 12σ2 
+
+> V−1
+
+∑
+
+> j=1
+
+(
+
+σ2ϵ2 
+
+> j
+
+− (pθold ,j − pθ,j + σϵ j )2) , (20) in which everything is dependent on t.30 Remark 4. We empirically observe that the three policies described above lead to unstable training. Since these policies are supported over the entire simplex, the probability ratios in (18) , (19) , and (20) involve summation over the entire vocabulary, which can result in exploding gradient norms when the vocabulary is large. Furthermore, the probability ratios may become excessively large during training. In (18) , this is caused by the singularity of log Γ( ·), while in (19) , it arises when the old logits are close to zero. Consequently, most probability ratios are clipped into the interval 
+
+[1 − ϵ, , 1 + ϵ] by PPO or GRPO, leading to negligible policy updates and ineffective learning. Although these policies are not suitable for training, we empirically observe that exploring the entire simplex during inference can be beneficial for generating training rollouts. □
+
+B.2 Policies over the Simplex Vertices 
+
+Motivated by these observations stated in Remark 4, in this section we introduce a class of policies that support on the vertices of the simplex. This design avoids the optimization issues associated with full-simplex policies and yields more stable and effective training. We first recall the d1 loss (Eq (4) in Zhao et al. (2025c)) is equivalent to (if we do not consider random masking of prompts) 
+
+Ld1(θ) := E   
+
+> q∼D ,{(xg, 0,xg, 1,··· ,xg,T )}Gg=1 ∼πθold (·| q)
+
+ 1
+
+G
+
+> G
+
+∑
+
+> g=1
+
+1
+
+L
+
+> L
+
+∑
+
+> t=1
+
+min 
+
+(
+
+ρθg,t Ag, clip 
+
+(
+
+ρθg,t , 1 − ϵ, 1 + ϵ
+
+)
+
+Ag
+
+) ,
+
+(21) where 
+
+ρθg,t = p(ig,t ) 
+
+> θ
+
+(xig,t  
+
+> g,T
+
+| xg, 0)
+
+p(ig,t ) 
+
+> θold
+
+(xig,t  
+
+> g,T
+
+| xg, 0) . (22) This loss is autoregressive (AR)-style, where the inner summation in (21) is computed to average the sequence-length steps. Given this insight, the corresponding d1 sampling procedure here should be understood in the sense that exactly one token is unmasked at each time step; in (22) , ig,t ∈ [L]
+
+is the masked token index/position with the highest confidence in the current block at time step t
+
+for the g-th denoising trajectory and xig,t  
+
+> g,t
+
+= m is to be unmasked at time t.However, the actual policy for the d1 sampling is diffusion-style (see Appendix D in Zhao et al. (2025c)), i.e., two masked tokens with the highest confidence score are unmasked at one time step: 
+
+a(i) 
+
+> t
+
+∼ πθ, (i)(· | t, xt) then a(i) 
+
+> t
+
+=
+
+
+
+ej w.p. p(i) 
+
+> θ
+
+(xt)j , j ∈ V , for i ∈ M Top2Conf  
+
+> t
+
+,
+
+exit , for i / ∈ M Top2Conf 
+
+> t
+
+∈ ∆V −1. (23) Note that the action distribution for a position i ∈ M Top2Conf  
+
+> t
+
+is supported on the V vertices of the probability simplex ∆V −1. Apparently, there is a gap between the diffusion-style sampling procedure (23) and the AR-style loss construction for the d1 loss (21) . To be more specific, if we look at the loss (21) in which the probability ratios are only conditioned on the initial state/prompt 
+
+x0 and the inner sum is averaged over the sequence length steps, the sampling procedure is as if 
+
+a(i) 
+
+> t
+
+∼ πθ, (i)(· | t, xt) then a(i) 
+
+> t
+
+=
+
+
+
+ej w.p. p(i) 
+
+> θ
+
+(x0)j , j ∈ V , for i = it,
+
+exit , for i̸ = it
+
+∈ ∆V −1, (24) which in fact/in reality is not this case as shown in (23) . The “as if” argument is: since the token 
+
+xit 
+
+> T
+
+∈ V is sampled from a(it) 
+
+> t
+
+∈ ∆V −1, by (24) we have a(it) 
+
+> t
+
+= exitT
+
+, and thus the policy probability 31 ratio 
+
+πθ(at | t, xt)
+
+πθold (at | t, xt) = πθ, (it)(a(it) 
+
+> t
+
+| t, xt)
+
+πθold ,(it)(a(it) 
+
+> t
+
+| t, xt) = p(it) 
+
+> θ
+
+(xit 
+
+> T
+
+| x0)
+
+p(it) 
+
+> θold
+
+(xit 
+
+> T
+
+| x0) ,
+
+which coincides with the probability ratio (22) of d1. Motivated by our continuous-time RL perspective, we bridge this gap by revising the d1 loss into our loss (15) , which is consistent with the underlying continuous-time RL dynamics and the inference procedure. However, evaluating (15) exactly requires one forward pass on each reconstructed state xg,t , for every step t = 1 , . . . , T with gradients enabled. With T on the order of 128 –512 this is the dominant cost in both memory and wall-clock time: the autograd graph for every step is held until the backward pass. To address this, one can consider gradient checkpointing across the step loop by recomputing each step’s forward during backward instead of storing all activations. This keeps the math identical and brings peak memory back to roughly one forward graph at a time, at the cost of one extra forward pass per step. The extra recomputation makes the policy pass slower, with roughly 2×
+
+the forwards for that pass. The other practical option is to subsample the trajectory described in Section 4.2, compute the loss on a random subset of N denoising steps each update, trading exactness for memory. Trajectory subsampling reduces the number of evaluated steps per optimizer update from T to a small N ≪ T , giving an approximately T /N reduction in the number of policy forward/backward passes, at the cost of a stochastic but unbiased estimate (Proposition 4) of the per-rollout mean. In Figure 3, we show the accuracy trade-off of CTRL with different values of N
+
+in the GSM8K benchmark. We found that N = 8 is a favorable balance between the accuracy and training efficiency, which reduces the convergence time without compromising the final reward. 
+
+Figure 3: Ablation on N on GSM8K. 
+
+Proposition 4. Write ℓt(θ) := min (ρtAt, clip (ρt, 1 − ϵ, 1 + ϵ)At) for the per-step GRPO surrogate and ¯ℓt(θ) := ∑Tt=1 ℓt(θ)/T . For a subset T drawn uniformly without replacement from [T ] with 
+
+|T | = N ,
+
+E
+
+> T
+> [̂
+
+ℓT (θ)] = ¯ℓ(θ).
+
+Proof of Proposition 4. For uniform sampling without replacement, each index t has marginal 32 inclusion probability P(t ∈ T ) = N/T . Hence, 
+
+E
+
+> T
+
+[̂ ℓT (θ)] = 1
+
+N
+
+> T
+
+∑
+
+> t=1
+
+P(t ∈ T ) ℓt(θ) = 1
+
+N
+
+> T
+
+∑
+
+> t=1
+
+NT ℓt(θ) = 1
+
+T
+
+> T
+
+∑
+
+> t=1
+
+ℓt(θ) = ¯ℓ(θ).
+
+□
+
+# C PPO Implementation Insights for DLLMs 
+
+In this section, we present an alternative approach to value function approximation for PPO that avoids training a value network by leveraging sampled rollouts and a terminal reward function, inspired by DISPO (Oba et al., 2026). In PPO, computing the intermediate advantage requires estimating the value function: for at ∼ πθ(· | t, xt), we can write 
+
+q(t, xt, at; πθ(· | t, xt)) = 11 − t
+
+∑
+
+> i∈M TopkConf
+> t
+
+∑
+
+> j∈V
+
+(a(i) 
+
+> t
+
+)j
+
+V θ(t, x\it ⊙ j) − V θ(t, xt) − β log p(i) 
+
+> θ
+
+(xt)j
+
+p(i) 
+
+> θpre
+
+(xt)j
+
+ .
+
+One may drop the scalar factor 11−t and set β = 0 first, then we have qt := q(t, xt, at; πθ(· | t, xt)) ≈
+
+∑
+
+> i∈M TopkConf
+> t
+
+∑ 
+
+> j∈V
+
+(a(i) 
+
+> t
+
+)j
+
+(
+
+V θ(t, x\it ⊙ j) − V θ(t, xt)
+
+)
+
+. Noting that a(i) 
+
+> t
+
+is a probability distribution over V, we can write 
+
+qt ≈ ∑
+
+> i∈M TopkConf
+> t
+
+E
+
+> j∼a(i)
+> t
+
+(
+
+V θ(t, x\it ⊙ j) − V θ(t, xt)
+
+)
+
+≈ ∑
+
+> i∈M TopkConf
+> t
+
+(
+
+V θ(t, x\it ⊙ xit+1 ) − V θ(t, xt)
+
+)
+
+≈ V θ(t, xt+1 ) − V θ(t, xt),
+
+where the last approximation is because we simultaneously unmask the k tokens xit+1 (for i ∈MTopkConf  
+
+> t
+
+) at time step t. To estimate the value functions, in the rollouts, for each time step t,we resample Z outputs {ot,z }Zz=1 from xt by one-step generation using the current logits fθ(xt),and then estimate V θ(t, xt) via the Monte Carlo average 1
+
+> Z
+
+∑Zz=1 RM (ot,z ). Hence, we have the estimator 
+
+qt ≈ 1
+
+Z
+
+> Z
+
+∑
+
+> z=1
+
+(RM( ot+∆ t,z ) − RM( ot,z )) .
+
+In a rollout generated by πθold , given xt at time t, we resample Z outputs {ot,z }Zz=1 where each 
+
+ot,z fills all the masked positions of xt via one-step generation according to softmax (f (i) 
+
+> θold
+
+(xt)) 
+
+(i ∈ [L] : xit = m), and compute Vt := 1
+
+> Z
+
+∑Zz=1 RM (ot,z ). We store only Vt and Vt+1 in order to compute qt = Vt+1 − Vt. After all {qt}t∈[T ] have been computed and stored, the intermediate values {Vt}t∈[T ] are discarded, thereby reducing the memory footprint. However, we found that this estimator for q leads to unstable training and exhibits high variance, possibly because its estimates are coarse at small t during the early denoising steps due to one-step generation. We leave further stabilization techniques and engineering improvements for PPO to future work. 33 D Experiment Details 
+
+D.1 Synthetic Example 
+
+DAM gives the entropy-regularized optimum p∗(X1) ∝ p∗(X1)eh(X1):
+
+p∗(i, j ) ∝ pbase (i, j ) exp (h(i, j )/β ) = exp (h(i, j )/β )∑ 
+
+> a,b
+
+exp (h(a, b )/β ) , (25) since pbase is uniform. 
+
+Reward Functions. Following So et al. (2026), the (terminal) reward h(·) is assigned via upweighting the diagonal blocks by 4.6, superdiagonal and subdiagonal blocks by 4.0, and other off-diagonal blocks by 3.4.
+
+Implementation. All experiments are conducted on CPU. The hyperparameters for the three methods are summarized in Table 3.                                 
+
+> Quantity PPO DAM D1
+> Objective value matching adjoint matching reward max. (GRPO) Critic exact tabular none (adjoint) none (critic-free) Estimator exact expectation MC adjoint, K=12 one-step log-prob Group size G——64
+> Inner updates μ414
+> Clip ϵ0.2—0.2
+> KL weight β6.06.06.0
+> Learning rate 0.30.30.3
+
+Table 3: Hyperparameters. The problem definition is identical across methods, so performance differences are attributable to the algorithm. 
+
+Evaluation. After each iteration we compute the exact terminal grid pθ(i, j ) and report KL (p∗ ∥ pθ)
+
+against (25) , the average reward Epθ [h], and the aggregated mass of each of the 25 blocks. Ta-ble 4 reports the quantitative convergence results in terms of KL divergence and average reward, corresponding to the last two subfigures in Figure 1. 
+
+Method KL( p∗ ∥ pθ) avg. reward PPO 0.00044 2.793 
+
+DAM 0.004 2.560 
+
+D1 0.0769 2.282 
+
+optimal p∗ 0 2.850 
+
+Table 4: Final performance on the checkerboard task ( 400 iterations). 
+
+D.2 Mathematical Reasoning 
+
+Inference. Following d1 (Zhao et al., 2025c), our training rollouts are generated by Top2 confidence (i.e., k = 2 in the main text) and random sampling using the semi-autoregressive decoding strategy. Specifically, we have T = L/ 2 and the 2 tokens with the highest confidence within the current block 34 are unmasked, with the unmasked tokens sampled from pθ(xt), at each time step. The block size is set to 32 , and once all the tokens in the current block are unmasked, we move to the next block of 
+
+32 tokens. To encourage exploration, we adopt a dimension-aware temperature-softmax strategy, where the temperature is sampled from a time-independent exponential distribution, described in Appendix B.1.2, to encourage exploration: 
+
+p(i) 
+
+> θ
+
+(xt) = softmax(( f (i) 
+
+> θ
+
+(xt)/τ j )j∈V ), i ∈ M Top2Conf  
+
+> t
+
+,
+
+where τj i.i.d. 
+
+∼ Exp (λ), j ∈ V . In Figure 4, we show the ablation results with different choices of λ
+
+on GSM8K with a sequence length of 128. We can see that λ = 2 .0 yields a slightly better result, which we take in our experiments. When λ is either too large or too small, the exploration becomes excessive, causing the model logits to be overly perturbed and consequently degrading generation quality. The terminal reward functions TRF (·) for the four tasks are verifiable reward functions taken the same as d1 (see Appendix D.1.1 in Zhao et al. (2025c)). Our intermediate verifiable reward functions 
+
+IRF( ·) are specified as follows: 
+
+• GSM8K. The intermediate reward consists of three non-positive components: 1. an answer-region legality penalty , applying −1.0 if the <answer> · · · </answer> region is fully visible but contains any visible character that does not belong to the integer category (letters, currency symbols, commas, decimal points, or digit runs split by visible content); 2. a trailing-content penalty of −0.001 per visible character after </answer> . The maximal amount of penalty from this component is capped at −0.5 ;3. a tag-structure penalty of −0.125 per duplicated fully visible tag and −0.5 for an impossible tag order (e.g. </answer> · · · <answer> ). Masked positions are never penalized. 
+
+• MATH500. The intermediate reward consists of three non-positive components: 1. an answer-region legality penalty , adapted to the \boxed{} format of the terminal reward: applying −1.0 if the <answer> · · · </answer> region is fully visible but contains no \boxed{ · · · } expression; 2. a trailing-content penalty of −0.001 per visible character after </answer> . The maximal amount of penalty from this category is capped at −0.5;3. a tag-structure penalty of −0.125 per duplicated fully visible tag and −0.5 for an impossible tag order. Masked positions are never penalized. 
+
+• Countdown. The sequence is split at the first fully visible <answer> tag, and the intermediate reward consists of two components, with target correctness left to TRF( ·):1. an equation-shaping award on the reasoning region: each unique, fully visible arithmetic equation is verified with exact rational arithmetic and awarded +0 .05 for correctness and 
+
+−0.5 otherwise. Partially masked equations are skipped; 2. an answer-region legality penalty , applying a flat −1.0 if any illegal visible character appears (only digits, +, −, ∗, /, parentheses, and whitespace are permitted) or if a fully determined digit run does not match an available number. 35 • Sudoku. The intermediate penalty is evaluated in the following steps: 1. Pad or truncate the extracted answer to a 16-character grid as in the terminal validator, and only the cells from positions empty in the original puzzle are inspected; 2. Check each inspected cell for value legality , only a value belongs to {1, 2, 3, 4} is legal; 3. Compute intermediate penalty according to 
+
+rintermediate = #{invalid inspected grids }
+
+#{all inspected grids } .
+
+All four IRF ’s are mask-tolerant: they score partially denoised sequences by grading only visible content. The intermediate scores are scaled by a tunable weight hyperparameter αintermediate (0.05 
+
+by default). 
+
+Implementation. We build our implementation on top of the same codebase of d1 1. Our CTRL uses Low-Rank Adaptation (LoRA) (Hu et al., 2022) with a rank of r = 128 and scaling factor 
+
+α = 64 , and AdamW (Loshchilov and Hutter, 2019) parameters (β1, β 2) = (0 .9, 0.99) with a weight decay of 0.1 and learning rate 3 × 10 −6. All our training is conducted on 7 NVIDIA L40S GPUs, batch size of 6 per GPU and use gradient accumulation steps of 2. For GRPO hyperparameters, the group size G = 6 , the number of inner gradient update is 6, and the clip parameter ϵ = 0 .5.The same configuration is also used for the three baseline training, and we set N = 16 in d2 (Wang et al., 2026c) as the authors suggest. 
+
+Figure 4: Ablation on λ on GSM8K. Figure 5: Convergence of intermediate re-ward of Sudoku. 
+
+> 1https://github.com/dllm-reasoning/d1
+
+36

@@ -6,95 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-16
-- 运行时间：2026-07-16 21:34:57 UTC
+- 最新运行日期：2026-07-17
+- 运行时间：2026-07-17 21:37:08 UTC
 - 运行状态：成功
-- 本次总论文数：25
-- 精读区：14
+- 本次总论文数：17
+- 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日精选25篇论文，精读14篇，重点聚焦智能体自主进化与机器人操作系统两大方向。最值得关注的是10.0分的《Self-Evolving Agent Harnesses via Gated Semantic Quality-Diversity》与9.0分的《ABot-AgentOS: A General Robotic Agent OS with Lifelong Multi-modal Memory》。普通读者可优先速读《ToolAtlas: Learning Once, Reusing Everywhere with Tool-Side Memory》等实际应用方向。
-- 详情：[/202607/16/README](/202607/16/README)
+今日精选17篇论文，两篇9.0分精读聚焦智能体自我提升与语言边界。最值得关注方向：奖励机制如何揭示状态结构，以及递归自我改进多智能体架构。建议普通读者重点追踪智能体经验学习与具身操作的融合趋势。
+- 详情：[/202607/17/README](/202607/17/README)
 
 ### 精读区论文标签
-1. [Self-Evolving Agent Harnesses via Gated Semantic Quality-Diversity](/202607/16/2607.13683v1-self-evolving-agent-harnesses-via-gated-semantic-quality-diversity)  
-   标签：评分：10.0/10、query:agentic-rl
-   evidence：提出自我进化智能体框架，分离变更提议与信用分配
-2. [ABot-AgentOS: A General Robotic Agent OS with Lifelong Multi-modal Memory](/202607/16/2607.10350v2-abot-agentos-a-general-robotic-agent-os-with-lifelong-multi-modal-memory)  
+1. [When Does Reward Teach State? A Hidden-Automaton Instrument and the Group-Language Boundary](/202607/17/2607.11953v1-when-does-reward-teach-state-a-hidden-automaton-instrument-and-the-group-language-boundary)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：机器人代理的终身多模态记忆
-3. [LOGOS: A Living Logic for AI Agent Teams That Evolve With Humans](/202607/16/2607.10878v1-logos-a-living-logic-for-ai-agent-teams-that-evolve-with-humans)  
+   evidence：使用隐藏自动机探测强化学习智能体的潜在状态表征
+2. [Self-Aware Recursively Self-Improving Agents for Personal Singularity: A Goal-, Scope-, Tool-, and Benchmark-Driven Multi-Agent Architecture](/202607/17/2607.12254v2-self-aware-recursively-self-improving-agents-for-personal-singularity-a-goal--scope--tool--and-benchmark-driven-multi-agent-architecture)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：多智能体团队自我进化与治理的可插拔层
-4. [SCALECUA: Scaling Computer Use Agents with Verifiable Task Synthesis and Efficient Online RL](/202607/16/2607.11185v1-scalecua-scaling-computer-use-agents-with-verifiable-task-synthesis-and-efficient-online-rl)  
+   evidence：自我意识递归自我改进智能体
+3. [Directional Constraints for Efficient Exploration in Safe Reinforcement Learning](/202607/17/2607.12784v1-directional-constraints-for-efficient-exploration-in-safe-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：通过可验证任务合成扩展计算机使用智能体的在线强化学习
-5. [Speculate with Memory: Lossless Acceleration for LLM Agents](/202607/16/2607.12236v1-speculate-with-memory-lossless-acceleration-for-llm-agents)  
+   evidence：带有方向约束的安全强化学习探索
+4. [TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents](/202607/17/2607.13988v1-trace-turn-level-reward-assignment-via-credit-estimation-for-long-horizon-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：LLM智能体的记忆架构：对比转移表、情景记忆、困惑追踪器
-6. [Track, Rank, Crack: Epistemic Working Memory Scales Multi-Hop Reasoning in Language Agents](/202607/16/2607.12267v1-track-rank-crack-epistemic-working-memory-scales-multi-hop-reasoning-in-language-agents)  
+   evidence：面向智能体强化学习的密集信用分配方法
+5. [Reward-Free Evolving Agents via Pairwise Validator](/202607/17/2607.14408v1-reward-free-evolving-agents-via-pairwise-validator)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：提出结构化认知工作记忆，管理已确认事实、假设和待解问题
-7. [PM-Bench: Evaluating Prospective Memory in LLM Agents](/202607/16/2607.12385v1-pm-bench-evaluating-prospective-memory-in-llm-agents)  
+   evidence：基于成对验证器的无奖励自我进化代理
+6. [SEED: Self-Evolving On-Policy Distillation for Agentic Reinforcement Learning](/202607/17/2607.14777v1-seed-self-evolving-on-policy-distillation-for-agentic-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：评估LLM智能体前瞻记忆的基准
-8. [Self-Improvements in Modern Agentic Systems: A Survey](/202607/16/2607.13104v1-self-improvements-in-modern-agentic-systems-a-survey)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：关于通过经验驱动的自适应自我改进自主智能体的综述
-9. [Deconstructing Actor-Critic: A Large-scale Empirical Study of Design Components for Practitioners](/202607/16/2607.13274v1-deconstructing-actor-critic-a-large-scale-empirical-study-of-design-components-for-practitioners)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：对演员-评论家组件的大规模实证研究
-10. [Memory as a Controlled Process: Learned Adaptive Memory Management for LLM Agents](/202607/16/2607.13591v1-memory-as-a-controlled-process-learned-adaptive-memory-management-for-llm-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：LLM智能体的学习自适应记忆管理
-11. [Learning Robust Execution in Robotic Manipulation with Agentic Reinforcement Learning](/202607/16/2607.13818v1-learning-robust-execution-in-robotic-manipulation-with-agentic-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向鲁棒机器人操作的智能体强化学习框架
-12. [SPyCE: Skill-Policy Co-evolution for Multimodal Agents](/202607/16/2607.13854v1-spyce-skill-policy-co-evolution-for-multimodal-agents)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：多模态智能体的技能-策略共同进化方法
-13. [A Self-Evolving Agent for Longitudinal Personal Health Management](/202607/16/2607.13940v1-a-self-evolving-agent-for-longitudinal-personal-health-management)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体自我进化与适应技术
-14. [Do Agent Optimizers Compound? A Continual-Learning Evaluation on Terminal-Bench 2.0](/202607/16/2607.14004v1-do-agent-optimizers-compound-a-continual-learning-evaluation-on-terminal-bench-20)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体自我进化与适应技术
+   evidence：将在线轨迹转化为事后技能的自我进化策略蒸馏方法
 
 ### 速读区论文标签
-1. [ToolAtlas: Learning Once, Reusing Everywhere with Tool-Side Memory](/202607/16/2607.11126v1-toolatlas-learning-once-reusing-everywhere-with-tool-side-memory)  
+1. [Exploratory, Communicative, and Deployable: Vision-Driven Embodied Agents for Open-World Mobile Manipulation](/202607/17/2607.13653v1-exploratory-communicative-and-deployable-vision-driven-embodied-agents-for-open-world-mobile-manipulation)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：智能体记忆架构
-2. [A Glimpse into Long-term Physical Coexistence with Intelligent Robots](/202607/16/2607.11377v1-a-glimpse-into-long-term-physical-coexistence-with-intelligent-robots)  
+   evidence：针对视觉驱动的具身智能体进行在线强化学习以实现探索和操作
+2. [Experience Memory Graph: One-Shot Error Correction for Agents](/202607/17/2607.13884v1-experience-memory-graph-one-shot-error-correction-for-agents)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：具有长时记忆和协调能力的多机器人智能体
-3. [Knowledge- and Gradient-Guided Reinforcement Learning for Parametrized Action Markov Decision Processes](/202607/16/2607.12924v1-knowledge--and-gradient-guided-reinforcement-learning-for-parametrized-action-markov-decision-processes)  
+   evidence：经验记忆图用于一次性错误纠正
+3. [MemoHarness: Agent Harnesses That Learn from Experience](/202607/17/2607.14159v1-memoharness-agent-harnesses-that-learn-from-experience)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：面向自主智能体的强化学习
-4. [Knowledge- and Gradient-Guided Reinforcement Learning for Parametrized Action Markov Decision Processes](/202607/16/2607.12924v2-knowledge--and-gradient-guided-reinforcement-learning-for-parametrized-action-markov-decision-processes)  
+   evidence：具有双层经验库的自适应代理框架用于记忆管理
+4. [Branching Policy Optimization: Sandbox-Native Language Agent Reinforcement Learning](/202607/17/2607.14171v1-branching-policy-optimization-sandbox-native-language-agent-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：利用领域知识的神经符号强化学习提升样本效率
-5. [Self-Improving AI Coding Agents Through Accumulated Behavioral Rules: A Closed-Loop Framework](/202607/16/2607.13091v1-self-improving-ai-coding-agents-through-accumulated-behavioral-rules-a-closed-loop-framework)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：通过累积行为规则实现编码智能体的闭环自我改进
-6. [Oracle Agent Memory as an Enterprise Memory Substrate for Long-Horizon AI Agents](/202607/16/2607.13157v1-oracle-agent-memory-as-an-enterprise-memory-substrate-for-long-horizon-ai-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：Oracle代理记忆作为长程智能体的企业级记忆基板
-7. [Harness VLA: Steering Frozen VLAs into Reliable Manipulation Primitives via Memory-Guided Agents](/202607/16/2607.08448v3-harness-vla-steering-frozen-vlas-into-reliable-manipulation-primitives-via-memory-guided-agents)  
+   evidence：面向沙箱原生语言智能体RL的分支策略优化
+5. [Learning Safe Agent Behaviour from Human Preferences and Justifications via World Models](/202607/17/2607.13172v1-learning-safe-agent-behaviour-from-human-preferences-and-justifications-via-world-models)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：记忆引导的视觉-语言-动作代理框架
-8. [To Answer or to Abstain: Mitigating Search-Agent Hallucinations via Abstention-Aware Reinforcement Learning](/202607/16/2607.10738v1-to-answer-or-to-abstain-mitigating-search-agent-hallucinations-via-abstention-aware-reinforcement-learning)  
+   evidence：基于世界模型和人类偏好训练安全代理策略
+6. [Learning Latency-Aware Orchestration for Multi-Agent Systems](/202607/17/2607.13359v1-learning-latency-aware-orchestration-for-multi-agent-systems)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：强化学习用于减少搜索代理的幻觉
-9. [Environment Parameter Gradient Theorem for Policy-Environment Co-Design in Reinforcement Learning](/202607/16/2607.12590v1-environment-parameter-gradient-theorem-for-policy-environment-co-design-in-reinforcement-learning)  
+   evidence：面向多智能体系统的基于学习的延迟感知编排
+7. [RENEW: Towards Learning World Models and Repairing Model Exploitation from Preferences](/202607/17/2607.14180v1-renew-towards-learning-world-models-and-repairing-model-exploitation-from-preferences)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：环境参数梯度定理用于强化学习中的策略-环境协同设计，支持环境参数的梯度优化
-10. [Constraint-Aware Aggregation for Federated Reinforcement Learning in Microgrid Energy Coordination](/202607/16/2607.12763v1-constraint-aware-aggregation-for-federated-reinforcement-learning-in-microgrid-energy-coordination)  
+   evidence：利用人类偏好修复世界模型利用的离线强化学习
+8. [AI Agents Do Not Fail Alone:The Context Fails First](/202607/17/2607.14275v1-ai-agents-do-not-fail-alonethe-context-fails-first)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：联邦强化学习用于微电网能量协调中的多智能体协作
-11. [MyAG: A Graph-Based Framework for Designing and Analyzing Composable LLM Agent Systems](/202607/16/2607.13474v1-myag-a-graph-based-framework-for-designing-and-analyzing-composable-llm-agent-systems)  
+   evidence：上下文工程质量作为智能体可靠性的指标，包含记忆因素
+9. [An offline approach to fNIRS-guided reinforcement learning for robot behavior](/202607/17/2607.14393v1-an-offline-approach-to-fnirs-guided-reinforcement-learning-for-robot-behavior)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：用于设计可组合LLM智能体系统的图框架
+   evidence：脑信号引导的机器人行为强化学习
+10. [Non-vacuous Generalization Bounds for Reinforcement Learning with Verifiable Rewards](/202607/17/2607.14506v1-non-vacuous-generalization-bounds-for-reinforcement-learning-with-verifiable-rewards)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：LLM微调中带可验证奖励的强化学习泛化界
+11. [A Continuous-Time Reinforcement Learning Framework for Fine-Tuning Discrete Diffusion Models](/202607/17/2607.14522v1-a-continuous-time-reinforcement-learning-framework-for-fine-tuning-discrete-diffusion-models)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：扩散模型的策略梯度方法
 
 
 <div class="dpr-home-promo-card">

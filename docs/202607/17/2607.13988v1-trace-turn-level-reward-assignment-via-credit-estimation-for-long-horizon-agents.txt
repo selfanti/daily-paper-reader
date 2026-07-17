@@ -1,0 +1,918 @@
+Title: TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents
+
+URL Source: https://arxiv.org/pdf/2607.13988v1
+
+Published Time: Thu, 16 Jul 2026 01:30:04 GMT
+
+Number of Pages: 26
+
+Markdown Content:
+TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 
+
+# TRACE: T URN -LEVEL REWARD ASSIGNMENT VIA 
+
+# CREDIT ESTIMATION FOR LONG -H ORIZON AGENTS 
+
+Leitian Tao 1,2 Baolin Peng 2 Wenlin Yao 2 Tao Ge 2 Hao Cheng 2 Mike Hang Wang 2
+
+Jianfeng Gao 2 Sharon Li 11University of Wisconsin–Madison 2Microsoft Research 
+
+# ABSTRACT 
+
+Multi-turn agents solve complex tasks through extended sequences of tool inter-actions before producing a final answer, making credit assignment a fundamental challenge during post-training. Outcome rewards provide reliable supervision for short-horizon reasoning, but become sparse and high-variance as trajectories grow to tens or hundreds of tool calls. They can also be misleading: a failed rollout may contain many useful actions that move the agent closer to the goal, yet outcome-only training assigns them the same negative advantage as the even-tual mistake. We propose TRACE (Turn-level Reward Assignment via Credit Estimation), a dense credit-assignment method for agentic reinforcement learning. TRACE represents rollouts as state transitions at tool-call boundaries, obtains gold-answer log-probabilities from a frozen reference model, transforms them into log-ratio state values, and derives per-action rewards as Temporal-Difference changes in those values. This requires no additional critic or process-label training, and its one-step log-ratio TD component telescopes across redundant tool calls. On long-horizon complex search, TRACE substantially improves base-model tool-use ability using pure RL, without a cold-start supervised fine-tuning stage, an agentic mid-training stage, or training on live-web data. On the closed-web BrowseComp-Plus benchmark, it raises Qwen3-4B from 7.2 to 35 .6 and Qwen3-30B-A3B from 
+
+8.4 to 42 .6. The learned search behavior also transfers to open-web benchmarks, and the learning curves show earlier improvement and faster convergence during RL training. 
+
+# 1 INTRODUCTION 
+
+Large language model (LLM) agents increasingly solve complex tasks by reasoning and acting through many interactions with external environments, including web navigation, software engineer-ing, and general computer use (Yao et al., 2023; Schick et al., 2023; Nakano et al., 2021; Yao et al., 2022; Deng et al., 2023; Zhou et al., 2024; Jimenez et al., 2024; Xie et al., 2024). Reinforcement learning with verifiable rewards (RLVR) has been effective for single-turn reasoning tasks such as mathematics and coding, where a deterministic checker can evaluate the final answer and provide a clean outcome reward (Shao et al., 2024; Guo et al., 2025). Applying the same idea to agents is appealing but insufficient: an agentic rollout may contain dozens of search, open, find, code, or other tool-use decisions before the final answer is verified. A single terminal reward says whether the trajectory succeeded, but it does not reveal which intermediate actions gathered necessary evidence, which were redundant, or which derailed the agent. Dense turn-level rewards are therefore desirable, but obtaining them is challenging because partial progress in agent trajectories is not directly observed. As illustrated in Figure 1, a failed rollout can begin with useful search and open actions that make the answer easier to infer, while a successful rollout can contain redundant searches or accidental openings that do not contribute to the final answer. Outcome-only training assigns the same trajectory-level advantage to all of these turns, under-crediting productive exploration, over-crediting irrelevant actions, and increasing gradient variance as horizons grow (Sutton and Barto, 2018; Arjona-Medina et al., 2019; Ye et al., 2025). Prior work on process supervision offers finer feedback, but typically requires step-level labels, a strong LLM judge to score intermediate behavior (Zheng et al., 2023), or a trained process reward model whose scores may drift away from final-answer correctness (Uesato et al., 2022; Lightman 1arXiv:2607.13988v1 [cs.LG] 15 Jul 2026 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents Question: Where was the author of Moonlit River born?       
+
+> Search(“Moonlit River author”)
+> Search( Elena Cruz birthplace )Search( Moonlit River setting)
+> Open(“Book profile”)
+> Open (Cruz biography )Open (Setting page )
+> Answer: Dublin Answer: Lisbon
+
+Figure 1: Credit assignment at tool-call boundaries in a search trajectory. The figure illustrates a long-horizon search rollout decomposed into tool-call turns. Early search and open actions can add task-relevant evidence to the transcript even when a later branch leads to an incorrect final answer. Outcome-reward training attaches one trajectory-level advantage to all actions in the rollout, whereas TRACE computes prefix values at tool boundaries and assigns turn credit from adjacent value changes. et al., 2023; Wang et al., 2024a; Setlur et al., 2024; Yuan et al., 2024). This raises the central question of this work: how can we identify the tool calls that actually move a long-horizon agent toward the answer, and turn that signal into dense rewards without relying on step labels, a strong judge, or a trained process reward model? 
+
+We propose TRACE ( Turn-level Reward Assignment via Credit Estimation), a critic-free credit-assignment framework that keeps the final verifier as the anchor while adding dense credit at tool-call boundaries. The key idea is to use a frozen reference model not as a judge, but as a stable probe of whether each trajectory prefix makes the gold answer more predictable. TRACE represents a rollout as state transitions at tool-call boundaries, scores each prefix by the reference model’s gold-answer log-probability, and converts the score into a log-ratio state value measuring progress toward the answer. It then assigns turn rewards using temporal-difference (TD) changes between adjacent values: a tool call receives positive credit when its returned observation increases answer predictability, near-zero credit when it adds no useful evidence, and negative credit when it moves the trajectory away from the answer. Because the one-step TD credits telescope, redundant intermediate turns cannot inflate this component, while the cumulative credit remains aligned with the final reference-model state. The resulting rewards combine this dense TD signal with the standard outcome-level advantage (Sutton, 1988), preserving verifiable success as the final training target while distinguishing which turns deserve credit. We evaluate TRACE on long-horizon complex search, a setting where agents must learn to interact with an environment, explore through multiple tool calls, and refine later actions from earlier observations. Because common multi-hop benchmarks can be solved by strong agents in only a few turns (Yang et al., 2018), we train on deeper synthetic search questions and evaluate on both closed-web and open-web deep-research benchmarks. Our recipe is pure RL: it uses outcome-level and turn-level rewards directly, without a cold-start supervised fine-tuning stage, an agentic mid-training stage, live-web training data, a strong judging model, or a trained process reward model. Despite this minimal supervision, TRACE substantially improves base-model tool use in both closed-web and open-web settings. On closed-web BrowseComp-Plus (Chen et al., 2025c), it raises Qwen3-4B from 7.2 to 35 .6 and Qwen3-30B-A3B from 8.4 to 42 .6. The learned behavior also transfers to open-web retrieval, with the 30B-A3B agent reaching 12 .9 on BrowseComp, 52 .0 on GAIA, and 45 .0
+
+on xbench-DeepSearch. In addition to final performance, the training curves show that TRACE starts improving earlier and converges faster, indicating that turn-level credit makes long-horizon tool use easier to learn from pure RL. These results show that verifier-anchored turn-level credit can teach base models to explore, interact with the environment, and refine tool use for complex long-horizon tasks, while remaining independent of expensive process supervision or strong judge-based feedback. 2TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 
+
+# 2 PRELIMINARIES 
+
+2.1 AGENTIC REINFORCEMENT LEARNING 
+
+In agentic reinforcement learning, a policy LLM πθ solves a prompt x ∼ D by interleaving assistant tokens, tool calls from an available tool set T , and tool observations before producing a final answer. A common KL-regularized training objective is 
+
+max 
+
+> πθ
+
+Ex∼D , τ ∼πθ (·| x;T ) [rϕ(x, τ )] − βKL DKL [πθ (τ | x; T ) ∥ πref (τ | x; T )] , (1) where τ denotes the complete rollout, rϕ is the reward function, πref is a reference policy, and βKL 
+
+controls the strength of the KL penalty. In reinforcement learning with verifiable rewards, rϕ is usually an outcome reward that is observed only after the rollout is complete, for example by checking whether the final answer satisfies an automatically verifiable criterion (Sutton and Barto, 2018; Shao et al., 2024). Unlike single-turn reasoning, agentic rollouts induce a distribution over both the intermediate interaction trajectory and the final answer (Yao et al., 2023; Schick et al., 2023; Nakano et al., 2021; Yao et al., 2022). We write the interaction part as alternating policy actions and environment observations. Let R = (( a1, o 1), . . . , (aTR , o TR )) and Hk = ( x, a 1, o 1, . . . , a k−1, o k−1). Then 
+
+Pθ (R, y | x; T ) = 
+
+> TR
+
+Y
+
+> k=1
+
+πθ (ak | Hk; T ) Penv (ok | Hk, a k; T )
+
+| {z }
+
+> Tool interaction
+
+·
+
+> Ty
+
+Y
+
+> t=1
+
+πθ (yt | y<t , H TR+1 ; T )
+
+| {z }
+
+> Answer generation
+
+, (2) where R is the multi-turn trajectory, including tool-call feedback, and y is the final answer. Gradients are taken through assistant actions and answer tokens, while tool observations are environment outputs rather than policy-generated tokens. This decomposition highlights the source of the credit-assignment problem: the terminal reward supervises a long sequence of heterogeneous policy decisions, but does not identify which turns made the answer more or less likely. For credit assignment, it is useful to view the interaction trajectory at tool-call boundaries. Given a rollout with TR tool interactions, let Sk denote the prefix containing the prompt and the first k
+
+action–observation pairs, optionally followed by the final-answer opener used to score answer tokens. The transition from Sk to Sk+1 is induced by the next policy action and environment observation 
+
+(ak+1 , o k+1 ). These prefix transitions are the natural units for assigning credit to tool use, because they isolate how each interaction changes the information available to the agent. Typical RL training builds on outcome-based agentic RL algorithms such as Group Relative Policy Optimization (GRPO) (Guo et al., 2025), which compare multiple rollouts from the same prompt and avoid a learned critic for the outcome-reward stage (Shao et al., 2024). However, the resulting group-relative advantage is still attached to the entire rollout. It can rank a successful trajectory above failed alternatives, but it cannot distinguish useful tool calls from redundant or harmful ones within the same trajectory. This limitation motivates a reward construction that preserves the reliability of outcome verification while exposing denser signal at the prefix-transition level. 2.2 TEMPORAL -D IFFERENCE CREDIT ASSIGNMENT 
+
+Temporal-difference (TD) learning estimates progress by comparing the value of two adjacent states (Sutton, 1988). Given a value function V (s), an immediate reward rt, and a discount γ, the one-step TD error is 
+
+δt = rt + γV (st+1 ) − V (st). (3) The TD error is positive when the transition leads to a state whose realized or estimated future return is higher than expected, and negative when it leads to a worse state. In sparse-reward agentic tasks, intermediate environment rewards are usually unavailable. If we set rt = 0 before termination and use γ = 1 , the TD form reduces to the value difference V (st+1 ) − V (st), which naturally measures the incremental progress made by one transition. The difficulty is that long-horizon agent tasks usually lack a reliable dense value function over partially completed tool trajectories. The next section addresses this missing ingredient: how to obtain a stable prefix-level progress signal without training a critic or collecting step-level process labels. 3TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents Question        
+
+> Environment
+> …
+> Tool calling Observation Answer
+> …
+> Tool calling Observation Observation
+> 𝑉 0𝑉 1𝑉 2𝑉 𝑛
+
+Figure 2: TRACE reward construction at tool-call boundaries. The figure shows a long-horizon rollout segmented by tool calls and observations. Each prefix state is scored by a frozen reference model, transformed into a log-ratio value, and compared with adjacent prefix values to obtain turn-level TD credit. The turn-level advantage is then combined with the trajectory-level outcome advantage for policy optimization. 
+
+# 3 TURN -L EVEL REWARD ASSIGNMENT VIA CREDIT ESTIMATION 
+
+We introduce TRACE, a critic-free credit-assignment method for long-horizon agent post-training. Instead of learning a critic over sparse terminal rewards, TRACE measures whether each tool interaction makes the gold answer more predictable under a frozen reference model. It splits rollouts at tool-call boundaries, maps prefix answer log-probabilities to log-ratio state values, uses TD changes in those values as turn-level rewards, and mixes the resulting turn-level advantage with the standard GRPO outcome advantage. The outcome reward remains the final arbiter of task success. Figure 2 illustrates the framework, and Algorithm 1 summarizes the procedure. 3.1 TOOL -B OUNDARY STATES 
+
+Following the prefix-transition view in Section 2.1, we instantiate the notation used by TRACE. For a sampled trajectory on question x with gold answer y⋆, write 
+
+τ =  x, a 1, o 1, a 2, o 2, . . . , a T , o T , ˆy, (4) where ak is the k-th assistant action, ok is the corresponding tool observation, ˆy is the final answer span, and T is the number of tool interactions. The terminal verifier returns R = R(ˆ y, y ⋆). TRACE constructs one credit target for each transition Sk → Sk+1 induced by (ak+1 , o k+1 ), while the policy-gradient loss is applied only to policy-generated assistant actions and answer tokens; tool observations remain environment outputs and are masked from the loss. The remaining question is how to score whether a prefix transition improves the trajectory’s ability to reach the gold answer. 3.2 STATE VALUE VIA LOG -R ATIO ANSWER PROBABILITY 
+
+Reference answer score. Long-horizon agentic RL makes critic learning brittle: the trajectory reward is sparse, observations shift the state after each tool action, and failed trajectories can still contain useful action–observation transitions. TRACE therefore replaces a learned critic with a 
+
+frozen reference model πref (a copy of the policy initialization), used only to estimate how ready the single-trajectory prefix is to produce the gold answer. This is a natural proxy for progress in RLVR settings: the gold answer is available during training, and a transcript that has collected relevant evidence should make that answer easier for a fixed language model to conditionally predict. Freezing the model keeps this probe stable across policy updates and prevents it from becoming another learned reward model. For state Sk, the average gold-answer log-probability is 
+
+¯ℓk = 1
+
+|y⋆|
+
+> |y⋆|
+
+X
+
+> t=1
+
+log πref (y⋆t | Sk, y ⋆<t ) ≤ 0. (5) 4TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents Larger (less negative) ¯ℓk means that the current transcript already contains more evidence for generating y⋆. All ¯ℓk are obtained in a single batched forward pass and are never optimized; final-answer correctness is still determined by the outcome verifier. 
+
+Log-ratio state value. The score ¯ℓk is a prefix-readiness measure, but its raw scale is not directly suitable for credit assignment. Raw changes in ¯ℓk can be misleading: the same absolute gain is minor when the trajectory is far from the answer but important when it nearly resolves the answer. For instance, shrinking the remaining gap from 0.2 to 0.1 removes half the uncertainty, whereas 5.1 → 5.0
+
+barely changes it despite an identical raw gain. We therefore model the state value as relative closure of the initial answer-likelihood gap. Define dk = −¯ℓk + ϵ with offset ϵ > 0, and set 
+
+V (Sk) = log d0
+
+dk
+
+= log −¯ℓ0 + ϵ
+
+−¯ℓk + ϵ . (6) Thus V (S0) = 0 , and a larger V (Sk) means that the action–observation history has closed a larger 
+
+fraction of the initial gap. The later TD difference V (Sk+1 ) − V (Sk) therefore measures the value added by the transition induced by action ak+1 and observation ok+1 .
+
+Algorithm 1 TRACE reward construction and policy update for one prompt group. 
+
+Require: prompt x, gold answer y⋆, current policy πθ , behavior snapshot πold , frozen reference 
+
+πref , group size G, horizon K, discount γtd , offset ϵ, terminal scale λterm , weights αout , α turn ,clip bounds c−, c +
+
+1: Sample G trajectories {τg }Gg=1 ∼ πold (· | x), where τg = ( x, a g, 1, o g, 1, . . . , a g,T g , o g,T g , ˆyg ).
+
+2: Compute terminal rewards Rg = R(ˆ yg , y ⋆) and outcome advantages Aout  
+
+> g
+
+=GroupNorm( Rg ; {Rh}Gh=1 ), returning 0 for all g if the group standard deviation is 0.
+
+3: for g = 1 , . . . , G do 
+
+4: Form answer-ready prefixes Sg, 0, . . . , S g,T g from τg .
+
+5: for k = 0 , . . . , T g do 
+
+6: ¯ℓg,k = 1
+
+|y⋆|
+
+> |y⋆|
+
+X
+
+> t=1
+
+log πref (y⋆t | Sg,k , y ⋆<t ).
+
+7: dg,k = −¯ℓg,k + ϵ, Vg,k = V (Sg,k ) = log dg, 0
+
+dg,k 
+
+.
+
+8: end for 
+
+9: for k = 0 , . . . , T g − 1 do 
+
+10: δg,k = Vg,k +1 − Vg,k = log dg,k 
+
+dg,k +1 
+
+.
+
+11: if K = 0 then 
+
+12: c(K) 
+
+> g,k
+
+= 0 and hg,k = k.
+
+13: else 
+
+14: hg,k = min( k + K − 1, T g − 1) .
+
+15: Zg,k =
+
+> hg,k
+
+X
+
+> u=k
+
+γu−k 
+
+> td
+
+, c(K) 
+
+> g,k
+
+= Z−1
+
+> g,k hg,k
+
+X
+
+> u=k
+
+γu−k 
+
+> td
+
+δg,u .
+
+16: end if 
+
+rturn  
+
+> g,k
+
+= c(K) 
+
+> g,k
+
++ 1[hg,k = Tg − 1] λterm γTg −k 
+
+> td
+
+Aout  
+
+> g
+
+.
+
+17: end for 
+
+18: end for 
+
+19: Let Ig be the assistant-token indices of trajectory g.
+
+20: For each g and t ∈ I g , set ˆAg,t = αout Aout  
+
+> g
+
++ αturn rturn 
+
+> g, turn( t)
+
+.
+
+21: ρg,t (θ) = πθ (ag,t | sg,t )
+
+πold (ag,t | sg,t ) .
+
+22: Update πθ by maximizing JTRACE (θ):
+
+1
+
+G
+
+> G
+
+X
+
+> g=1
+
+1
+
+|I g |
+
+X
+
+> t∈I g
+
+min 
+
+
+
+ρg,t (θ) ˆAg,t , clip( ρg,t (θ), 1 − c−, 1 + c+) ˆAg,t 
+
+
+
+.5TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 3.3 TURN -L EVEL REWARD VIA TEMPORAL -D IFFERENCE CREDIT 
+
+One-step TD action credit. With no intermediate environment reward and discount 1, the credit assigned to the transition Skak+1 , o k+1 
+
+−−−−−−−→ Sk+1 is the one-step TD change in value, 
+
+δk = V (Sk+1 ) − V (Sk) = log dk
+
+dk+1 
+
+, k = 0 , . . . , T − 1. (7) This is positive when the action and returned observation make the gold answer more likely, equals 
+
+log 2 when the transition halves the remaining gap, is 0 when the gap is unchanged, and is negative when the transition moves away from the answer. Because the credits telescope,  
+
+> T−1
+
+X
+
+> k=0
+
+δk = V (ST ) − V (S0) = log −¯ℓ0 + ϵ
+
+−¯ℓT + ϵ ,
+
+so total credit depends only on the endpoints: redundant intermediate transitions cannot inflate it, and the agent is not rewarded for padding a trajectory. Appendix A.2 compares this log-ratio credit with raw and linearized alternatives. 
+
+K-step turn credit. The one-step TD credit above can miss delayed tool effects: for example, a 
+
+browser.search may only surface candidate links, while the answer likelihood jumps after a later browser.open exposes decisive evidence. We therefore use a truncated K-step TD backup with K ≥ 1: each turn receives discounted future TD progress from the current transition and the next few transitions in the same trajectory. For rollout g and turn k, let 
+
+hg,k = min( k + K − 1, T g − 1) (8) be the last transition included in the backup window. The local progress credit assigned to the current turn is 
+
+c(K) 
+
+> g,k
+
+= 1
+
+Zg,k hg,k 
+
+X
+
+> u=k
+
+γ u−k 
+
+> td
+
+δg,u , Zg,k =
+
+> hg,k
+
+X
+
+> u=k
+
+γ u−k 
+
+> td
+
+, (9) where γtd discounts delayed evidence and Zg,k is the K-step normalization factor used in our reported runs. In ablations, we use K = 0 only as a shorthand for disabling the dense TD backup entirely, not as an input to Eq. 9. When the backup window reaches the end of the trajectory, we additionally anchor the last turns to the verifiable outcome signal: 
+
+rturn  
+
+> g,k
+
+= c(K) 
+
+> g,k
+
++ 1[hg,k = Tg − 1] λterm γ Tg −k 
+
+> td
+
+Aout  
+
+> g
+
+. (10) Here Aout  
+
+> g
+
+is the standard GRPO group-relative advantage computed from the terminal reward, and 
+
+λterm controls the strength of the terminal anchor. The exponent Tg − k treats final-answer generation as one additional transition after the last tool observation, so the last tool turn is discounted by one step before receiving terminal-outcome fill. This form makes the two sources of credit explicit: 
+
+c(K) 
+
+> g,k
+
+captures local answer-likelihood progress, while the terminal fill only affects turns whose look-ahead window reaches the final outcome. The endpoint telescoping property above applies exactly to the one-step component δk; the K-step backup and terminal fill intentionally trade this exact endpoint-only form for delayed credit propagation and outcome anchoring. 
+
+Joint optimization with outcome reward. We do not group-normalize the turn values. Instead, the TD-derived turn credit is used directly as a trajectory-local auxiliary signal and is jointly optimized with the GRPO outcome reward. For the outcome component, we use the standard group-relative normalization 
+
+Aout  
+
+> g
+
+=
+
+(Rg − ¯R)/σ R, σR > 0,
+
+0, σR = 0 , ¯R = G−1
+
+> G
+
+X
+
+> h=1
+
+Rh, σR =
+
+vuutG−1
+
+> G
+
+X
+
+> h=1
+
+(Rh − ¯R)2.
+
+For each token generated as part of tool-interaction action ag,k +1 , we set turn( t) = k; final-answer tokens use the outcome component with the answer-tail weighting described in Appendix A.1. The mixed per-token advantage for tool-interaction tokens is 
+
+ˆAg,t = αout Aout  
+
+> g
+
++ αturn rturn  
+
+> g, turn( t)
+
+, (11) 6TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents where αout , α turn ≥ 0 control the relative strength of terminal correctness and turn-level credit. Let 
+
+Ig be the assistant-token indices used in the policy-gradient loss for rollout g, and let ρg,t (θ) = 
+
+πθ (ag,t | sg,t )/π old (ag,t | sg,t ), where πold is the frozen behavior-policy snapshot that generated the current rollout batch. We optimize the clipped GRPO objective 
+
+JTRACE (θ) = 1
+
+G
+
+> G
+
+X
+
+> g=1
+
+1
+
+|I g |
+
+X
+
+> t∈I g
+
+min 
+
+
+
+ρg,t (θ) ˆAg,t , clip( ρg,t (θ), 1 − c−, 1 + c+) ˆAg,t 
+
+
+
+, (12) which keeps the standard GRPO group-relative outcome signal while adding dense turn-level credit without normalizing the turn values across the prompt group. 
+
+# 4 EXPERIMENTS 
+
+4.1 EXPERIMENTAL SETUP 
+
+Training datasets. A central question in this work is whether dense turn-level credit can improve long-horizon tool use when the only verifiable supervision is final-answer correctness. To examine this question in a controlled setting, we train agents on synthetic multi-document search tasks built over the offline corpus released by OpenResearcher (Li et al., 2026). Standard multi-hop QA benchmarks are often too short for this purpose: many examples can be solved with one search and one document open, leaving little room to study delayed credit from later evidence gathering. Our training data instead requires chained retrieval over multiple irreplaceable evidence documents, so early queries, document-selection decisions, and in-document localization steps can all affect the final answer. Appendix A.4 describes the data generation, filtering, and verification pipeline. 
+
+Agentic harness. The policy is trained in a ReAct-style reasoning-and-acting harness (Yao et al., 2023), where each assistant turn contains private reasoning and either one browser action or a final answer. The closed-corpus harness serves documents from the OpenResearcher offline corpus through a FAISS retrieval index built with Qwen3-Embedding-8B (Zhang et al., 2025c). The browser interface exposes three actions, browser.search , browser.open , and browser.find ; the final response must be emitted inside <answer> tags. The outcome reward checks normalized exact-match answer correctness, with a small format component for well-formed answer blocks. Appendix A.3 gives the full tool schema, rollout stopping rules, masking convention, and prompt template. 
+
+Models. To evaluate whether the same credit-assignment signal works across model scale, we instantiate the search policy with two Qwen3 thinking backbones: Qwen3-4B-Thinking-2507 and Qwen3-30B-A3B-Thinking-2507 (Yang et al., 2025a). The 4B model is our primary controlled setting for comparing optimization objectives and ablations, while the 30B-A3B model tests whether TRACE transfers to a larger agentic backbone. Unless otherwise stated, both models use the same browser action space, rollout protocol, terminal reward, training data, and evaluation interface. Importantly, all controlled RL runs start directly from the base search policy without a cold-start supervised fine-tuning stage, a mid-training stage, or training on live-web data. 
+
+Training protocol. We optimize each student with Adam at a constant learning rate of 10 −6, using a global batch size of 128 and 8 rollouts per prompt, with up to 60 tool turns per trajectory. TRACE computes turn credit with the log-ratio formulation in Eq. 7, using training gap offset ϵtrain = 10 −1.The look-ahead advantage in Eq. 10 uses horizon K = 3 and discount γtd = 0 .8, with terminal-outcome fill enabled at scale 2.0. The final per-token advantage in Eq. 11 mixes outcome and turn signals with αout = 1 .0 and αturn = 0 .2; the token-level distillation term is disabled in this work. Tokens in the final answer span are weighted by the group-mean rule at scale 0.05 . Appendix A.1 lists the full script-level training, rollout, and turn-credit hyperparameters. 
+
+Baselines. We compare TRACE with both external deep-research agents and controlled RL base-lines. The external agents include ASearcher-QwQ-32B (Gao et al., 2025), WebDancer-32B (Wu et al., 2025a), CutBill-30B-A3B (Wu et al., 2025b), and TongyiDS-30B-A3B (Tongyi DeepResearch Team et al., 2025); these systems provide strong reference points for long-horizon search, although they may use different data, model backbones, training pipelines, and benchmark harnesses, so 7TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents Model BrowseComp-Plus BrowseComp GAIA xbench-DeepSearch Avg 
+
+Deep-research agents 
+
+ASearcher-QwQ-32B 28.9 5.2 52.8 42.0 32.2 WebDancer-32B 32.4 3.8 51.5 39.0 31.7 CutBill-30B-A3B 35.1 13.4 46.6 43.0 34.5 TongyiDS-30B-A3B 44.4 43.4 70.9 75.0 58.4 
+
+Qwen3-4B-Thinking-2507 
+
+Base 7.2 3.3 24.2 19.0 13.4 GRPO 30.0 5.1 38.8 44.0 29.5 GSPO 29.7 5.4 36.7 41.0 28.2 GiGRPO 27.7 4.4 37.9 36.0 26.5 TRACE 35.6 6.7 44.6 49.0 34.0 
+
+Qwen3-30B-A3B-Thinking-2507 
+
+Base 8.4 4.4 34.1 20.0 16.7 GRPO 36.4 10.8 45.6 37.0 32.5 GSPO 39.7 11.8 46.6 35.0 33.3 GiGRPO 33.0 10.1 44.7 31.0 29.7 TRACE 42.6 12.9 52.0 45.0 38.1 Table 1: Performance comparison on long-horizon deep-research benchmarks. BrowseComp-Plus is evaluated in the closed-web setting, while BrowseComp, GAIA, and xbench-DeepSearch are evaluated with open-web retrieval. Avg reports the unweighted average over all four benchmarks. The top block lists external deep-research agents for reference, while the Qwen3 blocks compare controlled RL variants initialized from the same backbone and trained with the same browser interface, data, terminal reward, and evaluation protocol. Highlighted rows denote TRACE. we treat their reported numbers as non-controlled reference points. The controlled baselines are initialized from the same Qwen3 backbones as TRACE. Base denotes the untrained search policy. GRPO (Guo et al., 2025) uses only the terminal outcome reward, GSPO (Zheng et al., 2025a) replaces token-level importance ratios with sequence-level ratios, and GiGRPO (Feng et al., 2025) applies group-in-group policy optimization for agent training. For all controlled baselines, we keep the browser action space, rollout protocol, training data, terminal reward, and evaluation interface fixed, so performance differences primarily reflect the optimization objective and credit-assignment signal. 
+
+Evaluation. We evaluate deep-research ability in both closed-web and open-web settings. The closed-web benchmark is BrowseComp-Plus (Chen et al., 2025c), for which we build an offline search engine from the officially released corpus using a Qwen3-Embedding-8B (Zhang et al., 2025c) FAISS index. This setting measures long-horizon reasoning under a reproducible retrieval environment that matches the training interface. To test transfer beyond the closed training corpus, we also evaluate on three open-web benchmarks: BrowseComp (Wei et al., 2025a), GAIA (Mialon et al., 2024), and xbench-DeepSearch (Chen et al., 2025a), where retrieval is served by the Serper API (Serper.dev, 2026). Among them, xbench-DeepSearch is a Chinese QA benchmark, allowing us to test whether a training recipe learned in the closed search setting transfers across languages as well as across retrieval environments. Across all evaluations, rollouts stop when the model emits a final <answer> 
+
+span, reaches the tool-turn limit, or hits a context or generation limit. Unless otherwise stated, controlled ablations are single training runs, so small differences should be read as directional rather than as variance-adjusted conclusions. 4.2 MAIN RESULTS 
+
+TRACE remarkably improves base-model tool use and transfers beyond the training corpus. 
+
+Table 1 shows that TRACE substantially improves base-model tool use while retaining generalization beyond the training environment. The most direct evidence comes from the closed-web BrowseComp-Plus setting, where TRACE raises Qwen3-4B from 7.2 to 35 .6 and Qwen3-30B-A3B from 8.4 to 
+
+42 .6 using only RL with outcome-level and turn-level rewards. This is a strong gain for a minimal recipe: the models are not first adapted with cold-start SFT, agentic mid-training, or live-web 8TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 0 50 100 150                
+
+> Training step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Reward
+> (a) Train Comparison on 4B
+> 050 100 150 200
+> Training step
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4 (b) Eval Comparison on 4B
+> 050 100 150
+> Training step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7 (c) Train Comparison on 30B
+> 040 80 120 160 200
+> Training step
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> (d) Eval Comparison on 30B
+> TRACE GRPO
+
+Figure 3: Learning dynamics on BrowseComp-Plus. (a) Training reward on Qwen3-4B. (b) Evaluation accuracy on Qwen3-4B. (c) Training reward on Qwen3-30B-A3B. (d) Evaluation accuracy on Qwen3-30B-A3B. data, so the improvement suggests that the base backbones already contain useful reasoning and tool-use primitives, but need a denser credit signal to organize them into effective long-horizon behavior. The external-agent comparisons give the result additional context. Although those systems may use different data and training pipelines, the 4B TRACE agent already surpasses several larger deep-research agents on BrowseComp-Plus, while the 30B-A3B agent approaches the strong TongyiDS-30B-A3B result. The more important controlled test is whether this behavior transfers beyond the closed training corpus: despite being trained in a closed synthetic search environment, TRACE improves both backbones on open-web benchmarks served by an external search API; with Qwen3-30B-A3B, it reaches 12 .9 on BrowseComp, 52 .0 on GAIA, and 45 .0 on the Chinese QA benchmark xbench-DeepSearch. This pattern suggests that TRACE is not merely fitting the closed retrieval corpus within our controlled setup; it teaches a more general interaction strategy for searching, reading observations, and refining later actions across different corpora and languages, though it does not close the gap to the strongest external deep-research system in Table 1. 
+
+TRACE outperforms other RL methods across model scales. The controlled RL comparison clarifies why the gains come from credit assignment rather than from a change in model, data, or environment. All RL variants use the same backbone, browser interface, training data, terminal reward, and evaluation protocol; what differs is how the policy-gradient signal is constructed. Against outcome-only GRPO, TRACE asks the cleanest question: if the final correctness reward is unchanged, does adding turn-level TD credit help? The answer is yes on both scales, with the 4B four-benchmark average rising to 34 .0 from GRPO’s 29 .5 and the 30B-A3B average rising to 38 .1 from 32 .5. This indicates that terminal rewards alone do not expose enough information about which parts of a long trajectory should be reinforced. GSPO and GiGRPO address a different aspect of RL optimization by changing sequence- or group-level estimation, but they still operate primarily at the trajectory level: they can compare rollouts, yet they do not assign credit to the intermediate interaction that made later success more likely. This distinction explains why TRACE is especially beneficial on BrowseComp-Plus and xbench-DeepSearch, where success depends on a chain of dependent environment interactions rather than a single decisive final answer. By keeping outcome correctness as the global anchor and adding temporally aligned progress credit within the trajectory, TRACE supplies the kind of supervision that long-horizon agent training is missing. 4.3 LEARNING DYNAMICS OF TRACE 
+
+TRACE makes the model converge faster and to a better policy. Figure 3 compares the learning dynamics of TRACE and outcome-reward baselines across four panels. The first visible trend is that all methods improve as training proceeds, but the TRACE curves start rising earlier. The second trend is that the slope of TRACE is steeper in the early stage, indicating faster reward acquisition rather than only a late-stage separation. The third trend is that the gap does not disappear after the initial rise: TRACE stabilizes at a higher plateau, suggesting that the faster optimization also leads to a better learned policy. Finally, the same ordering appears in held-out accuracy on BrowseComp-Plus with Qwen3-30B-A3B, where the 160 -step TRACE checkpoint already exceeds the 200 -step outcome-reward baseline. These observations suggest that the reward-curve improvement reflects earlier acquisition of transferable long-horizon search behavior. A likely reason is that outcome-only training assigns one terminal signal to the whole trajectory, so early failed rollouts can update useful intermediate progress together with the final mistake. TRACE reduces this temporal mismatch by 9TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 1 3 5 7      
+
+> 28
+> 30
+> 32
+> 34
+> 36
+> Accuracy  33.6
+> 35.6
+> 34.5
+> 31.1
+> (a) Ablation on coefficient
+> 00.1 0.2 0.5
+> k
+> 28
+> 30
+> 32
+> 34
+> 36
+> Accuracy
+> 30.0
+> 34.7
+> 35.6
+> 28.9
+> (b) Ablation on step k
+> baseline step 0 step 200
+> methods
+> 28
+> 30
+> 32
+> 34
+> 36
+> Accuracy
+> 30.0
+> 35.6 36.1
+> (c) Ablation on reference model
+
+Figure 5: Ablations on BrowseComp-Plus with Qwen3-4B. (a) Turn-level reward coefficient. (b) TD look-ahead horizon K. (c) Reference checkpoint for answer-readiness scoring. assigning turn-level TD credit when an interaction makes the gold answer more predictable under the reference model, while still keeping the outcome reward in the objective to enforce final correctness. 0 25 50 75 100 125 150 175 
+
+> Training step
+> 2.5
+> 5.0
+> 7.5
+> 10.0
+> 12.5
+> 15.0
+> 17.5
+> Turn Count
+> Tool Calling Trend Comparison on 4B
+> TRACE
+> GRPO
+
+Figure 4: Trajectory-scale dynamics on BrowseComp-Plus with Qwen3-4B. The TRACE curve increases earlier and faster than GRPO, indicating that the two training objectives expand interaction length at different rates during the early training stage. 
+
+TRACE scales up interaction length faster in the beginning stage. Figure 4 shows a clear difference in trajectory scale between TRACE and GRPO on the Qwen3-4B backbone: the TRACE curve starts to rise earlier and grows faster, while the GRPO curve increases more slowly. This suggests that the objectives differ in how they encourage longer environment inter-action during early training. With outcome-only GRPO, longer early trajectories often still fail at the final answer, so the whole rollout receives low or negative relative advantage and the objec-tive cannot separate unhelpful extra interaction from intermediate progress. TRACE provides a more local signal: when an interaction and its observation increase answer readiness, the turn-level TD credit can reward that progress before the final answer is correct. This gives a smoother incentive for scaling interaction length, while the outcome reward keeps optimization tied to final correctness. 4.4 ABLATION STUDY 
+
+Method BC-Plus GRPO 30.0 + raw delta 32.4 + remaining gap 34.6 + log-ratio 35.5 
+
+Table 2: Credit-assignment ablation on Qwen3-4B. 
+
+Log-ratio credit assignment is more effective in this run. We ablate the turn-level credit format on BrowseComp-Plus while keeping the same Qwen3-4B training setup. Starting from outcome-only GRPO (30 .0), adding dense transition rewards based on the raw log-probability delta improves the score to 32 .4, and nor-malizing by the remaining answer-likelihood gap further improves it to 34 .6. The proposed log-ratio TD credit achieves the best score in this run ( 35 .5), suggesting that relative gap closure provides a more effective credit signal than absolute likelihood changes. This supports the design in Eq. 7: the log-ratio form better normalizes credit across states with different confidence levels and preserves a telescoping structure that discourages redundant trajectory extension. 
+
+Ablation on turn-level reward coefficient. Figure 5(a) shows that the weight assigned to the dense turn-level signal must be chosen moderately. A small coefficient underuses the extra supervision from prefix-level progress, while an overly large coefficient can make local reference-model readiness dominate the final correctness signal. In the coefficient sweep, performance rises from 33 .6 to 35 .6
+
+as the coefficient increases from 1 to 3, but then drops to 34 .5 and 31 .1 at larger values. This pattern 10 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents supports the use of turn-level reward as an auxiliary credit signal rather than a replacement for the outcome reward. 
+
+Ablation on TD look-ahead horizon K. Figure 5(b) varies the TD look-ahead horizon K, which controls the strength of the propagated transition-level signal. The K = 0 ablation denotes disabling the dense TD backup entirely rather than passing K = 0 into Eq. 9; it obtains only 30 .0 accuracy, close to outcome-only GRPO, because early search and document-selection actions receive little useful credit. Moderate propagation substantially improves performance, reaching 34 .7 and 35 .6,which indicates that delayed evidence from later open and find operations should be assigned back to the preceding retrieval decisions. However, the largest setting reduces accuracy to 28 .9, suggesting that overemphasizing the propagated signal introduces noise from loosely related later turns and weakens the temporal locality of the reward. 
+
+Ablation on reference model for probability estimation. Finally, Figure 5(c) studies which reference checkpoint should be used to compute the gold-answer prefix probabilities. The baseline without reference-model progress scoring reaches 30 .0, while using the initialization checkpoint at step 0 raises accuracy to 35 .6. Replacing it with a slightly updated checkpoint at step 200 obtains a similar score of 36 .1 in this run. The small gap between the two reference checkpoints suggests that TRACE does not rely on a specially strong or heavily tuned reference model. Instead, the reference model mainly serves as a stable value-estimation anchor: it provides prefix-level answer-readiness scores from which relative TD progress can be computed. In practice, the base checkpoint is already sufficient for this role, which makes the method easier to apply and reduces dependence on selecting an advanced teacher or a carefully adapted scoring model. 
+
+# 5 RELATED WORK 
+
+Post-training of LLMs for reasoning and agentic tasks. Post-training has become a central recipe for turning pretrained language models into capable problem solvers. For reasoning tasks, reinforcement learning with verifiable rewards has shown that outcome supervision can substantially improve mathematical and symbolic problem solving when correctness can be checked automatically (Shao et al., 2024; Guo et al., 2025). These methods typically optimize a trajectory-level signal with clipped policy-gradient updates (Schulman et al., 2017): a complete solution receives positive or negative feedback according to whether the final answer is correct. This simple regime is effective for short-horizon reasoning, but becomes less informative as decisions grow into multi-hop or browsing trajectories (Yang et al., 2018; Wei et al., 2025a; Chen et al., 2025c). LLM post-training has also been extended from single-response reasoning to agentic settings in which models interact with tools, environments, users, or external feedback over multiple turns. Early systems such as WebGPT and ReAct introduced the interleaving of language-model reasoning, actions, and observations (Nakano et al., 2021; Yao et al., 2023). Subsequent work improves tool use through self-supervised tool-call prediction, instruction tuning on tool-use traces, and agent-specific tuning corpora (Schick et al., 2023; Qin et al., 2023; Zeng et al., 2023), while related approaches use feedback across trials to revise plans, memory, or behavior (Shinn et al., 2023). This agentic post-training landscape now covers a wide range of tasks beyond search. Representative settings include shopping and web navigation (Yao et al., 2022; Deng et al., 2023; Zhou et al., 2024; Koh et al., 2024; Drouin et al., 2024; Pan et al., 2024), API and tool use (Schick et al., 2023; Qin et al., 2023; Li et al., 2023), software engineering agents and related coding systems, real-computer and mobile-device control (Xie et al., 2024; Rawles et al., 2025; Zhang et al., 2023), and multi-turn user-interactive tool use (Zhao et al., 2025b; Chai et al., 2025; Xi et al., 2025b; Zhang et al., 2025a). Within software engineering, representative work spans role-based multi-agent development and interactive code execution (Hong et al., 2024; Qian et al., 2024; Yang et al., 2023; Wang et al., 2024b); repository-level evaluation, planning, and repair (Jimenez et al., 2024; Yang et al., 2024; Zhang et al., 2024a; Bairi et al., 2024; Zhang et al., 2024b; Bouzenia et al., 2025; Wang et al., 2025c; Xia et al., 2024); and executable training environments, scalable task generation, and RL or inference-scaling recipes (Pan et al., 2025; Yang et al., 2025b; Wei et al., 2025b; Jain et al., 2025; Wang et al., 2025a; Mu et al., 2023). Search and deep-research agents form one important branch of this broader agentic post-training trend, with recent work applying outcome-based RL, synthetic trajectory construction, and tool-use training to search-augmented reasoning and deep browsing (Li et al., 2025b; Chen et al., 2025b; Jin et al., 2025b; Song et al., 2025; Sun et al., 2025; Mu et al., 2025; Li et al., 2025c; Wu et al., 2025a; Li et al., 2025a; Zheng et al., 11 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 2025b; Li et al., 2026; Wang et al., 2026b; Gao et al., 2025). Recent surveys and position papers summarize these developments under deep search, tool-use agents, and agentic deep research (Xi et al., 2025a; Zhang et al., 2025b). Our work is in this general post-training regime: rather than designing a new agent interface or adding a stronger teacher, we study how to make the training signal more informative inside a multi-turn trajectory. 
+
+Credit assignment for long-horizon language agents. Credit assignment is a long-standing challenge in reinforcement learning when the reward is delayed until the end of an extended trajectory (Sutton and Barto, 2018). Temporal-difference learning addresses this problem by estimating how each transition changes the value of the current state (Sutton, 1988). Potential-based reward shaping similarly uses differences in a state potential to provide denser feedback while preserving the underlying task objective under standard assumptions (Ng et al., 1999), and return-decomposition methods such as RUDDER redistribute delayed rewards to the decisions that make the final outcome predictable (Arjona-Medina et al., 2019). In language-model reasoning, process supervision and process reward models provide fine-grained feedback by labeling or modeling intermediate reasoning steps (Uesato et al., 2022; Lightman et al., 2023; Li and Li, 2025). These approaches motivate dense supervision, but they often require a learned critic, human or synthetic step labels, process-reward annotation, Monte Carlo continuations, or task-specific reward features. Recent work has begun to adapt fine-grained credit assignment to language-model policies. For single-response reasoning, Setlur et al. (2024) formalize a process reward as the change in the probability of eventually reaching a correct answer, Wang et al. (2024a) estimate per-step values from Monte Carlo rollouts, and Yuan et al. (2024) derive an implicit process reward from the log-likelihood ratio between a policy and a fixed reference model. For multi-turn agents, recent work studies stepwise rewards, hindsight credit, memory-aware credit assignment, search-agent RL, and training infrastructure for long-horizon tool use (Feng et al., 2025; Wang et al., 2025b; Dong et al., 2025b; Wang et al., 2025d; Zhao et al., 2025a; Wang et al., 2026a; Tan et al., 2026; Yan et al., 2026; Qu et al., 2025; Dong et al., 2025a; Jin et al., 2025a; Xi et al., 2025b; Chai et al., 2025; Zhao et al., 2025b; Zhang et al., 2025a). TRACE shares the goal of assigning credit below the trajectory level, but avoids training an additional critic or progress estimator, does not require Monte Carlo continuations, and does not depend on revisiting identical states. At a high level, TRACE complements outcome-based post-training with turn-level feedback, allowing long-horizon agents to learn from useful intermediate progress rather than only from final success or failure. 
+
+# 6 LIMITATIONS 
+
+Our empirical validation focuses on long-horizon search agents whose final answers are short and can be compared against a known ground truth. This setting matches the core design of TRACE: the frozen reference model estimates the value of a trajectory prefix by measuring how much more predictable the gold answer becomes after each tool interaction. For tasks with compact answers, this provides a simple and stable proxy for progress. However, the same value estimation strategy may be less direct for agentic tasks whose correct outputs are long, structured, or open-ended. For example, a code agent may need to produce a multi-file patch rather than a short answer string, and an open-ended assistant may need to satisfy underspecified user preferences rather than match a single gold response. In such settings, it is unclear whether gold-output log-probability under a frozen reference model is still a reliable state-value proxy. This limitation does not affect the main claim that turn-level credit can reduce the sparsity of outcome-only agentic RL, but it does bound the current scope of the method. Extending TRACE to richer agent tasks may require alternative state-value targets, such as execution-based progress signals for coding, structured task specifications, or decomposed verifiable subgoals. We leave the design of reliable credit estimators for long-output and open-ended agents to future work. 
+
+# 7 CONCLUSION 
+
+We presented TRACE, a critic-free method for assigning turn-level credit in long-horizon agentic RL. At tool-call boundaries, a frozen reference model maps gold-answer log-probabilities to log-ratio state values, whose TD changes provide local rewards. Combining this signal with the GRPO outcome advantage preserves final-answer correctness as the training anchor without step labels, a strong LLM 12 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents judge, or a trained critic or process reward model. TRACE outperforms outcome-only GRPO on all four benchmarks at both model scales, raising the four-benchmark average from 29 .5 to 34 .0
+
+for Qwen3-4B and from 32 .5 to 38 .1 for Qwen3-30B-A3B. On BrowseComp-Plus, it improves the base policies from 7.2 to 35 .6 and from 8.4 to 42 .6, with gains transferring to open-web evaluation. These results establish frozen-reference turn credit as an effective signal for long-horizon search with compact, verifiable answers; long, structured, or open-ended outputs will require alternative state-value estimators. 
+
+# ACKNOWLEDGMENT 
+
+We gratefully acknowledge Xuhui Huang for his valuable feedback. The work is supported in part by the Research Forward Fund from the University of Wisconsin-Madison Office of the Vice Chancellor for Research, AFOSR Young Investigator Program under award number FA9550-23-1-0184, National Science Foundation under awards IIS-2237037 and IIS-2331669, Office of Naval Research, Schmidt Sciences Foundation, Open Philanthropy (now Coefficient Giving), and Alfred P. Sloan Fellowship. 
+
+# REFERENCES 
+
+J. A. Arjona-Medina, M. Gillhofer, M. Widrich, T. Unterthiner, J. Brandstetter, and S. Hochre-iter. RUDDER: Return decomposition for delayed rewards. In Advances in Neural Information Processing Systems , 2019. R. Bairi, A. Sonwane, A. Kanade, D. C. Vageesh, A. Iyer, S. Parthasarathy, S. Rajamani, B. Ashok, and S. Shet. CodePlan: Repository-level coding using LLMs and planning. Proceedings of the ACM on Software Engineering , 1(FSE):675–698, 2024. doi: 10.1145/3643757. I. Bouzenia, P. Devanbu, and M. Pradel. RepairAgent: An autonomous, LLM-based agent for program repair. In Proceedings of the 47th IEEE/ACM International Conference on Software Engineering , pages 2188–2200, 2025. doi: 10.1109/ICSE55347.2025.00157. J. Chai, G. Yin, Z. Xu, C. Yue, Y. Jia, S. Xia, X. Wang, J. Jiang, X. Li, C. Dong, H. He, and W. Lin. RLFactory: A plug-and-play reinforcement learning post-training framework for LLM multi-turn tool-use. arXiv preprint arXiv:2509.06980 , 2025. K. Chen, Y. Ren, Y. Liu, X. Hu, H. Tian, T. Xie, F. Liu, H. Zhang, H. Liu, Y. Gong, et al. xbench: Tracking agents productivity scaling with profession-aligned real-world evaluations. arXiv preprint arXiv:2506.13651 , 2025a. M. Chen, T. Li, H. Sun, Y. Zhou, C. Zhu, F. Yang, Z. Zhou, W. Chen, H. Wang, J. Z. Pan, W. Zhang, and H. Chen. ReSearch: Learning to reason with search for LLMs via reinforcement learning. 
+
+arXiv preprint arXiv:2503.19470 , 2025b. Z. Chen, X. Ma, S. Zhuang, P. Nie, K. Zou, et al. BrowseComp-Plus: A more fair and transparent evaluation benchmark of deep-research agent. arXiv preprint arXiv:2508.06600 , 2025c. X. Deng, Y. Gu, B. Zheng, S. Chen, S. Stevens, B. Wang, H. Sun, and Y. Su. Mind2Web: Towards a generalist agent for the web. In Advances in Neural Information Processing Systems , 2023. G. Dong, Y. Chen, X. Li, J. Jin, H. Qian, Y. Zhu, H. Mao, G. Zhou, Z. Dou, and J.-R. Wen. Tool-Star: Empowering LLM-brained multi-tool reasoner via reinforcement learning. arXiv preprint arXiv:2505.16410 , 2025a. G. Dong, H. Mao, K. Ma, L. Bao, Y. Chen, et al. Agentic reinforced policy optimization. arXiv preprint arXiv:2507.19849 , 2025b. A. Drouin, M. Gasse, M. Caccia, I. H. Laradji, M. Del Verme, T. Marty, L. Boisvert, M. Thakkar, Q. Cappart, D. Vazquez, N. Chapados, and A. Lacoste. WorkArena: How capable are web agents at solving common knowledge work tasks? arXiv preprint arXiv:2403.07718 , 2024. L. Feng, Z. Xue, T. Liu, and B. An. Group-in-group policy optimization for LLM agent training. 
+
+arXiv preprint arXiv:2505.10978 , 2025. 13 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents J. Gao, W. Fu, M. Xie, S. Xu, C. He, Z. Mei, B. Zhu, and Y. Wu. Beyond ten turns: Unlocking long-horizon agentic search with large-scale asynchronous RL. arXiv preprint arXiv:2508.07976 ,2025. D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al. DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning. Nature ,645:633–638, 2025. doi: 10.1038/s41586-025-09422-z. S. Hong, M. Zhuge, J. Chen, X. Zheng, Y. Cheng, C. Zhang, J. Wang, Z. Wang, S. K. S. Yau, Z. Lin, L. Zhou, C. Ran, L. Xiao, C. Wu, and J. Schmidhuber. MetaGPT: Meta programming for a multi-agent collaborative framework. In International Conference on Learning Representations ,2024. N. Jain, J. Singh, M. Shetty, L. Zheng, K. Sen, and I. Stoica. R2E-Gym: Procedural environments and hybrid verifiers for scaling open-weights SWE agents. arXiv preprint arXiv:2504.07164 , 2025. C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan. SWE-bench: Can language models resolve real-world GitHub issues? In International Conference on Learning Representations , 2024. B. Jin, J. Yoon, P. Kargupta, S. O. Arik, and J. Han. An empirical study on reinforcement learning for reasoning-search interleaved LLM agents. arXiv preprint arXiv:2505.15117 , 2025a. B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han. Search-R1: Train-ing LLMs to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 , 2025b. J. Y. Koh, R. Lo, L. Jang, V. Duvvur, M. C. Lim, P.-Y. Huang, G. Neubig, S. Zhou, R. Salakhutdinov, and D. Fried. VisualWebArena: Evaluating multimodal agents on realistic visual web tasks. arXiv preprint arXiv:2401.13649 , 2024. K. Li, Z. Zhang, H. Yin, L. Zhang, L. Ou, J. Wu, W. Yin, B. Li, Z. Tao, X. Wang, et al. WebSailor: Navigating super-human reasoning for web agent. arXiv preprint arXiv:2507.02592 , 2025a. M. Li, Y. Zhao, B. Yu, F. Song, H. Li, H. Yu, Z. Li, F. Huang, and Y. Li. API-Bank: A comprehensive benchmark for tool-augmented LLMs. arXiv preprint arXiv:2304.08244 , 2023. W. Li and Y. Li. Process reward model with q-value rankings. In Proceedings of the International Conference on Learning Representations , 2025. X. Li, G. Dong, J. Jin, Y. Zhang, Y. Zhou, Y. Zhu, P. Zhang, and Z. Dou. Search-o1: Agentic search-enhanced large reasoning models. arXiv preprint arXiv:2501.05366 , 2025b. X. Li, J. Jin, G. Dong, H. Qian, Y. Wu, J.-R. Wen, Y. Zhu, and Z. Dou. WebThinker: Empowering large reasoning models with deep research capability. arXiv preprint arXiv:2504.21776 , 2025c. Z. Li, D. Jiang, X. Ma, H. Zhang, P. Nie, Y. Zhang, K. Zou, J. Xie, Y. Zhang, and W. Chen. OpenResearcher: A fully open pipeline for long-horizon deep research trajectory synthesis. arXiv preprint arXiv:2603.20278 , 2026. H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe. Let’s verify step by step. arXiv preprint arXiv:2305.20050 , 2023. G. Mialon, C. Fourrier, C. Swift, T. Wolf, Y. LeCun, and T. Scialom. GAIA: A benchmark for general AI assistants. In International Conference on Learning Representations , 2024. J. Mu, Y. Lu, and M. Smith. Llm-assisted incrementality (uplift) modeling for email advertising: From feature interactions to interpretable audience–creative–channel policies. Journal of Advanced Computing Systems , 3(1):31–48, 2023. J. Mu, T. Ye, and P. Patel. Offline counterfactual evaluation for advertising and recommendation slot policies: A reproducible study on the open bandit dataset (small). Journal of Technology Informatics and Engineering , 4(3):521–543, 2025. 14 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents R. Nakano, J. Hilton, S. Balaji, J. Wu, L. Ouyang, C. Kim, C. Hesse, S. Jain, V. Kosaraju, W. Saunders, et al. WebGPT: Browser-assisted question-answering with human feedback. arXiv preprint arXiv:2112.09332 , 2021. A. Y. Ng, D. Harada, and S. Russell. Policy invariance under reward transformations: Theory and application to reward shaping. In Proceedings of the Sixteenth International Conference on Machine Learning , pages 278–287, 1999. J. Pan, X. Wang, G. Neubig, N. Jaitly, H. Ji, A. Suhr, and Y. Zhang. Training software engineering agents and verifiers with SWE-Gym. In International Conference on Machine Learning , 2025. Y. Pan, D. Kong, S. Zhou, C. Cui, Y. Leng, B. Jiang, H. Liu, Y. Shang, S. Zhou, T. Wu, and Z. Wu. WebCanvas: Benchmarking web agents in online environments. arXiv preprint arXiv:2406.12373 ,2024. C. Qian, W. Liu, H. Liu, N. Chen, Y. Dang, J. Li, C. Yang, W. Chen, Y. Su, X. Cong, J. Xu, D. Li, Z. Liu, and M. Sun. ChatDev: Communicative agents for software development. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , pages 15174–15186, 2024. doi: 10.18653/v1/2024.acl-long.810. Y. Qin, S. Liang, Y. Ye, K. Zhu, L. Yan, Y. Lu, Y. Lin, X. Cong, X. Tang, et al. ToolLLM: Facilitating large language models to master 16000+ real-world apis. arXiv preprint arXiv:2307.16789 , 2023. Y. Qu, Y. Jiang, B. Wang, Y. Mao, C. Wang, C. Liu, and X. Ji. Latent reward: LLM-empowered credit assignment in episodic reinforcement learning. arXiv preprint arXiv:2412.11120 , 2025. C. Rawles, S. Clinckemaillie, Y. Chang, J. Waltz, G. Lau, M. Fair, A. Li, W. Bishop, W. Li, F. Campbell-Ajala, D. Toyama, R. Berry, D. Tyamagundlu, T. Lillicrap, and O. Riva. AndroidWorld: A dynamic benchmarking environment for autonomous agents. arXiv preprint arXiv:2405.14573 ,2025. T. Schick, J. Dwivedi-Yu, R. Dessì, R. Raileanu, M. Lomeli, L. Zettlemoyer, N. Cancedda, and T. Scialom. Toolformer: Language models can teach themselves to use tools. In Advances in Neural Information Processing Systems , 2023. J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. Serper.dev. Serper: Google search API. https://serper.dev , 2026. A. Setlur, C. Nagpal, A. Fisch, X. Geng, J. Eisenstein, R. Agarwal, A. Agarwal, J. Berant, and A. Kumar. Rewarding progress: Scaling automated process verifiers for LLM reasoning. arXiv preprint arXiv:2410.08146 , 2024. Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and S. Yao. Reflexion: Language agents with verbal reinforcement learning. arXiv preprint arXiv:2303.11366 , 2023. H. Song, J. Jiang, Y. Min, J. Chen, Z. Chen, W. X. Zhao, L. Fang, and J.-R. Wen. R1-Searcher: Incen-tivizing the search capability in LLMs via reinforcement learning. arXiv preprint arXiv:2503.05592 ,2025. H. Sun, Z. Qiao, J. Guo, X. Fan, Y. Hou, Y. Jiang, P. Xie, F. Huang, and Y. Zhang. ZeroSearch: Incentivize the search capability of LLMs without searching. arXiv preprint arXiv:2505.04588 ,2025. R. S. Sutton. Learning to predict by the methods of temporal differences. Machine Learning , 3:9–44, 1988. R. S. Sutton and A. G. Barto. Reinforcement Learning: An Introduction . MIT Press, 2 edition, 2018. 15 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents H.-Z. Tan, X.-W. Yang, H. Chen, J.-J. Shao, Y. Wen, Y. Shen, W. Luo, X. Du, L.-Z. Guo, and Y.-F. Li. Hindsight credit assignment for long-horizon LLM agents. arXiv preprint arXiv:2603.08754 ,2026. Tongyi DeepResearch Team, B. Li, B. Zhang, D. Zhang, F. Huang, G. Li, G. Chen, H. Yin, J. Wu, J. Zhou, et al. Tongyi DeepResearch technical report. arXiv preprint arXiv:2510.24701 , 2025. J. Uesato, N. Kushman, R. Kumar, F. Song, N. Siegel, L. Wang, A. Creswell, G. Irving, and I. Higgins. Solving math word problems with process- and outcome-based feedback. arXiv preprint arXiv:2211.14275 , 2022. G. Wang, S. Dai, G. Ye, Z. Gan, W. Yao, Y. Deng, X. Wu, and Z. Ying. Information gain-based policy optimization: A simple and effective approach for multi-turn search agents. In International Conference on Learning Representations , 2026a. H. Wang, Z. Hou, Y. Wei, J. Tang, and Y. Dong. SWE-Dev: Building software engineering agents with training and inference scaling. In Findings of the Association for Computational Linguistics: ACL 2025 , 2025a. H. Wang, C. T. Leong, J. Wang, J. Wang, and W. Li. SPA-RL: Reinforcing LLM agents via stepwise progress attribution. arXiv preprint arXiv:2505.20732 , 2025b. P. Wang, L. Li, Z. Shao, R. X. Xu, D. Dai, Y. Li, D. Chen, Y. Wu, and Z. Sui. Math-Shepherd: Verify and reinforce LLMs step-by-step without human annotations. arXiv preprint arXiv:2312.08935 ,2024a. X. Wang, Y. Chen, L. Yuan, Y. Zhang, Y. Li, H. Peng, and H. Ji. Executable code actions elicit better LLM agents. In International Conference on Machine Learning , 2024b. X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, et al. OpenHands: An open platform for AI software developers as generalist agents. In International Conference on Learning Representations , 2025c. Y. Wang, J. Mu, M. Jobanputra, Y. Wang, J.-U. Lee, S. Oh, I. Valera, and V. Demberg. Sparse mixture-of-experts reward models learn interpretable and specialized experts for personalized preference modeling. arXiv preprint arXiv:2606.04284 , 2026b. Z. Wang, X. Zheng, K. An, C. Ouyang, J. Cai, Y. Wang, and Y. Wu. StepSearch: Igniting LLMs search ability via step-wise proximal policy optimization. arXiv preprint arXiv:2505.15107 , 2025d. J. Wei, Z. Sun, S. Papay, S. McKinney, J. Han, I. Fulford, H. W. Chung, A. T. Passos, W. Fedus, and M. Glaese. BrowseComp: A simple yet challenging benchmark for browsing agents. arXiv preprint arXiv:2504.12516 , 2025a. Y. Wei, O. Duchenne, J. Copet, Q. Carbonneaux, L. Zhang, D. Fried, G. Synnaeve, R. Singh, and S. I. Wang. SWE-RL: Advancing LLM reasoning via reinforcement learning on open software evolution. In Advances in Neural Information Processing Systems , 2025b. J. Wu, B. Li, R. Fang, W. Yin, L. Zhang, Z. Tao, D. Zhang, Z. Xi, G. Fu, Y. Jiang, P. Xie, F. Huang, and J. Zhou. WebDancer: Towards autonomous information seeking agency. arXiv preprint arXiv:2505.22648 , 2025a. J. Wu, Z. Xu, Q. Fu, and W. Yang. Cut the bill, keep the turns: Affordable multi-turn search RL. project page, Dec. 2025b. Y. Xi, J. Lin, Y. Xiao, Z. Zhou, R. Shan, T. Gao, J. Zhu, W. Liu, Y. Yu, and W. Zhang. A survey of LLM-based deep search agents: Paradigm, optimization, evaluation, and challenges. arXiv preprint arXiv:2508.05668 , 2025a. Z. Xi, J. Huang, C. Liao, B. Huang, H. Guo, J. Liu, R. Zheng, J. Ye, J. Zhang, W. Chen, et al. AgentGym-RL: Training LLM agents for long-horizon decision making through multi-turn rein-forcement learning. arXiv preprint arXiv:2509.08755 , 2025b. 16 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents C. S. Xia, Y. Deng, S. Dunn, and L. Zhang. Agentless: Demystifying LLM-based software engineering agents. arXiv preprint arXiv:2407.01489 , 2024. T. Xie, D. Zhang, J. Chen, X. Li, S. Zhao, R. Cao, T. J. Hua, Z. Cheng, et al. OSWorld: Bench-marking multimodal agents for open-ended tasks in real computer environments. arXiv preprint arXiv:2404.07972 , 2024. S. Yan, A. Bahloul, E. Nie, S. Schwarzmann, R. Trivisonno, V. Tresp, and Y. Ma. Memory-R2: Fair credit assignment for long-horizon memory-augmented LLM agents. arXiv preprint arXiv:2605.21768 , 2026. A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025a. J. Yang, A. Prabhakar, K. Narasimhan, and S. Yao. InterCode: Standardizing and benchmarking interactive coding with execution feedback. In Advances in Neural Information Processing Systems ,volume 36, pages 23826–23854, 2023. J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press. SWE-agent: Agent-computer interfaces enable automated software engineering. arXiv preprint arXiv:2405.15793 ,2024. J. Yang, K. Lieret, C. E. Jimenez, A. Wettig, K. Khandpur, Y. Zhang, B. Hui, O. Press, L. Schmidt, and D. Yang. SWE-smith: Scaling data for software engineering agents. In Advances in Neural Information Processing Systems , 2025b. Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , pages 2369–2380, 2018. S. Yao, H. Chen, J. Yang, and K. Narasimhan. WebShop: Towards scalable real-world web interaction with grounded language agents. In Advances in Neural Information Processing Systems , 2022. S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao. ReAct: Synergizing reasoning and acting in language models. In International Conference on Learning Representations , 2023. C. Ye, Z. Yu, Z. Zhang, H. Chen, N. Sadagopan, J. Huang, T. Zhang, and A. Beniwal. Beyond correctness: Harmonizing process and outcome rewards through RL training. arXiv preprint arXiv:2509.03403 , 2025. L. Yuan, W. Li, H. Chen, G. Cui, N. Ding, K. Zhang, B. Zhou, Z. Liu, and H. Peng. Free process rewards without process labels. arXiv preprint arXiv:2412.01981 , 2024. A. Zeng, M. Liu, R. Lu, B. Wang, X. Liu, Y. Dong, and J. Tang. AgentTuning: Enabling generalized agent abilities for LLMs. arXiv preprint arXiv:2310.12823 , 2023. C. Zhang, Z. Yang, J. Liu, Y. Han, X. Chen, Z. Huang, B. Fu, and G. Yu. AppAgent: Multimodal agents as smartphone users. arXiv preprint arXiv:2312.13771 , 2023. H. Zhang, X. Liu, B. Lv, X. Sun, B. Jing, I. L. Iong, Z. Hou, Z. Qi, H. Lai, Y. Xu, et al. AgentRL: Scaling agentic reinforcement learning with a multi-turn, multi-task framework. arXiv preprint arXiv:2510.04206 , 2025a. K. Zhang, J. Li, G. Li, X. Shi, and Z. Jin. CodeAgent: Enhancing code generation with tool-integrated agent systems for real-world repo-level coding challenges. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , pages 13643–13658, 2024a. doi: 10.18653/v1/2024.acl-long.737. 17 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents W. Zhang, Y. Li, Y. Bei, J. Luo, G. Wan, L. Yang, C. Xie, Y. Yang, W.-C. Huang, C. Miao, et al. From web search towards agentic deep research: Incentivizing search with reasoning agents. arXiv preprint arXiv:2506.18959 , 2025b. Y. Zhang, H. Ruan, Z. Fan, and A. Roychoudhury. AutoCodeRover: Autonomous program improve-ment. In Proceedings of the ACM International Symposium on Software Testing and Analysis ,pages 1592–1604, 2024b. doi: 10.1145/3650212.3680384. Y. Zhang, M. Li, D. Long, X. Zhang, H. Lin, B. Yang, P. Xie, A. Yang, D. Liu, J. Lin, F. Huang, and J. Zhou. Qwen3 embedding: Advancing text embedding and reranking through foundation models. 
+
+arXiv preprint arXiv:2506.05176 , 2025c. Q. Zhao, R. Wang, D. Xu, D. Zha, and L. Liu. R-Search: Empowering LLM reasoning with search via multi-reward reinforcement learning. arXiv preprint arXiv:2506.04185 , 2025a. W. Zhao, X. Wang, C. Ma, L. Kong, Z. Yang, M. Tuo, X. Shi, Y. Zhai, and X. Cai. MUA-RL: Multi-turn user-interacting agent reinforcement learning for agentic tool use. arXiv preprint arXiv:2508.18669 , 2025b. C. Zheng, S. Liu, M. Li, X.-H. Chen, B. Yu, C. Gao, K. Dang, Y. Liu, R. Men, A. Yang, J. Zhou, and J. Lin. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025a. L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica. Judging LLM-as-a-judge with MT-Bench and chatbot arena. In Advances in Neural Information Processing Systems , 2023. Y. Zheng, D. Fu, X. Hu, X. Cai, L. Ye, P. Lu, P. Liu, et al. DeepResearcher: Scaling deep research via reinforcement learning in real-world environments. arXiv preprint arXiv:2504.03160 , 2025b. S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, U. Alon, and G. Neubig. WebArena: A realistic web environment for building autonomous agents. In 
+
+International Conference on Learning Representations , 2024. 18 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 
+
+# A APPENDIX 
+
+A.1 TRAINING HYPERPARAMETERS 
+
+Tables 3 and 4 summarize the script-level hyperparameters used for the Qwen3-30B-A3B-Thinking-2507 Search-R1 training run. The shared launch script keeps turn-level scoring disabled by default for a single-node colocated layout unless a remote reference-model scoring endpoint is provided; TRACE runs enable this path and use the settings in Table 4. 
+
+Category Hyperparameter Value 
+
+Rollout Rollout engine SGLang GPUs per rollout engine 1
+
+Running requests 64 
+
+Rollout batch size 64 
+
+Samples per prompt 8
+
+Sampling temperature 1.0
+
+Sampling top-p 1.0
+
+Max trajectory length 48 ,000 tokens Max response tokens 4096 tokens Max tool turns 60 
+
+Max observation tokens 2048 tokens Rollout timeout 240 sEvaluation Eval samples per prompt 1
+
+Eval max response length 8192 tokens Eval max context length 72 ,000 tokens Eval max tool turns 80 tool turns Optimization Global batch size 128 
+
+Optimizer Adam Learning rate schedule Constant Learning rate 1 × 10 −6
+
+Weight decay 0.01 
+
+Adam β1 0.9
+
+Adam β2 0.98 
+
+Optimizer offload CPU offload with overlapped D2H/H2D trans-fer KL loss 0
+
+Entropy coefficient 0.00 
+
+Clip ratio lower bound 0.20 
+
+Clip ratio upper bound 0.28 
+
+Loss accounting Per-token loss TIS Enabled Table 3: Core training, rollout, and optimization hyperparameters for the Qwen3-30B-A3B-Thinking-2507 Search-R1 training run. 
+
+19 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 
+
+Category Hyperparameter Value 
+
+Outcome reward Outcome reward coefficient 1.0
+
+Format score 0.1
+
+Zero-advantage handling Return zero when the group advantage is zero Turn credit Turn-reward scoring Enabled for TRACE runs with a remote reference-model scoring endpoint Turn-reward weight 0.2
+
+Training gap offset ϵtrain 0.1
+
+Ground-truth field ground_truth 
+
+Advantage mode turn_advantages 
+
+Remaining-space transform Enabled Transform mode log_ratio 
+
+Legacy transform stabilizer 0.001 
+
+TD look-ahead horizon K = 3 
+
+TD discount γtd = 0 .8
+
+K-step normalization Enabled Terminal-outcome fill Enabled Terminal-outcome scale 2.0
+
+Advantage normalization none 
+
+Post-group normalization False Advantage clipping 0.0
+
+Table 4: TRACE-specific reward and turn-credit hyperparameters from the Search-R1 launch script. The training gap offset is the ϵ used in dk = −¯ℓk + ϵ; the legacy transform stabilizer is a separate script parameter and is not used as the log-ratio gap offset in the reported TRACE runs. 
+
+A.2 COMPARISON WITH RAW LOG -P ROBABILITY DIFFERENCES 
+
+This section expands on the choice of the log-ratio state value in Eq. 6 and the resulting TD action reward in Eq. 7. For a fixed rollout, write ¯ℓk for the raw average gold-answer log-probability and dk = −¯ℓk + ϵ for the remaining answer-likelihood gap. The raw log-probability difference 
+
+∆ℓk = ¯ℓk+1 − ¯ℓk telescopes to ¯ℓT − ¯ℓ0 and therefore preserves the ordering of two rollouts from the same prompt when they share the same initial state. However, raw differences measure absolute improvement in log-probability, not the fraction of the remaining gap that a turn closes. The linear remaining-gap score e∆lin  
+
+> k
+
+= ( ¯ℓk+1 − ¯ℓk)/d k and the TD reward from the log-ratio value, 
+
+Ck = Vk+1 − Vk = log( dk/d k+1 ), both correct this scale issue by rewarding relative gap reduction, but only the log-ratio value also retains an endpoint-only telescoping form. 
+
+Property Raw delta ∆ℓk Linear remaining gap e∆lin  
+
+> k
+
+Log-ratio TD reward Ck
+
+Definition ¯ℓk+1 − ¯ℓk (¯ℓk+1 − ¯ℓk )/d k Vk+1 − Vk =log( dk /d k+1 )
+
+Telescoping ¯ℓT − ¯ℓ0 No endpoint-only form VT − V0 = log( d0/d T )
+
+Order preservation Yes, for shared ¯ℓ0 Not guaranteed Yes, for shared ¯ℓ0
+
+Per-step unit Absolute improvement Relative gap reduction Relative gap reduction Large remaining gap Uniform scaling Downweights early large-gap steps Downweights early large-gap steps Small remaining gap Uniform scaling Strongly amplifies near-terminal steps Moderately amplifies near-terminal steps Numerical behavior Stable Can spike when dk is small Finite with offset and logarithmic growth Table 5: Comparison of raw log-probability differences, a linear remaining-gap normalization, and the TD reward from the log-ratio value used by TRACE. The log-ratio value is the only relative-gap formulation whose cumulative action reward depends only on the initial and final states. 
+
+An offline diagnostic on a held-out BrowseComp-Plus evaluation trace further supports this choice. We compared the cumulative score from each formulation against the final reference-model log-probability and the binary outcome reward over 830 rollouts containing 3742 tool turns, using a separate diagnostic offset ϵdiag = 10 −3 for the two remaining-gap normalizations. The log-ratio 20 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents score has the strongest correlation with both endpoint quality and final correctness, while also giving the best pairwise ranking accuracy among rollouts with similar initial raw log-probabilities.                
+
+> Metric Raw Linear Log-ratio Correlation with final ¯ℓT0.425 0.721 0.751
+> Correlation with positive outcome reward 0.603 0.680 0.713
+> Pairwise ranking accuracy, |∆¯ℓ0| ≤ 0.297 .34% 93 .13% 98 .24 %
+> Table 6: Offline comparison of transition-credit formulations on a held-out evaluation trace. Scores are computed by summing turn-level credits within each rollout before comparing to the final reference-model score or outcome reward.
+
+The difference is visible at the turn level. Consider two transitions with nearly identical raw gains: one moves from ¯ℓ = −5.1187 to ¯ℓ = −1.5712 (∆ℓ = 3 .5475 ), while another moves from ¯ℓ = −10 .6570 
+
+to ¯ℓ = −7.1061 (∆ℓ = 3 .5509 ). Raw delta treats them as essentially equal. In contrast, the corresponding log-ratio TD rewards are 1.1806 and 0.4052 , respectively, because the first transition closes a much larger fraction of its remaining gap. This behavior is desirable for long-horizon search: decisive evidence localization near the answer should receive more credit than an equally sized absolute improvement that still leaves the rollout far from predicting the gold answer. A.3 SEARCH -A GENT TASK AND INTERFACE 
+
+We instantiate TRACE on a deliberately simple closed-corpus search task. Given a question x, the agent follows an interleaved reasoning-and-acting pattern (Yao et al., 2023): each assistant turn contains private reasoning and either one browser tool call or a final answer. If the turn contains a valid tool call, the environment executes it against the retrieval corpus and appends the resulting observation before the next assistant turn. Keeping this interface small helps isolate the effect of the training signal from improvements due to a more specialized planner or tool stack. Rollouts stop when the model emits a final <answer> span, reaches the tool-turn limit, or hits a context or generation limit. Training loss is applied only to assistant-generated tokens, while tool observations are masked. The outcome reward checks whether the normalized final answer exactly matches the gold answer, with a small format component for well-formed answers. We also record lightweight trajectory diagnostics, including tool-call counts, repeated queries, reopened documents, repeated in-document searches, navigation errors, and answer-format validity. The environment exposes three browsing tools over the retrieval corpus. Table 7 summarizes the tool schema used in all experiments.                                  
+
+> Tool Argument Type/default Description
+> browser.search query string, required Search query string.
+> topn integer, default 10 Number of top results to return.
+> browser.open id integer, default −1Result index from the most recent search, using zero-based indexing; −1rereads the current page.
+> loc integer, default −1Starting line number; −1uses the beginning of the page or a relevant passage.
+> num_lines integer, default −1Number of lines to display; −1uses the environment default.
+> browser.find pattern string, required Exact text pattern to search for in the cur-rently open document.
+> cursor integer, default −1Page cursor to search in; −1searches the current page. Table 7: Browser tool schema exposed to the search agent. Search returns titles, URLs, and summaries for the top retrieved documents; open displays document content from the closed corpus; find returns matching line numbers in the currently open document.
+
+The assistant’s reasoning, tool call, and final-answer formatting tokens are part of the assistant turn for training purposes, while tool observations are environment outputs and remain masked from the policy-gradient loss. 21 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents A.4 SYNTHETIC TRAINING DATA 
+
+Training a search agent with verifiable reinforcement learning requires questions whose rewards remain informative beyond the single-hop retrieval regime. If the training distribution is dominated by direct lookup questions, the agent quickly saturates: once it can issue one or two effective searches, additional training provides little pressure to learn deeper information gathering or cross-document synthesis. We therefore construct a synthetic training set of hard multi-document identification questions designed to require chained search, reasoning over at least two irreplaceable source documents, and resistance to trivial answer lookup. A.4.1 GENERATION PIPELINE 
+
+The pipeline starts from a document corpus, stored as parquet files or a Hugging Face dataset, together with a related-document index in JSONL format. For each anchor document, we retrieve the top-Krel 
+
+related documents whose similarity score exceeds a minimum threshold and use this set as the source context for question generation. This related-document context increases the probability that a valid question can connect facts across documents while still requiring the model to identify which documents are necessary. For every anchor document, we run a best-of-B generation procedure with rejection sampling. Each independent candidate is generated by an LLM prompted to produce a hard question, its answer, and an explicit reasoning chain over the provided sources. If a candidate fails verification, the rejection reason is fed back to the generator for up to a fixed number of regeneration attempts. Candidates that pass the initial checks are then sent to an independent answer verification stage: a separate LLM call receives only the question and source documents, not the proposed answer, and must derive the answer from scratch. We discard the example unless the independently derived answer matches the proposed answer under fuzzy matching. Among the remaining candidates, we keep the highest-scoring example and write it to the training JSONL. A.4.2 QUESTION TEMPLATES 
+
+The generator is constrained to produce questions from a small set of templates that naturally require cross-document reasoning. Table 8 summarizes the templates used in our data synthesis pipeline.       
+
+> Type Description
+> BRIDGE_ENTITY Identify a masked entity, then retrieve one of its attributes from another document.
+> INTERSECTION Find the unique entity satisfying independent conditions from differ-ent documents.
+> COUNTING_FILTERED Count members of a set defined by cross-document criteria.
+> COMPARATIVE Compare obfuscated entities using facts distributed across docu-ments.
+> REVERSE_LOOKUP Given an obfuscated output, identify its creator or source through another document. Table 8: Question templates used to synthesize hard multi-document QA examples.
+
+To prevent direct keyword lookup, each question applies at least one obfuscation operation. Time expressions may be blurred into relative or approximate descriptions; entity names may be masked; names may be replaced by role descriptions; and quantitative constraints may be converted into qualitative ones. These transformations force the agent to first resolve what should be searched for and only then retrieve the evidence needed to answer. A.4.3 VERIFICATION AND SELECTION 
+
+Quality control combines programmatic checks with LLM-based verification. The programmatic check requires the reasoning chain to cite at least two distinct source URLs. The LLM verifier then evaluates whether the question is actually hard, grounded, and multi-document. It rejects candidates whose answer appears directly in the question, whose constraints can be satisfied from a single source, whose answer is retrievable with a trivial query, or whose reasoning chain lacks a genuine synthesis 22 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents step. It also filters unsupported or hallucinated answers and examples in which one of the cited documents is redundant. The final selection score favors candidates that pass both quality and answer verification, succeed in fewer regeneration attempts, use longer reasoning chains, cite more distinct documents, and assign primary roles to all cited documents. It penalizes questions that leak the answer or produce overly long answers. This scoring rule selects examples that are not merely answerable, but useful for training long-horizon search behavior: the agent must issue multiple queries, maintain intermediate entities, and combine evidence from multiple documents before producing the final answer. A.5 QUALITATIVE ANALYSIS OF THE TURN CREDIT 
+
+Outcome-only GRPO assigns one trajectory-level advantage to every action in a rollout, obscuring whether an individual turn retrieves decisive evidence, adds redundant context, or discards an answer already supported by the transcript. We examine five successful and five failed trajectories from rollout batches 0140–0149. In each successful case, we highlight the tool call that closes most of the answer-likelihood gap; in each failed case, the trajectory first reaches an answer-secured prefix and then loses it after one diagnostic tool call. Each example reports the complete question and answer, the one-step credit sequence, and the most diagnostic tool call together with its credit. For a trajectory with T tool calls, search_r1_turn_values contains T + 2 frozen-reference values: one before tool use, one after each tool observation, and one after answer generation. Larger 
+
+V indicates greater closure of the gold-answer likelihood gap; we use V ≥ − 0.3 as a diagnostic definition of an answer-secured prefix. Following Eq. 7, δk = V (Sk+1 ) − V (Sk) is assigned to zero-based tool turn k, with the final difference assigned to answer generation. We mark positive progress in green, harmful transitions in red, and near-zero or mixed credit in gray. Tool calls use the notation browser.tool(argument=value) ; search-relative open IDs are accompanied by the returned page name. A.5.1 SUCCESSFUL TRAJECTORIES : L OCALIZING THE TURN THAT WINS 
+
+Positive turn example P1: A decisive search resolves the distractor                
+
+> Question. Starting from the job ad for a major Canadian flag carrier where line-maintenance applicants are asked to speak English plus German, trace to that carrier’s separate maintenance leadership posting that gives an edge to bilingual candidates, then compare this carrier against its express-partner company that says it was recognized as a top small/medium employer around the mid-2010s. Which company is associated with the mid-2010s employer recognition (rather than the bilingual-preference maintenance posting)?
+> Answer: Air Georgian .Final answer: ✓Correct Turn-credit distribution.
+> δ= [+6 .39 ,+0 .59 ,+0 .10 ,+0 .05] .
+> Critical turn. Turn 0. browser.search(query=question)
+> Turn credit: δ0= +6 .39 . The salient entity in the question is Air Canada, but the result set surfaces the Air Georgian careers page and thereby introduces the non-obvious express-partner answer. The subsequent page open secures the answer, while the literal find(pattern="2015") adds only
+> +0 .10 after it is already secured.
+
+Positive turn example P2: Only the answer-bearing document earns credit           
+
+> Question. In the rail-safety material from around the early 2010s, a conference is said to be opened by a senior infrastructure executive (not named here). Follow that trail to the police-led plan later described as helping prevent rail suicides, then move to a later partnership update and identify the person quoted as managing the suicide-prevention programme for the rail industry. Who is that person?
+> Answer: Ian Stevens .Final answer: ✓Correct Turn-credit distribution.
+> δ= [+1 .63 ,−1.03 ,−1.04 ,+6 .05 ,+0 .03] .
+
+23 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 
+
+Critical turn. Turn 3. browser.open(id=2) (Samaritans–Network Rail partnership update) 
+
+Turn credit: δ3 = +6 .05 . After two plausible but non-answer-bearing opens, this page names Ian Stevens and supplies the missing discriminative fact. 
+
+Positive turn example P3: A decisive open makes confirmation redundant 
+
+Question. Identify the venue where the Nepali boxer was defeated by the Filipino Olympian in a unanimous decision, if that Filipino was the same athlete once knocked out in a world-title rematch by the Thai ex-IBF flyweight champion who made an impressive Rio start around the mid-2010s. 
+
+Answer: Jakarta Expo Boxing Hall . Final answer: ✓ Correct Turn-credit distribution. 
+
+δ = [+0 .88 , +5 .86 , +0 .00 , −0.00] .
+
+Critical turn. Turn 1. browser.open(id=1) (Rappler match report) 
+
+Turn credit: δ1 = +5 .86 . The report supplies “at the Jakarta Expo Boxing Hall” and immediately secures the venue. The subsequent literal find receives +0 .00 , illustrating that repeated confirmation cannot inflate the telescoping signal. 
+
+Positive turn example P4: The search-result snippet secures the answer 
+
+Question. Starting from the maker described as doing Friday evening Arizona “drops” and claiming a no-open-edge signature stitch, follow that trail to the similarly sized product from the black-label line for everyday-carry users, then compare those with the summer-themed, hand-dyed Atlanta shop item that comes with a holographic extra. Which brand is the one that explicitly says no other maker uses its edge/lanyard construction method? 
+
+Answer: Godspeed Tactical . Final answer: ✓ Correct Turn-credit distribution. 
+
+δ = [+5 .48 , +0 .06 , +0 .00] .
+
+Critical turn. Turn 0. browser.search(query=question) 
+
+Turn credit: δ0 = +5 .48 . The result snippet exposes the Godspeed Tactical identity and exclusivity claim before any page is opened. The decisive credit therefore belongs to the search-result observation rather than the subsequent page read. 
+
+Positive turn example P5: A reformulated search rescues a stalled rollout 
+
+Question. In a software podcast episode from around the early 2020s featuring two engineering guests, an ad segment promotes an open-source time-series database and references that brand’s event series. For the London edition that was moved online during the pandemic period, what was the earlier company name (from around the early 2010s) that immediately preceded the host company’s later name change associated with that database? 
+
+Answer: Errplane . Final answer: ✓ Correct Turn-credit distribution. δ = [+1 .18 , −0.12 , −0.19 , −0.14 ,
+
++ 0 .43 , +5 .44 , +0 .02 , +0 .00] .
+
+Critical turn. Turn 5. browser.search(query="influxdata company name change from early 2010s to later name") 
+
+Turn credit: δ5 = +5 .44 . After four stalled probes, this reformulated query returns “Errplane became InfluxData in 2015,” localizing nearly all progress in the eight-turn trajectory to this rescue query. 
+
+A.5.2 NEGATIVE TRAJECTORIES : L OCALIZING THE TOOL CALL THAT LOSES 
+
+Every failure below reaches an answer-secured prefix and then undergoes a single large negative transition. The examples differ in what triggers the collapse: a query-echo self-match, an over-24 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents interpreted no-match, a match in the wrong context, an over-literal type comparison, or a phrase copied from the question rather than read from the page. 
+
+Negative turn example N1: A query-echo self-match discards a secured answer 
+
+Question. In a post from around the mid-2010s by a youth organizer planning an end-of-season teen church overnight, the writer jokes about a very high-voltage fence and doubts a loft drop trust exercise. Use that to find another reflection from roughly the same era where students mention trusting the rope-holder during a heights course, then compare the fear-focused activity named there with the similarly fear-themed activity listed in a different school day-log that also mentions climbing, archery, a blindfold obstacle course, and a ladder challenge. Which fear-themed activity title comes later in alphabetical order? 
+
+Gold answer: Leap of Faith . Model answer: loft drop trust exercise .
+
+Final answer: × Incorrect Turn-credit distribution. 
+
+δ = [+1 .47 , +0 .13 , +1 .49 , −0.00 , −4.83 , −0.78] .
+
+Critical turn. Turn 4. browser.find(pattern="loft drop trust exercise", cursor=0) 
+
+Turn credit: δ4 = −4.83 . After the gold answer is secured, this call matches the model’s earlier query echo rather than a page-supported title. Accepting its own paraphrase as a second candidate discards the answer and produces the sharp negative credit. 
+
+Negative turn example N2: A no-match becomes a false factual negative 
+
+Question. Starting from the article about a TV doctor’s health-content partnership launched on a global blood-disorder awareness observance in the late 2010s, use that observance date to find another program episode from around the mid-2010s featuring three women in the same disease space. Then use the early-2010s Pittsburgh interview with the longtime local nonprofit executive (described by role, not name) to filter that trio by shared family name. How many women in the trio match that surname? 
+
+Gold answer: 2. Model answer: 0. Final answer: × Incorrect Turn-credit distribution. δ = [+2 .31 , +0 .10 , −1.32 , +0 .09 ,
+
++ 0 .35 , +0 .98 , −4.05 , −1.09] .
+
+Critical turn. Turn 6. browser.find(pattern="Bush") (returns “No matches”) 
+
+Turn credit: δ6 = −4.05 . Although the preceding prefix is answer-secured, the model interprets absence from an incomplete episode page as evidence that none of the women is a Bush. The negative credit localizes this invalid factual-negative inference. 
+
+Negative turn example N3: A successful find locks onto distractor context 
+
+Question. Starting from a celebrity-photo page from around the mid-2010s that praises two aristocratic sisters for attending separate events in England, follow to the article comparing the elder future queen consort’s conservative red charity gown with her younger sibling’s more revealing red look earlier that month. Using those two sisters as the candidate set, then check a later royal-fashion tag page from the early 2020s and count how many of those candidates are explicitly mentioned in the sentence about children serving as page attendants and bridesmaid at the younger sister’s wedding. 
+
+Gold answer: 2. Model answer: 1. Final answer: × Incorrect Turn-credit distribution. 
+
+δ = [+2 .19 , −0.35 , +0 .10 , −1.03 , +0 .96 ,
+
++ 0 .50 , −3.63 , +0 .19 , −1.22] .
+
+Critical turn. Turn 6. browser.find(pattern="Pippa Middleton") 
+
+Turn credit: δ6 = −3.63 . The call succeeds, but matches “as she did for her aunt Pippa Middleton last year,” a sentence about the wrong wedding. From a just-secured prefix, the model anchors on this superficially relevant single-name match and later answers 1. Tool success is therefore not equivalent to information progress. 
+
+25 TRACE: Turn-level Reward Assignment via Credit Estimation for Long-Horizon Agents 
+
+Negative turn example N4: Exact-string matching replaces a type comparison 
+
+Question. Using a post from around the early 2010s by the person who says he ordered interchangeable raw-brass ring parts as your starting clue, go to a different instrument-forum thread that references a repair specialist by first name and mentions that writer considering an instrument with many strings. From that thread, take the distinct instrument types named there as the candidate set. Then check a separate dealer page listing “other instrument offerings” from the mid-2000s era and count how many of those candidate types are present there. 
+
+Gold answer: 1. Model answer: 0. Final answer: × Incorrect Turn-credit distribution. 
+
+δ = [+1 .42 , −0.10 , +0 .82 , +0 .08 , −3.41 , −0.97] .
+
+Critical turn. Turn 4. browser.find(pattern="autoharp") (returns “No matches”) 
+
+Turn credit: δ4 = −3.41 . The dealer page has already secured the answer, but the task requires comparing the candidates by instrument type. The model instead probes one literal string and treats its absence as proof that the intersection is empty, discarding the page-level evidence. 
+
+Negative turn example N5: A prompt phrase is mistaken for page text 
+
+Question. Using the workshop notice from around the early 2010s that mentions a big northern English city and a hotel-branded venue, trace forward to a later full-day procurement training page to recover a per-attendee cost, then apply that amount as a strict threshold to the industry-only Canadian pricing workshops held a few years afterward. How many city sessions in that Canadian notice have fees greater than that threshold? 
+
+Gold answer: 2. Model answer: 0. Final answer: × Incorrect Turn-credit distribution. δ = [+2 .00 , +0 .43 , +0 .06 , −2.46 ,
+
++ 0 .40 , +1 .98 , −3.48 , −1.03] .
+
+Critical turn. Turn 6. browser.find(pattern="fees greater than") (returns “No matches”) 
+
+Turn credit: δ6 = −3.48 . The Canadian workshop page has already supplied the city-level fees. The model nevertheless searches for a comparison phrase copied from the question rather than comparing the listed numbers, then over-interprets the no-match and answers 0.
+
+Across the positive cases, nearly all credit lands on the search or open that first supplies the missing discriminative fact; redundant probes and post-hoc find calls remain near zero. Across the negative cases, all five trajectories first reach the answer-secured region, after which one misleading 
+
+find receives the dominant penalty. The calls cover both empty matches that are over-interpreted and successful matches in the wrong context, showing that tool completion alone does not imply progress. Outcome-only GRPO cannot express any of these within-trajectory distinctions because it assigns every turn the same trajectory-level advantage. 26
