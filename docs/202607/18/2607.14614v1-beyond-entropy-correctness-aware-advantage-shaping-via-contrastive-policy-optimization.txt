@@ -1,0 +1,675 @@
+Title: Beyond Entropy: Correctness-Aware Advantage Shaping via Contrastive Policy Optimization
+
+URL Source: https://arxiv.org/pdf/2607.14614v1
+
+Published Time: Fri, 17 Jul 2026 01:00:39 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Beyond Entropy: Correctness-Aware Advantage Shaping via Contrastive Policy Optimization 
+
+Weiwen Xu 1 Jia Liu 2∗ Hou Pong Chan 1 Long Li Deng Cai 1 Min Chen 2 Hao Zhang 31The Chinese University of Hong Kong 
+
+2South China University of Technology 
+
+3Nanyang Technological University 
+
+weiwen.xuu@gmail.com; Jialiu0330@hust.edu.cn 
+
+## Abstract 
+
+Reinforcement learning with verifiable rewards (RLVR) commonly uses entropy for advantage shaping. However, entropy cannot distinguish useful uncertainty from detrimental confusion, limiting its effectiveness as a correctness signal. We propose Contrastive Policy Optimization ( CPO ), which uses token-level contrastive disagreement between reference-guided and vanilla generation distributions for correctness-aware advantage shaping. Both theoretical and empirical results show that this disagreement reliably indicates token-level correctness. We further show that On-policy Distillation is a special case of CPO , where the posterior distribution is instantiated by an external teacher model. CPO also resolves the zero-advantage problem. Experiments on in-domain and out-of-domain benchmarks demonstrate that CPO substantially outperforms entropy-based RLVR methods while maintaining strong generalization. Further analysis shows that correct and incorrect responses naturally support exploration and exploitation respectively, and balancing both leads to the best performance. 
+
+## 1 Introduction 
+
+Reinforcement learning with verifiable rewards (RLVR) has substantially advanced performance in domains like mathematics and programming by providing a simple yet effective recipe for improving reasoning [ 12 , 42 , 7, 28 , 46 ]. A notable example is Group Relative Policy Optimization (GRPO [ 24 ]), which streamlines the RL formulation by eliminating the need for a separate critic model [ 23 ]. GRPO estimates advantages by sampling multiple outputs per prompt and normalizing rewards within each group. However, its binary correctness-based reward scheme introduces two fundamental limitations: (1) it neglects the distinct contributions of individual tokens throughout the reasoning trajectory [ 4], and (2) it offers no mechanism for differentiating quality among responses in zero-advantage groups, wasting vast training data [49, 13]. Recent work has identified entropy as a critical signal for advantage shaping in GRPO [ 6 ]. Subsequent methods incorporate entropy to refine optimization signals, either by selectively updating high-entropy tokens [ 34 ] or by augmenting advantage estimates with entropy-based terms [ 4, 2, 32 ]. They effectively improve exploration at uncertain decision points and introduce finer-grained advantage differentiation that better distinguishes token importance both within and across trajectories [ 13 ]. However, entropy quantifies uncertainty while remaining agnostic to the quality of underlying reasoning. A model may exhibit high entropy either when productively exploring alternative solutions 
+
+or when becoming confused by incorrect paths [34 ]. Thus, entropy and correctness are intrinsically misaligned. This creates an inherent challenge for optimization: entropy alone cannot distinguish    
+
+> ∗Corresponding authors Preprint. arXiv:2607.14614v1 [cs.LG] 16 Jul 2026 Question Reference Response
+> Question Response
+
+Figure 1: Top : A student spots his homework mistake by comparing his work to the reference answer. 
+
+Bottom : An LLM’s response generation probabilities shift when guided by a reference answer. 
+
+valuable exploration from detrimental errors . This competing effects have led to contradictory design choices across existing methods: some reward high-entropy tokens in correct responses [ 13 ], while others instead favor low-entropy tokens [ 32 ]. Fundamentally, what is needed is a correctness-aware 
+
+signal that can reliably identify tokens aligned with correct reasoning. This intuition can be illustrated through human-problem-solving. As shown in Figure 1, students often struggle to identify mistakes without guidance, but once a reference answer is provided, incorrect steps become immediately apparent upon review. This contrast highlights a simple principle: 
+
+correctness emerges through comparison between self-review and reference-guided review . A similar pattern appears in LLMs. When evaluating their own generations alone, LLMs lack fine-grained awareness of the erroneous parts. In contrast, conditioning on a reference answer induces distinct probability shifts on specific tokens: increasing token probabilities aligned with the reference and suppressing those that contradict it. Such contrastive probability changes may provide a more faithful, correctness-aligned signal than entropy. Building on these insights, we propose Contrastive Policy Optimization ( CPO ), a framework for correctness-aware advantage shaping in RLVR. CPO introduces a token-level contrastive disagreement 
+
+that quantifies the divergence between reference-guided and vanilla generation distributions. Through theoretical and empirical analysis, we show that this contrastive disagreement reliably indicates token-level correctness. Since both contrastive disagreement and RLVR rewards are correctness signals operating at different granularities, token-level and trajectory-level respectively, their combination is principled rather than heuristic, motivating our advantage shaping design. To ensure stability, we constrain the disagreement magnitude to prevent it from overwhelming or reversing the trajectory-level advantage. CPO ’s token-level advantage shaping directly mitigates the zero-advantage issue prevalent in existing RLVR approaches [ 13 , 45 ], enabling more informative gradients and effective exploration across large-scale training corpora. Interestingly, contrastive disagreement also offers a principled theoretical grounding for on-policy distillation (OPD [ 1, 19 ]): the reverse KL used in OPD is a special case of contrastive disagreement. More broadly, our theoretical framework subsumes diverse OPD variants under a single correctness-driven perspective: whether the teacher is an external model [ 19 ], a self-teacher conditioned on reference answers [ 18 ], critic feedback [ 10 ], or other contextual signals [ 36 ], what matters is that the teacher distribution is more correctness-informed than the current policy. 2Results show that CPO substantially enhances reasoning capabilities over entropy-based RLVR methods while largely preserving out-of-domain performance. On Qwen2.5-Math-7B and Qwen3-Base-4B, CPO outperforms GRPO by 7.7% and 8.5% on average, respectively. We analyze the distinction between contrastive disagreement and entropy, finding that CPO focuses on discriminative features tied to correctness, whereas entropy-based methods emphasize linguistic variability. We show that correct and incorrect responses in CPO naturally support exploration and exploitation, and that balancing these roles leads to superior performance. Our contributions are as follows: (1) We propose contrastive disagreement as a more reliable token-level correctness signal than entropy, supported by both theoretical and empirical evidence. (2) Our contrastive disagreement lays a theoretical foundation for OPD: diverse OPD variants, whether based on external teachers, reference-guided, or critic-guided self-teachers, can be understood as different instantiations of a correctness-informed distribution, unifying RLVR and OPD under a single correctness-driven objective. (3) We introduce CPO , a correctness-aware advantage shaping framework that is computationally efficient and effectively addresses the zero-advantage problem in RLVR. (4) We show CPO ’s effectiveness on in-domain math reasoning and out-of-domain generalization, along with in-depth analysis of its learning dynamics. 
+
+## 2 Contrastive Policy Optimization 
+
+We begin by validating the reliability of contrastive disagreement to provide a correctness-aligned signal for token-level advantage shaping, both theoretically and empirically. Building on this foundation, we introduce CPO framework. 
+
+2.1 Contrastive Disagreement 2.1.1 Theoretical Analysis 
+
+Given the question x, the sampled trajectory y = ( y1, . . . , y |y|)2 from the policy π and the environ-ment reward R(x, y ) ∈ {− 1, 1}, we define the position-wise probability of the oracle correctness event C := {R(x, Y ) = 1 }:
+
+g(x, y <t , y t) := P C|X = x, Y <t = y<t , Y t = yt
+
+, (1) 
+
+which measures the probability that choosing token yt at position t will lead to a correct completion, averaging over all possible future continuations. We define the ideal next-token distribution conditioned on the oracle correctness as: 
+
+˜πpost (yt | x, y <t ) := P(Yt = yt | X = x, Y <t = y<t , C ) . (2) 
+
+By Bayes’ rule, this distribution is regarded as a reweighting of the prior by correctness probability: 
+
+˜πpost (yt | x, y <t ) = P Yt = yt|X = x, Y <t = y<t 
+
+ g(x, y <t , y t)
+
+Z(x, y <t ) = π(yt | x, y <t ) g(x, y <t , y t)
+
+Z(x, y <t ) , (3) 
+
+where Z(x, y <t ) = P 
+
+> b
+
+π(b | x, y <t ) g(x, y <t , b ) is the prior-average correctness probability at prefix 
+
+y<t . Taking logarithms yields: 
+
+log ˜πpost (yt | x, y <t )
+
+π(yt | x, y <t ) = log g(x, y <t , y t) − log Z(x, y <t ). (4) 
+
+Crucially, for fixed (x, y <t ), this log-ratio is monotonically increasing in g(x, y <t , y t). Therefore: • Tokens with below-average correctness ( g(x, y <t , y t) < Z (x, y <t )) have negative log-ratio. • Tokens with above-average correctness ( g(x, y <t , y t) > Z (x, y <t )) have positive log-ratio. In practice, we do not have direct access to the ideal distribution ˜πpost . However, we can condition the model on the oracle reference y⋆ (e.g. , prompting the model to refine based on y⋆) to obtain 
+
+πpost (yt | x, y ⋆, y <t ). Since y⋆ encodes the ground-truth that determines correctness and the prompt also asks the model to refine, conditioning on such prompt serves as a practical proxy for conditioning on the correctness event C, i.e. , πpost (· | x, y ⋆, y <t ) ≈ ˜πpost (· | x, y <t ). Consequently, the contrastive disagreement 
+
+δt(x, y ) := log πpost (yt | x, y ⋆, y <t )
+
+π(yt | x, y <t ) ∝ log g(x, y <t , y t) (5)          
+
+> 2Without loss of generality, we drop the subscript iin this subsection. Here yt≡yi,t denotes the token at position tof yi.
+
+3To convert the point     
+
+> (0,3) in rectangular…
+> Contrastive Disagreement
+> Group -Based Advantage
+> 𝐴 !,#=𝑟 !−mean (𝑟 )
+> std (𝑟 )
+
+Q: … 
+
+> generate
+> forward
+
+⨁
+
+Policy 
+
+Model 
+
+Q:… 
+
+A:… To convert the point 
+
+> (0,3) in rectangular… update
+
+# CPO                     
+
+> 𝛿 !,#
+> 𝜋 !!"# 𝑦 ",$|𝑥 ,𝑦 ",%$
+> 𝜋 !!"# 𝑦 ",$|𝑥 ,𝑦 ",%$,𝑦 "
+> ∗
+> ###Question: {question}
+> ### Reference Answer: {answer}
+> Given above, generate a reasoning
+> to the answer.
+> Requirements:
+> 1. Output only the first -person
+> thought, no preamble or summary
+> 2. Simulate real -time problem -
+> solving tone, no meta -
+> commentary
+> 3. Don't imply knowing the
+> reference answer (avoid
+> 'according to the answer’ etc.)
+> ...
+
+Figure 3: The illustration of CPO . Prior and reference-guided posterior likelihoods are contrasted to shape token-level advantages. provides a good estimate of the ideal log-ratio in Eq. (4) . Importantly, this holds regardless of whether the rollout y is correct or not —the correctness probability g(x, y <t , y t) is defined over future continuations, not individual trajectories. Full derivations are provided in Appendix C. 
+
+2.1.2 Empirical Studies 𝐞𝐱𝐩 (𝜹 )
+
+Figure 2: Impact of contrastive disagreement on token correctness (Accuracy@16). We empirically validate Eq. (5) , showing that contrastive disagreement δt(x, y ) reliably in-dicates token-level correctness g(x, y <t , y t).Since g(x, y <t , y t) represents the expected cor-rectness averaging over all possible future con-tinuations from token yt, it is intractable to com-pute exactly. We approximate it with Accu-racy@16, i.e. , sampling 16 continuations from 
+
+yt and measuring their average score. 
+
+Experimental setup. We adopt Qwen2.5-7B-Math [ 41 ] as our prior policy π and evaluate on queries from Math-500 [ 9]. For each query x, we first sample a vanilla generation y ∼ π(· | x) and record the token-level generation probabilities 
+
+π(yt | x, y <t ) for each token yt. Next, we compute reference-guided generation probabilities 
+
+πpost (yt | x, y ⋆, y <t ) by forward-passing the sampled sequence y through the model conditioned on the reference y⋆. Both vanilla and reference-guided prompts are in Appendix D. We then compute the token-level contrastive disagreement δt(x, y ).We identify the first token position t⋆ where the disagreement deviates from a predefined threshold δ:
+
+t⋆ =
+
+(
+
+min {t ∈ { 1, 2, . . . , |y|} | δt < δ } , δ < 0,
+
+min {t ∈ { 1, 2, . . . , |y|} | δt > δ } , δ > 0. (6) 
+
+Note that δt = 0 denotes the boundary where no disagreement exists. For δ < 0, more negative values indicate greater incorrectness, while for δ > 0, more positive values indicate greater correctness. We then resample continuations starting from these high-disagreement positions: ˆy ∼ π(· | x, y ≤t⋆ ).By conditioning on the prefix up to t⋆ (which includes the high-disagreement token yt⋆ ), each resampled completion ˆy is directly influenced by the token choice at this critical fork point. We repeat this resampling process 16 times for each query and compute the Accuracy@16 as the empirical approximation of the correctness probability g(x, y <t ⋆ , y t⋆ ).
+
+Results. Figure 2 shows the Accuracy@16 of ˆy as a function of the threshold exp( δ). The results show clear asymmetry. As we select tokens with increasingly negative disagreement ( exp( δ) < 1), accuracy drops substantially from 57% at the boundary ( exp( δ) = 1 ) to approximately 48% at 
+
+exp( δ) = 0 .1. This strongly confirms that negative contrastive disagreement reliably identifies incorrect-leaning tokens. In contrast, the positive disagreement ( exp( δ) > 1) maintains stable accuracy near baseline level. This asymmetry is expected: selecting correct-leaning tokens merely maintains the baseline performance, which is fundamentally bounded by the backbone model’s capabilities. Nevertheless, the results validate our theoretical analysis, showing that δt(x, y ) correlates with g(x, y <t , y t). Notably, this correlation is particularly strong for incorrect tokens, confirming the theoretical findings in a more realistic scenario. 4Implication. The contrastive disagreement in Eq. (5) resembles the reverse KL used in OPD, which can be viewed as a special case by with an external teacher as πpost . More generally, CPO admits any distribution more correctness-informed than the current policy as πpost , including external teachers, critic-guided policies [ 40 ], or reference-conditioned policies [ 18 ]. In this work, we use reference answers because they provide direct correctness signals. We also show that reference-conditioned policies can even outperform external teachers, while avoiding reliance on stronger models and enabling self-improvement within the same policy in Sec 3.3. 
+
+2.2 Advantage Shaping with Contrastive Disagreement 
+
+Under the above view, contrastive disagreement and RLVR rewards serve as complementary cor-rectness signals at token and trajectory levels, motivating our advantage-shaping design. Since trajectory-level advantage Ai cannot distinguish correct from erroneous tokens, we use contrastive disagreement δt(x, y ) to shape advantages for finer-grained credit assignment. The overall framework is depicted in Figure 3. The policy model generates the response with prior likelihood πθold (yt | x, y <t ). Then, we concatenate it with a reference-guided prompt, detailed in Appendix D, which asks the model to regenerate a first-person response based on the reference answer. This prompt simulates real-time problem-solving tone, making the sampled response an appropriate continuation. This combined sequence is resent to the policy model to obtain the posterior likelihood 
+
+πθold (yt | x, y ⋆, y <t ). Following standard RLVR methods [ 24 ], we calculate the trajectory-level advantage Ai,t = Ai, and additionally compute the contrastive disagreement as posterior-prior KL: 
+
+δi,t = log πθold (yi,t | x, y ⋆i , y i,<t )
+
+πθold (yi,t | x, y i,<t ) . (7) 
+
+Advantage Magnitude and Direction. The trajectory-level advantage Ai,t should be the primary determinant, as the goal is to reward the generation of correct solutions. Meanwhile, the disagreement magnitude |δi,t | indicates how decisively a token leans toward correctness or incorrectness. We therefore propose the base form of advantage shaping as Ai,t + α · δi,t , where α > 0 controls the strength of the token-level signal. The primacy of trajectory-level advantage Ai,t extends beyond magnitude to direction as well. However, in practice, conflicts can arise between trajectory-level and token-level signals. For instance, a good response ( Ai,t > 0) may contain tokens with strongly negative disagreement ( δi,t ≪ 0), potentially reversing the advantage sign. To ensure the shaped advantage direction remains consistent with Ai,t , we introduce a clipping operation: 
+
+˜Ai,t =
+
+
+
+Ai,t + max( α+ · δi,t , − 12 Ai,t ), Ai,t > 0, R i = 1 ,Ai,t + min( α− · δi,t , − 12 Ai,t ), Ai,t < 0, R i = −1,α+ · δi,t , Ai,t = 0 , R i = 1 ,α− · δi,t , Ai,t = 0 , R i = −1,
+
+(8) 
+
+where α+, α− denote the combination strength for correct and incorrect responses. We do not clip the original zero-advantage responses, because the original advantage offers no value for policy optimization. However, our token-level disagreements still offer meaningful learning signals, enabling more informative gradients and more effective exploration across large-scale training corpora. The final CPO objective follows the standard GRPO, with ˜Ai,t replacing the original advantage: 
+
+JCPO (θ) = Ex∼D ,y i∼πθold (·| x)
+
+"
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+1
+
+|yi|
+
+> |yi|
+
+X
+
+> t=1
+
+min 
+
+
+
+ri,t (θ) ˜Ai,t , clip (ri,t (θ), 1 − ε, 1 + ε) ˜Ai,t 
+
+ #
+
+. (9) 
+
+## 3 Experiment 
+
+3.1 Experimental Setup Training and evaluation. During training, we conduct experiments on two base models: the general-purpose Qwen3-Base-4B [ 42 ] and the domain-specific Qwen2.5-Math-7B [ 41 ]. We train models on the MATH dataset [ 9 ] with 7.5k problems. We implement CPO based on GRPO [ 24 ]. Full hypeparameters are in Appendix E. We evaluate on both in-domain and out-of-domain benchmarks. In-domain math reasoning tasks include MATH500 [ 9 ], AIME2024/2025 [ 21 ], and AMC23 [ 20 ]. For out-of-domain evaluation, we use GPQA [ 22 ], MMLU-Pro [ 35 ], and Knowlogic [ 47 ], covering 5Table 1: Qwen2.5-Math-7B experiments with PASS@16 on math and out-domain tasks. Bold numbers denote the best results per task. 
+
+Methods MATH-500 AIME2024 AIME2025 AMC2023 GPQA MMLU-PRO KnowLogic Avg. 
+
+Original 87.8 43.3 30.0 85.0 70.5 63.4 55.8 62.3 GRPO 88.2 43.3 30.0 82.5 64.5 60.7 68.2 62.5 DAPO 88.2 43.3 33.3 90.0 66.3 64.6 61.1 63.8 Entropy-Tokens 85.0 53.3 26.7 77.5 58.5 54.8 66.2 60.3 Entropy-Adv 84.8 43.3 33.3 77.5 55.4 53.9 68.2 59.5 EM-RL-token 88.8 36.7 30.0 90.0 60.8 64.0 66.3 62.4 RL-ZVP 86.6 50.0 30.0 77.5 56.7 56.0 68.2 60.7 IB-reg 88.0 60.0 36.7 80.0 58.7 55.3 68.5 63.9 
+
+CPO 89.0 60.0 43.3 92.5 68.8 69.0 68.9 70.2 
+
+knowledge-driven and logical reasoning tasks. In inference, we set temperature to 0.6 and top-p to 0.95 for sampling, and report Pass@16 as our primary evaluation metric. 
+
+Baselines. We compare CPO with two baseline categories 3: Standard RLVR methods including 
+
+GRPO [24 ] and DAPO [ 45 ]. Entropy-intervened methods that incorporates entropy into GRPO: (1) 
+
+Entropy-Tokens [ 34 ], which optimizes tokens only in the top 20% entropy range; (2) Entropy-Adv 
+
+[ 4], which directly augments the advantage with an entropy term; (3) EM-RL-token [ 2], directly uses negative entropy as rewards in RL; (4) RL-ZVP [ 13 ], which applies entropy regularization exclusively to zero-advantage prompts for better data utilization; and (5) IB-reg [ 14 ], which modulates entropy regularization based on advantage values. 
+
+3.2 Main Results 
+
+We present comparative results in Table 1 and Table 2 for Qwen2.5-math-7B and Qwen3-Base-4B. CPO achieves superior performance across both backbones, outperforming GRPO by 7.7% and 8.5%, respectively. For in-domain math reasoning, CPO yields particularly notable gains on AIME2025, the most challenging benchmark requiring high per-step accuracy over long reasoning chains. This validates that inducing fine-grained supervision signals is particularly well-suited for complex reasoning-intensive tasks. More strikingly, while baselines show substantial out-of-domain degradation (except KnowLogic on Qwen2.5-Math-7B), CPO preserves and even improves generaliza-tion, exceeding Qwen3-Base-4B, on GPQA and MMLU-PRO by 1.5% and 2.8%, respectively. This likely stems from its self-contrastive correctness signals that avoid external preference biases, while token-level advantage shaping reduces overfitting by targeting critical tokens rather than penalizing all tokens uniformly. Due to computational constraints, we report mean ± std over 3 independent runs for CPO, GRPO and the strongest baseline DAPO in Appendix F.1, showing that CPO consistently outperforms both baselines with improvements well beyond one standard deviation. 
+
+3.3 Unifying OPD into CPO via Posterior Design Original GRPO OPD CPO  
+
+> teacher
+> CPO
+> self ( |ref)
+> CPO
+> teacher ( |ref)
+> 60
+> 62
+> 64
+> 66
+> 68
+> 70
+> 72
+> 74
+> Average score
+> 61.5
+> 61.0
+> 63.6
+> 66.7
+> 71.2 71.5
+> 63.2
+> 64.5
+> 67.8
+> 67.2
+> 68.9
+> 70.1
+> In-domain avg.
+> Out-of-domain avg.
+
+Figure 4: Comparison of different posterior de-signs ( πpost ) under a unified CPO framework. We study different instantiations of πpost under the CPO framework in Figure 4. OPD employs a stronger teacher, Qwen2.5-Math-72B , to guide the student via a reverse KL objective. OPD clear out-of-domain gains but limited in-domain improvements. We then consider three variants: (1) CPO -πteacher , using the teacher directly as 
+
+πpost ; (2) CPO -πself (·| ref ), our method that con-ditions the current policy on reference answers; and (3) CPO -πteacher (·| ref ), conditioning the teacher on reference answers. CPO -πteacher un-derperforms the reference-based variant, sug-gesting that teacher guidance alone show weaker instance-level correctness signals. In contrast, reference conditioning provides more direct correctness to serve as πpost . Combining both yields the   
+
+> 3We also compare CPO with SFT and distillation-based methods in Appendix F.3, where all methods utilize the same reference answer during training for fair comparison.
+
+6Table 2: Qwen3-Base-4B experiments with PASS@16 on math and out-domain tasks. 
+
+Model MATH-500 AIME2024 AIME2025 AMC2023 GPQA MMLU-PRO KnowLogic Avg. 
+
+Original 87.2 23.3 30.0 90.0 76.8 79.8 94.1 68.7 GRPO 91.0 53.3 40.0 92.5 56.7 60.7 85.1 68.5 DAPO 87.2 43.3 36.6 92.5 75.6 79.0 86.7 71.6 Entropy-Tokens 90.1 53.3 46.7 90.0 61.8 62.5 85.4 70.0 Entropy-Adv 88.8 50.0 40.0 85.0 57.6 59.5 83.6 66.4 EM-RL-token 88.6 53.3 46.7 85.0 58.9 62.6 82.6 68.2 RL-ZVP 91.0 56.7 40.0 92.5 64.5 62.6 85.2 70.4 IB-reg 91.4 53.3 46.7 90.0 62.1 60.9 84.0 69.8 
+
+CPO 91.6 53.3 53.3 92.5 78.3 82.6 87.6 77.0 
+
+Table 3: Ablation study of CPO . Full CPO achieves the best in-domain and out-domain performance.                                                                          
+
+> Methods MATH-500 AIME2024 AIME2025 AMC2023 GPQA MMLU-PRO KnowLogic
+> CPO 89.0 60.0 43.3 92.5 68.8 69.0 68.9
+> Data Effectiveness
+> CPO neg : Shaping incorrect responses 89.6 60.0 40.0 92.5 65.4 64.8 68.5
+> CPO pos : Shaping correct responses 88.6 56.6 33.3 92.5 66.1 66.3 68.7
+> Design of Reference-guided Prompt
+> 2-turn gold-shot 89.4 50.0 40.0 90.0 65.6 62.9 66.8 2-turn 1-shot 88.6 50.0 36.6 90.0 60.0 59.3 66.1
+> Design of advantage
+> Weighted disagreement -πpost log πpost
+> π89.2 50.0 33.3 90.0 67.6 68.1 69.3 Traj-level advantage -Ai+1
+> |y|
+> P|y|
+> t=1 δi,t 89.6 53.3 43.3 95 56.5 61.8 66.2 w/o advantage clip 90.2 50.0 26.6 92.5 67.6 67.8 65.5 Disagreement regularization [18] 90.2 50.0 26.6 85.0 60.0 63.1 62.5
+
+best performance, where CPO -πteacher (·| ref )) consistently achieves the strongest results, indicating that teacher generalization and reference-based correctness signals are complementary. 
+
+3.4 Ablation Study 
+
+We conduct ablation studies to investigate the components design in CPO in Table 3. We focus on three key aspects: data effectiveness , reference-guided prompt design , and advantage design .
+
+Data Effectiveness. We examine how response correctness affects CPO . Applying CPO only on incorrect responses maintains most in-domain math reasoning but reduces out-of-domain generaliza-tion (e.g., −4.2% on MMLU-PRO). In contrast to the incorrect-only setting, shaping only correct responses shows the opposite trend. This suggests that negative examples primarily drive in-domain improvement by targeting the model’s weaknesses. Meanwhile, positive examples play a crucial role in maintaining out-of-domain capabilities. A plausible explanation is that shaping positive examples encourages the model to explore diverse solution paths, thereby preventing overfitting to narrow reasoning patterns and preserving broader generalization. 
+
+Reference-guided Prompt Design. Besides the default single-turn first-person prompt, we test two alternatives: (1) 2-turn gold-shot , a two-turn structure where the question-reference pair forms the first turn and the model’s response the second; (2) Motivated by the few-shot prompting [ 3], 2-turn 1-shot , which replaces the first turn with a fixed training question-reference pair. Full prompt formats are in Appendix D. Results show that our default prompt works best. The improvement of CPO over 
+
+2-turn gold-shot may stem from stronger single-turn problem-solving capabilities in current LLMs. Meanwhile, 2-turn gold-shot outperforms 2-turn 1-shot , suggesting that using the reference to the current question induces more reliable contrastive signals than using an unrelated example. 
+
+Advantage Design. We investigate advantage shaping methods to identify the most effective one. • Weighted disagreement πpost log πpost  
+
+> π
+
+. πpost is designed to prevent the Eq. 5 from exploding when both π and πpost are very small ( π ≪ πpost ≪ 0.1). Compared to the defaulted CPO , the weighting shows a moderate decline. This suggests two findings: (1) extreme cases where both probabilities are rare, making the protective weighting unnecessary; (2) the weighting suppresses informative cases where log πpost  
+
+> π
+
+carries a critical signal. 70 20 40 60 80 100 120 140                              
+
+> Step
+> 0
+> 5
+> 10
+> 15
+> AIME2025 Accuracy
+> (a)
+> CPO
+> GRPO
+> 124816
+> K
+> 10
+> 20
+> 30
+> 40
+> AIME2025 Pass@K
+> (c)
+> CPO
+> GRPO
+> Base
+> 020 40 60 80 100 120 140
+> Step
+> 0.1
+> 0.2
+> 0.3
+> Entropy
+> (e)
+> CPO
+> GRPO
+> 020 40 60 80 100 120 140
+> Step
+> 15.0
+> 17.5
+> 20.0
+> 22.5
+> 25.0
+> MMLU-PRO Accuracy
+> (b)
+> CPO
+> GRPO
+> 124816
+> K
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> MMLU-PRO Pass@K
+> (d)
+> CPO
+> GRPO
+> Base
+> 020 40 60 80 100 120 140
+> Step
+> 700
+> 800
+> 900
+> Response Length
+> (f)
+> CPO
+> GRPO
+
+Figure 5: Training dynamics of Qwen2.5-Math-7B under CPO and GRPO. (a-b) Greedy decoding accuracy on in-domain AIME2025 and out-domain MMLU-PRO across training steps; (c-d) Pass@K performance (K=1 to 16) on both test sets, with Qwen2.5-Math-7B results (Base) included for comparison; (e) Training entropy and (f) average response length over the course of training. 0 20 40 60 80 100 120 140         
+
+> Step
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> Entropy
+> (a)
+> 5:0
+> 4:1
+> 1:1
+> 1:4
+> 0:5
+> 124816
+> K
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> AIME2025 Pass@K
+> (b)
+> 5:0
+> 4:1
+> 1:1
+> 1:4
+> 0:5
+> 124816
+> K
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> MMLU-PRO Pass@K
+> (c)
+> 5:0
+> 4:1
+> 1:1
+> 1:4
+> 0:5
+
+Figure 6: Training dynamics of CPO with different α+ : α− ratios. (a) training entropy; (b)/(c) Pass@ K on AIME2025 and MMLU-PRO. • Motivated by GSPO [ 48 ], we explore trajectory-level advantage shaping by averaging token-level disagreement in a response. But this causes substantial performance drops on out-of-domain tasks compared to our token-level design. This suggests that fine-grained, token-level shaping better preserves crucial variations in token-wise credit assignment and is more robust to distribution shifts. • We remove the advantage clipping in Equation (8) . Performance degrades mostly in AIME2024 & 2025, the most challenging reasoning tasks. This indicates that preserving consistent advantage directions is crucial for difficult problems, where misalignment between token-level and trajectory-level directions can severely disrupt learning. • Instead of using contrastive disagreement for advantage shaping, we follow Lin et al. [18] in treating it as an additional regularization term in the final objective. Results show that the use of contrastive disagreement in CPO is more effective than Lin et al. [18] across most in-domain and out-of-domain tasks. 
+
+3.5 In-depth Analysis How CPO improves RL training. To understand the learning mechanisms of CPO and how it improves RL training, we analyze the training dynamics of CPO and GRPO in Figure 5. From (a)/(b), we observe that CPO achieves more effective training than GRPO on both in-domain and out-domain tasks. While the difference in greedy decoding accuracy appears modest, (c)/(d) reveal larger gaps in Pass@ K performance ( K =1 to 16). GRPO primarily optimizes for pass@1 performance compared to the Base model [ 30 ], with diminishing gains as K increases and even performance degradation on MMLU-PRO. In contrast, CPO improves both individual sample quality and diversity, with consistent improvements across all K values. The entropy and response length curves in (e)/(f) provide insight into these differences. CPO converges to a relatively high entropy plateau while producing longer responses, indicating sustained exploration throughout training. GRPO, however, drives entropy near zero, severely constraining the model’s exploratory capacity. 
+
+How response correctness shapes CPO . To investigate how correct and incorrect responses con-tribute to training CPO , we vary the ratio of combination strengths for correct and incorrect responses, i.e., α+ : α− in Figure 6. A clear pattern emerges: higher ratios of α+ yields increasing entropy throughout training. This entropy-increasing behavior stems from two factors. First, CPO activates all-correct groups that contribute zero gradient in GRPO, injecting additional learning signal into otherwise wasted data. Second, unlike sequence-level updates that amplify already-dominant tokens and collapse the distribution, token-level updates selectively reward correct-leaning tokens regardless 8of their prior probability, reinforcing diverse reasoning paths and maintaining a broader output distribution. We also provide a controlled experiment isolating CPO’s contribution on zero-advantage prompts in Appendix F.2, where CPO outperforms RL-ZVP by +3.2% average, confirming the superiority of contrastive disagreement over entropy on zero-advantage problems. Conversely, incor-rect responses focus on exploitation and confident predictions, as evidenced by steadily decreasing entropy for higher α− ratios. Downstream performance in (b)/(c) verifies that balanced ratios work best, with 1:1 achieving the highest Pass@K on both AIME2025 and MMLU-PRO, outperforming exploration-heavy (5:0, 4:1) and exploitation-heavy (0:5, 1:4) configurations. This suggests that incorrect and correct responses are mutually beneficial: correct responses allow the model to explore novel paths, while incorrect responses take these opportunities to exploit and refine the best paths. (a) CPO  - Entropy (b) CPO ∩  Entropy (c) Entropy  - CPO 
+
+Figure 7: Word clouds of 100 tokens with top absolute disagreement ( CPO ) and entropy: (a) CPO - Entropy : tokens only detected by CPO ; (b) CPO ∩
+
+Entropy : tokens detected by both; and (c) Entropy - CPO : tokens detected only by entropy. 
+
+Contrastive disagreement vs. entropy. While 
+
+CPO is not derived from entropy, prior analyses show that it strongly impacts entropy. To un-derstand their relationship and key differences, we show word clouds of fork tokens in Figure 7. 76% of fork tokens overlap between both mea-sures. This is expected as high-entropy tokens indicate uncertainty, which typically correlates with potential errors. However, CPO uniquely identifies execution-oriented tokens, including programming constructs ( python , output ) and mathematical symbols ( tau , equiv ), reflect-ing focus on correctness-critical features. En-tropy emphasizes discourse markers ( Please ,
+
+Consider ) and communicative expressions (Human , What ), capturing linguistic variability. This distinction makes CPO ideal for RL training: prioritizing task-critical tokens over linguistic di-versity enables efficient RL training that closely aligns policy learning with task success. 
+
+## 4 Related Work 
+
+Entropy-Intervened RL. Using entropy in RL was first introduced by Williams & Peng [37] to encourage exploration and prevent premature convergence. Recently, several works have incorporated entropy into RLVR objectives. Deng et al. [6] analyze entropy dynamics during training, establishing a foundation for entropy-based interventions. A straightforward approach is entropy regularization, adding entropy terms to the RLVR objective [ 25 , 31 ]. Lei et al. [14] extend this with bi-directional regularization to prevent both entropy collapse and explosion. However, these methods can suffer from instability [ 8], motivating approaches that focus on entropy changes rather than absolute values [ 8, 38 ]. Another line of work uses entropy for advantage shaping, including awarding high entropy for exploration [ 4 ], suppressing entropy to consolidate well-performing patterns [ 2], and hybrid approaches [ 32 , 13 ]. Beyond regularization and advantage shaping, entropy enables additional control mechanisms. Wang et al. [34] and Zheng et al. [50] use entropy to identify critical fork tokens or chunks to narrow training focus. Sheng et al. [27] employ it to control trust regions during updates. 
+
+Fine-grained Correctness Signals. Recent work explores fine-grained rewards to address sparse reward problem in RLVR [ 15 ]. Lightman et al. [17] , Wu et al. [39] provide step-level correctness but require intensive human labor. Tree-based search methods automate step-level annotation [ 44 ,5, 33 , 11 , 16 ], but the repeated sampling makes them computationally impractical in RL settings. Recent advances in on-policy distillation (OPD) enable students to learn from teacher feedback on self-generated outputs [ 1 ], enabling more effective learning. To eliminate external teacher dependency, self-distillation methods have emerged. Rejection sampling uses output rewards to select superior responses [ 29 , 43 ], while others simulate synthetic teachers by conditioning the model on critics [40, 10], reference [18, 26] or any other correctness-informed information [36]. 95 Conclusion 
+
+We propose Contrastive Policy Optimization ( CPO ), a novel framework that leverages token-level contrastive disagreement between reference-guided and vanilla generation as a correctness-aware signal for advantage shaping in RLVR. Both theoretical and empirical results demonstrate that this contrastive disagreement reliably indicates token-level correctness. CPO achieves significant improvements on challenging math reasoning tasks while maintaining out-of-domain generalization compared to entropy-based methods. Our analysis reveals that CPO outperforms GRPO by better preserving the exploration capability of the backbone model. This advantage stems from the distinct roles of different response types: correct responses drive exploration of novel solutions, while incorrect responses exploit the most promising paths. Balance both leads to superior performance. 
+
+## References 
+
+[1] Agarwal, R., Vieillard, N., Zhou, Y., Stanczyk, P., Garea, S. R., Geist, M., and Bachem, O. On-policy distillation of language models: Learning from self-generated mistakes. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview. net/forum?id=3zKtaqxLhW .[2] Agarwal, S., Zhang, Z., Yuan, L., Han, J., and Peng, H. The unreasonable effectiveness of entropy minimization in llm reasoning. arXiv preprint arXiv:2505.15134 , 2025. URL 
+
+https://arxiv.org/abs/2505.15134 .[3] Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J. D., Dhariwal, P., Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et al. Language models are few-shot learners. Advances in neu-ral information processing systems , 33:1877–1901, 2020. URL https://papers.nips.cc/ paper_files/paper/2020/file/1457c0d6bfcb4967418bfb8ac142f64a-Paper.pdf .[4] Cheng, D., Huang, S., Zhu, X., Dai, B., Zhao, W. X., Zhang, Z., and Wei, F. Reasoning with exploration: An entropy perspective. arXiv preprint arXiv:2506.14758 , 2025. URL 
+
+https://arxiv.org/abs/2506.14758 .[5] Chia, Y. K., Chen, G., Xu, W., Luu, A. T., Poria, S., and Bing, L. Reasoning paths optimiza-tion: Learning to reason and explore from diverse paths. In Findings of the Association for Computational Linguistics: EMNLP 2024 , pp. 16763–16780, Miami, Florida, USA, November 2024. Association for Computational Linguistics. URL https://aclanthology.org/2024. findings-emnlp.977/ .[6] Deng, J., Chen, J., Chen, Z., Zhao, W. X., and Wen, J.-R. Decomposing the entropy-performance exchange: The missing keys to unlocking effective reinforcement learning. arXiv preprint arXiv:2508.02260 , 2025. URL https://arxiv.org/abs/2508.02260 .[7] Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., et al. Deepseek-r1: incentivizes reasoning in llms through reinforcement learning. Nature , 645(8081): 633–638, September 2025. URL http://dx.doi.org/10.1038/s41586-025-09422-z .[8] Hao, Z., Wang, H., Liu, H., Luo, J., Yu, J., Dong, H., Lin, Q., Wang, C., and Chen, J. Rethinking entropy interventions in rlvr: An entropy change perspective. arXiv preprint arXiv:2510.10150 ,2025. URL https://arxiv.org/abs/2510.10150 .[9] Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. Measuring mathematical problem solving with the MATH dataset. In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2) , 2021. URL https://openreview.net/forum?id=7Bywt2mQsCe .[10] Hübotter, J., Lübeck, F., Behric, L., Baumann, A., Bagatella, M., Marta, D., Hakimi, I., Shenfeld, I., Buening, T. K., Guestrin, C., et al. Reinforcement learning via self-distillation. arXiv preprint arXiv:2601.20802 , 2026. [11] Jiao, F., Qin, C., Liu, Z., Chen, N. F., and Joty, S. Learning planning-based reasoning by trajectories collection and process reward synthesizing. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pp. 334–350, Miami, Florida, USA, 10 November 2024. Association for Computational Linguistics. URL https://aclanthology. org/2024.emnlp-main.20/ .[12] Lambert, N., Morrison, J., Pyatkin, V., Huang, S., Ivison, H., Brahman, F., Miranda, L. J. V., Liu, A., Dziri, N., Lyu, X., Gu, Y., Malik, S., Graf, V., Hwang, J. D., Yang, J., Bras, R. L., Tafjord, O., Wilhelm, C., Soldaini, L., Smith, N. A., Wang, Y., Dasigi, P., and Hajishirzi, H. Tulu 3: Pushing frontiers in open language model post-training. In Second Conference on Language Modeling , 2025. URL https://openreview.net/forum?id=i1uGbfHHpH .[13] Le, T.-L. V., Jeon, M., Vu, K., Lai, V., and Yang, E. No prompt left behind: Exploiting zero-variance prompts in llm reinforcement learning via entropy-guided advantage shaping. 
+
+arXiv preprint arXiv:2509.21880 , 2025. URL https://arxiv.org/abs/2509.21880 .[14] Lei, S., Cheng, Z., Jia, K., and Tao, D. Revisiting llm reasoning via information bottleneck. 
+
+arXiv preprint arXiv:2507.18391 , 2025. URL https://arxiv.org/abs/2507.18391 .[15] Li, J., Li, L., Chang, T.-W., Kuang, K., Chen, L., Zhou, J., and Yang, C. RED: Unleashing token-level rewards from holistic feedback via reward redistribution. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pp. 4993–5022, Suzhou, China, November 2025. Association for Computational Linguistics. URL https: //aclanthology.org/2025.emnlp-main.252/ .[16] Li, X., Xu, W., Zhao, R., Jiao, F., Joty, S., and Bing, L. Can we further elicit reasoning in LLMs? critic-guided planning with retrieval-augmentation for solving challenging tasks. In 
+
+Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 25589–25604, Vienna, Austria, July 2025. Association for Computational Linguistics. URL https://aclanthology.org/2025.acl-long.1244/ .[17] Lightman, H., Kosaraju, V., Burda, Y., Edwards, H., Baker, B., Lee, T., Leike, J., Schulman, J., Sutskever, I., and Cobbe, K. Let’s verify step by step. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=v8L0pN6EOi .[18] Lin, T., Zhao, X., Zhang, X., Long, R., Xu, Y., Jiang, Z., Su, W., and Zheng, B. Ravr: Reference-answer-guided variational reasoning for large language models. arXiv preprint arXiv:2510.25206 , 2025. URL https://arxiv.org/abs/2510.25206 .[19] Lu, K. and Lab, T. M. On-policy distillation. Thinking Machines Lab: Connection-ism , 2025. doi: 10.64434/tml.20251026. URL https://thinkingmachines.ai/blog/ on-policy-distillation .[20] Mathematical Association of America. American mathematics competitions (AMC), 2023. URL https://maa.org/ . Accessed: 2025-12-23. [21] Mathematical Association of America. American invitational mathematics examination (AIME), 2025. URL https://maa.org/ . Accessed: 2025-12-23. [22] Rein, D., Hou, B. L., Stickland, A. C., Petty, J., Pang, R. Y., Dirani, J., Michael, J., and Bowman, S. R. GPQA: A graduate-level google-proof q&a benchmark. In First Conference on Language Modeling , 2024. URL https://openreview.net/forum?id=Ti67584b98 .[23] Schulman, J., Wolski, F., Dhariwal, P., Radford, A., and Klimov, O. Proximal policy optimiza-tion algorithms. arXiv preprint arXiv:1707.06347 , 2017. URL https://arxiv.org/abs/ 1707.06347 .[24] Shao, Z., Wang, P., Zhu, Q., Xu, R., Song, J., Bi, X., Zhang, H., Zhang, M., Li, Y., Wu, Y., et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. URL https://arxiv.org/abs/2402.03300 .[25] Shen, H. On entropy control in llm-rl algorithms. arXiv preprint arXiv:2509.03493 , 2025. URL 
+
+https://arxiv.org/abs/2509.03493 .[26] Shenfeld, I., Damani, M., Hübotter, J., and Agrawal, P. Self-distillation enables continual learning. arXiv preprint arXiv:2601.19897 , 2026. 11 [27] Sheng, Y., Huang, Y., Liu, S., Zhang, H., and Zeng, A. Espo: Entropy importance sampling policy optimization. arXiv preprint arXiv:2512.00499 , 2025. URL https://arxiv.org/ abs/2512.00499 .[28] Team, K., Bai, Y., Bao, Y., Chen, G., Chen, J., Chen, N., Chen, R., Chen, Y., Chen, Y., Chen, Y., et al. Kimi k2: Open agentic intelligence. arXiv preprint arXiv:2507.20534 , 2025. URL 
+
+https://arxiv.org/abs/2507.20534 .[29] Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., et al. Llama 2: Open foundation and fine-tuned chat models. arXiv preprint arXiv:2307.09288 , 2023. URL https://arxiv.org/abs/2307.09288 .[30] Walder, C. and Karkhanis, D. T. Pass@k policy optimization: Solving harder reinforcement learning problems. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https://openreview.net/forum?id=W6WC6047X2 .[31] Wang, C., Li, Z., Bai, J., Zhang, Y., Cui, S., Zhao, Z., and Wang, Y. Arbitrary entropy policy optimization: Entropy is controllable in reinforcement fine-tuning. arXiv preprint arXiv:2510.08141 , 2025. URL https://arxiv.org/abs/2510.08141 .[32] Wang, J., Liu, J., Fu, Y., Li, Y., Wang, X., Lin, Y., Yue, Y., Zhang, L., Wang, Y., and Wang, K. Harnessing uncertainty: Entropy-modulated policy gradients for long-horizon llm agents. arXiv preprint arXiv:2509.09265 , 2025. URL https://arxiv.org/abs/2509.09265 .[33] Wang, P., Li, L., Shao, Z., Xu, R., Dai, D., Li, Y., Chen, D., Wu, Y., and Sui, Z. Math-shepherd: Verify and reinforce LLMs step-by-step without human annotations. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 9426–9439, Bangkok, Thailand, August 2024. Association for Computational Linguistics. URL 
+
+https://aclanthology.org/2024.acl-long.510/ .[34] Wang, S., Yu, L., Gao, C., Zheng, C., Liu, S., Lu, R., Dang, K., Chen, X.-H., Yang, J., Zhang, Z., Liu, Y., Yang, A., Zhao, A., Yue, Y., Song, S., Yu, B., Huang, G., and Lin, J. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for LLM reasoning. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL 
+
+https://openreview.net/forum?id=yfcpdY4gMP .[35] Wang, Y., Ma, X., Zhang, G., Ni, Y., Chandra, A., Guo, S., Ren, W., Arulraj, A., He, X., Jiang, Z., Li, T., Ku, M., Wang, K., Zhuang, A., Fan, R., Yue, X., and Chen, W. MMLU-pro: A more robust and challenging multi-task language understanding benchmark. In The Thirty-eight Conference on Neural Information Processing Systems Datasets and Benchmarks Track , 2024. URL https://openreview.net/forum?id=y10DM6R2r3 .[36] Wang, Y., Chen, X., Jin, X., Wang, M., and Yang, L. Openclaw-rl: Train any agent simply by talking. arXiv preprint arXiv:2603.10165 , 2026. [37] Williams, R. J. and Peng, J. Function optimization using connectionist reinforcement learning algorithms. Connection Science , 3(3):241–268, 1991. URL https://doi.org/10.1080/ 09540099108946587 .[38] Wu, J., Huang, K., Wu, J., Zhang, A., Wang, X., and He, X. Quantile advantage estimation for entropy-safe reasoning. arXiv preprint arXiv:2509.22611 , 2025. URL https://arxiv.org/ abs/2509.22611 .[39] Wu, Z., Hu, Y., Shi, W., Dziri, N., Suhr, A., Ammanabrolu, P., Smith, N. A., Osten-dorf, M., and Hajishirzi, H. Fine-grained human feedback gives better rewards for lan-guage model training. Advances in Neural Information Processing Systems , 36:59008– 59033, 2023. URL https://papers.neurips.cc/paper_files/paper/2023/file/ b8c90b65739ae8417e61eadb521f63d5-Paper-Conference.pdf .[40] Xu, W., Cai, D., Zhang, Z., Lam, W., and Shi, S. Reasons to reject? aligning language models with judgments. In Findings of the Association for Computational Linguistics: ACL 2024 , pp. 12288–12304, Bangkok, Thailand, August 2024. Association for Computational Linguistics. URL https://aclanthology.org/2024.findings-acl.730/ .12 [41] Yang, A., Zhang, B., Hui, B., Gao, B., Yu, B., Li, C., Liu, D., Tu, J., Zhou, J., Lin, J., et al. Qwen2. 5-math technical report: Toward mathematical expert model via self-improvement. 
+
+arXiv preprint arXiv:2409.12122 , 2024. URL https://arxiv.org/abs/2409.12122 .[42] Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. URL https: //arxiv.org/abs/2505.09388 .[43] Yang, Z., Pang, T., Feng, H., Wang, H., Chen, W., Zhu, M., and Liu, Q. Self-distillation bridges distribution gap in language model fine-tuning. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 1028– 1043, Bangkok, Thailand, August 2024. Association for Computational Linguistics. URL 
+
+https://aclanthology.org/2024.acl-long.58/ .[44] Yao, S., Yu, D., Zhao, J., Shafran, I., Griffiths, T., Cao, Y., and Narasimhan, K. Tree of thoughts: Deliberate problem solving with large language models. In Oh, A., Nau-mann, T., Globerson, A., Saenko, K., Hardt, M., and Levine, S. (eds.), Advances in Neural Information Processing Systems , volume 36, pp. 11809–11822. Curran Associates, Inc., 2023. URL https://proceedings.neurips.cc/paper_files/paper/2023/file/ 271db9922b8d1f4dd7aaef84ed5ac703-Paper-Conference.pdf .[45] Yu, Q., Zhang, Z., Zhu, R., Yuan, Y., Zuo, X., YuYue, Dai, W., Fan, T., Liu, G., Liu, J., Liu, L., Liu, X., Lin, H., Lin, Z., Ma, B., Sheng, G., Tong, Y., Zhang, C., Zhang, M., Zhang, R., Zhang, W., Zhu, H., Zhu, J., Chen, J., Chen, J., Wang, C., Yu, H., Song, Y., Wei, X., Zhou, H., Liu, J., Ma, W.-Y., Zhang, Y.-Q., Yan, L., Wu, Y., and Wang, M. DAPO: An open-source LLM reinforcement learning system at scale. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https://openreview.net/forum?id=2a36EMSSTp .[46] Yue, Y., Chen, Z., Lu, R., Zhao, A., Wang, Z., Yue, Y., Song, S., and Huang, G. Does reinforcement learning really incentivize reasoning capacity in LLMs beyond the base model? In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL 
+
+https://openreview.net/forum?id=4OsgYD7em5 .[47] Zhan, W., Wang, Y., Hu, N., Xiao, L., Ma, J., Qin, Y., Li, Z., Yang, Y., Deng, S., Ding, J., et al. Knowlogic: A benchmark for commonsense reasoning via knowledge-driven data synthesis. 
+
+arXiv preprint arXiv:2503.06218 , 2025. URL https://arxiv.org/abs/2503.06218 .[48] Zheng, C., Liu, S., Li, M., Chen, X.-H., Yu, B., Gao, C., Dang, K., Liu, Y., Men, R., Yang, A., et al. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025. URL 
+
+https://arxiv.org/abs/2507.18071 .[49] Zheng, H., Zhou, Y., Bartoldson, B. R., Kailkhura, B., Lai, F., Zhao, J., and Chen, B. Act only when it pays: Efficient reinforcement learning for LLM reasoning via selective rollouts. In 
+
+The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL 
+
+https://openreview.net/forum?id=x5lITYXmW2 .[50] Zheng, T., Xing, T., Gu, Q., Liang, T., Qu, X., Zhou, X., Li, Y., Wen, Z., Lin, C., Huang, W., et al. First return, entropy-eliciting explore. arXiv preprint arXiv:2507.07017 , 2025. URL 
+
+https://arxiv.org/abs/2507.07017 .13 A Limitations 
+
+The primary computational overhead of CPO stems from the additional reference-guided forward pass required to compute the posterior likelihood πpost , which increases training time by approximately 20% compared to standard GRPO. One promising direction to mitigate this is to decouple the reference-guided forward pass from the main training loop via asynchronous computation, at the cost of slightly stale posterior estimates that introduce a degree of off-policy bias. Additionally, CPO currently relies on the availability of reference answers to construct the correctness-informed distribution πpost , which limits its applicability to settings with verifiable rewards. However, as discussed in Section 2, reference answers are just one instantiation of a correctness-informed distribution. A natural extension is to replace reference-guided prompting with other contextual signals that can serve the same role without requiring ground-truth answers, such as critic feedback that judges the quality of the model’s own outputs, or process-level annotations that identify reasoning errors at intermediate steps. Exploring such alternatives would broaden the applicability of CPO to open-ended generation and subjective reasoning tasks, where reference answers are unavailable. 
+
+## B Impact Statements 
+
+The primary goal of this work is to improve the accuracy of credit assignment during reinforcement learning. This method has the potential for social impact in domains requiring high accuracy, such as industrial workflow agent and scientific assistance. While improving reasoning capabilities is generally beneficial, we acknowledge that advanced models carry inherent risks related to dual-use potential and the amplification of biases present in training data. We do not foresee specific negative consequences unique to this method beyond these broader considerations that apply to general-purpose LLM development. 
+
+## C Theoretical Analysis of Contrastive Generation Disagreement 
+
+Let x denote a prompt/question and y = ( y1, . . . , y T ) denote an autoregressive rollout from the prior 
+
+(vanilla) policy 
+
+π(y | x) = 
+
+> T
+
+Y
+
+> t=1
+
+πθ (yt | x, y <t ). (10) A verifiable environment returns a binary reward 
+
+R(x, y ) ∈ {− 1, 1}, (11) indicating whether the final answer in y is correct. GRPO optimizes the standard RLVR objective 
+
+J(θ) = Ex Ey∼π(·| x)
+
+R(x, y ). (12) 
+
+Definition C.1 (Oracle-defined correctness event) . For each x, assume there exists oracle ground-truth information (e.g., a reference answer/solution) that uniquely determines correctness for any candidate completion y. Let 
+
+C := {R(x, Y ) = 1 } (13) denote the event that a random completion Y is correct with respect to the oracle . Note that C is oracle-defined and model-agnostic; the model only induces a distribution over Y .
+
+Definition C.2 (Position-wise oracle correctness probability) . For any x, prefix y<t , and candidate token value yt, define 
+
+g(x, y <t , y t) := P(C | X = x, Y <t = y<t , Y t = yt) . (14) Equivalently, g(x, y <t , y t) is the probability (over all possible future continuations after choosing yt
+
+at position t) that the final completion is correct. 
+
+Definition C.3 (Reference-guided posterior scoring and disagreement) . Let y⋆(x) denote the refer-ence ground-truth, we define a reference-guided policy by conditioning the same model on x ⊕ y⋆(x):
+
+πpost (y | x) = 
+
+> T
+
+Y
+
+> t=1
+
+πθ (yt | x, y ⋆(x), y <t ). (15) 14 Given a rollout y ∼ π(· | x) (which may be correct or incorrect), CPO re-scores the same tokens under πpost and defines the token-wise contrastive generation disagreement 
+
+δt(x, y ) := log πpost (yt | x, y ⋆(x), y <t ) − log π(yt | x, y <t ). (16) 
+
+Definition C.4 (Ideal correctness-conditioned token distribution) . Define the ideal next-token distri-bution of the prior policy conditioned on oracle correctness: 
+
+˜πpost (yt | x, y <t ) := P(Yt = yt | X = x, Y <t = y<t , C ) . (17) This distribution is uniquely determined by π and the oracle-defined event C.
+
+Lemma C.5 (Bayes reweighting under oracle correctness) . For any x, prefix y<t , and token yt,
+
+˜πpost (yt | x, y <t ) = π(yt | x, y <t ) g(x, y <t , y t)
+
+Z(x, y <t ) , Z(x, y <t ) := X
+
+> b
+
+π(b | x, y <t ) g(x, y <t , b ).
+
+(18) 
+
+Equivalently, Z(x, y <t ) = P(C | X = x, Y <t = y<t ) is the prior-average correctness probability at that prefix. Proof. By Definition C.4 and Bayes’ rule, 
+
+˜πpost (yt | x, y <t ) = P(Yt = yt, C | X = x, Y <t = y<t )
+
+P(C | X = x, Y <t = y<t ) . (19) Factor the numerator: 
+
+P(Yt = yt, C | x, y <t ) = P(Yt = yt | x, y <t ) P(C | x, y <t , Y t = yt) (20) 
+
+= π(yt | x, y <t ) g(x, y <t , y t), (21) where the last equality uses Definition C.2. The denominator equals 
+
+P(C | x, y <t ) = X
+
+> b
+
+P(Yt = b | x, y <t ) P(C | x, y <t , Y t = b) = X
+
+> b
+
+π(b | x, y <t ) g(x, y <t , b ),
+
+(22) which defines Z(x, y <t ). Substituting into the Bayes expression yields the claim. 
+
+Corollary C.6 (Ideal log-ratio equals log-correctness up to a prefix constant) . For any x, y <t , y t with 
+
+π(yt | x, y <t ) > 0 and g(x, y <t , y t) > 0,
+
+log ˜ πpost (yt | x, y <t ) − log π(yt | x, y <t ) = log g(x, y <t , y t) − log Z(x, y <t ). (23) 
+
+Proof. Take logarithms on both sides of Lemma C.5 and subtract log π(yt | x, y <t ).
+
+Assumption C.7 (Reference answer encodes correctness information) . In practice, we do not have direct access to the ideal distribution ˜πpost . However, we can condition the model on the oracle reference y⋆ (e.g., prompting the model to refine based on y⋆(x)) to obtain πpost (yt | x, y ⋆(x), y <t ).Since y⋆ encodes the ground-truth that determines correctness and the prompt also asks the model to refine, conditioning on such prompt serves as a practical proxy for conditioning on the correctness event C, i.e., πpost (· | x, y ⋆(x), y <t ) ≈ ˜πpost (· | x, y <t ).
+
+Justification (empirical). We implement this proxy via teacher-forcing: for a prior rollout y ∼
+
+π(· | x), we re-compute log πpost (yt | x, y ⋆(x), y <t ) on the same tokens. Empirically, in Sec. 2.1.2, large negative disagreements are concentrated on incorrect trajectories and align with error-causing steps, supporting πpost (· | x, y ⋆(x), y <t ) as an effective approximation to ˜πpost (· | x, y <t ).
+
+Theorem C.8 (Contrastive generation disagreement indicates incorrectness) . Fix x and a prefix y<t .Define the ideal disagreement for token yt as 
+
+˜δt(x, y <t , y t) := log ˜ πpost (yt | x, y <t ) − log π(yt | x, y <t ). (24) 
+
+Then, for any yt with π(yt | x, y <t ) > 0 and g(x, y <t , y t) > 0,
+
+˜δt(x, y <t , y t) = log g(x, y <t , y t) − log Z(x, y <t ), (25) 15 where Z(x, y <t ) is given in Lemma C.5. In particular, for fixed (x, y <t ), ˜δt(x, y <t , y t) is a strictly increasing function of g(x, y <t , y t), and 
+
+˜δt(x, y <t , y t) < 0 ⇐⇒ g(x, y <t , y t) < Z (x, y <t ),
+
+˜δt(x, y <t , y t) > 0 ⇐⇒ g(x, y <t , y t) > Z (x, y <t ). (26) 
+
+Therefore, negative ideal disagreement identifies incorrect-leaning tokens whose oracle correctness probability is below the prior-average correctness at that prefix. Proof. The identity follows immediately from Corollary C.6. The sign equivalences follow from exponentiating ˜δt(x, y <t , y t) = log  g(x, y <t , y t)/Z (x, y <t ).
+
+Corollary C.9 (Interpretation for CPO scoring on any rollout) . Let y ∼ π(· | x) be any rollout, which may satisfy R(x, y ) = 1 or R(x, y ) = −1. At each position t, CPO computes 
+
+δt(x, y ) = log πpost (yt | x, y ⋆(x), y <t ) − log π(yt | x, y <t ).
+
+Under Assumption C.7, δt(x, y ) serves as a practical proxy for the ideal quantity ˜δt(x, y <t , y t), and thus inherits its correctness-aligned interpretation: large negative δt(x, y ) indicates that the chosen token yt is suppressed by oracle-informed guidance and is therefore likely to be incorrect-leaning at that prefix, which is also empirically validated in Sec. 2.1.2. 
+
+## D Generation Prompts 
+
+In this section, we provide the complete prompts used in our experiments: vanilla generation (Table 4), reference-guided generation (Table 5), and two variants from the ablation study in Sec. 3.4: multi-turn gold-shot (Table 6) and multi-turn 1-shot generation (Table 7). While the exact prompt format is not the core contribution of CPO , it plays a practical role in determining how effectively the reference-guided distribution shifts toward correctness-oriented reasoning. As long as the prompt elicits a posterior distribution that is more correctness-informed than the vanilla generation, the contrastive disagreement remains a meaningful signal regardless of the specific format. The performance differences across prompt variants in Table 3 reflect how effectively each format elicits correctness-oriented reasoning, rather than a fundamental sensitivity to prompt design. Based on our ablation study, we suggest the following practical guidelines for reference-guided prompt design: (1) use a single-turn format, as LLMs have stronger single-turn instruction-following capability; (2) generate in a first-person, real-time problem-solving tone to encourage genuine reasoning; (3) instruct the model not to acknowledge the reference answer, ensuring the model reasons rather than copies; (4) require complete reasoning with intermediate steps and error-correction to capture meaningful token-level differences. Table 4: Prompt used in vanilla generation. 
+
+> <|im_start|>system You are a helpful assistant.<|im_end|> <|im_start|>user [question] Please reason step by step, and put your final answer within \boxed{}.<|im_end|> <|im_start|>assistant
+
+## E Detailed training Implementations 
+
+To verify the effectiveness of CPO in enhancing RLVR performance, we conduct experiments on two base models: the general-purpose Qwen3-Base-4B [ 42 ] and the domain-specific Qwen2.5-Math-7B [ 41 ]. We train both models on the MATH dataset [ 9], which contains 7.5k problems. We 16 Table 5: Prompt used in reference-guided generation.         
+
+> <|im_start|>system You are a helpful assistant.<|im_end|> <|im_start|>user ###Question: [question] ###Reference Answer: [reference answer] Given a question and reference answer, generate a first-person step-by-step reasoning process leading to the answer in \boxed{}. Requirements: 1. Output only the first-person thought process, no preamble or summary 2. Simulate real-time problem-solving tone, avoid meta-commentary 3. Don’t mention or imply knowing the reference answer (avoid ’according to the answer...’ etc.) 4. Show complete reasoning path with intermediate steps, verification, and error-correction, not just restatement 5. Put final answer in \boxed{}<|im_end|> <|im_start|>assistant
+
+Table 6: Prompt used in multi-turn gold-shot generation. 
+
+> <|im_start|>system You are a helpful assistant.<|im_end|> <|im_start|>user [question]<|im_end|> <|im_start|>assistant [reference answer]<|im_end|> <|im_start|>user [question] Please reason step by step, and put your final answer within \boxed{}.<|im_end|> <|im_start|>assistant
+
+implement CPO based on GRPO [ 24 ]. During training, we use a prompt batch size of 1024 with 8 rollouts per prompt, and set the sampling temperature to 1.0. The maximum context length is set to 4096 for Qwen2.5-Math-7B and 8192 for Qwen3-Base-4B. The combination strength α+ and α− are both set to 0.025. We perform policy updates with a mini-batch size of 256 and a learning rate of 1e-6. The KL penalty coefficient between the policy and reference models is set to 1e-3, and the PPO clip ratio is set to 0.2. We conduct all experiments on 8 A800 GPUs. The additional forward pass required to calculate reference-guided generation probabilities increases training time by approximately 20%. 
+
+## F Additional Experiments and Analyses 
+
+F.1 Statistical Significance. 
+
+To verify the reliability of our results, we conduct 3 independent runs for CPO, GRPO, and DAPO and report mean ± std in Table 8. CPO consistently outperforms both baselines with improvements well beyond one standard deviation across all benchmarks. Notably, CPO exhibits substantially smaller variance than DAPO on challenging benchmarks such as AIME2024 (±1.9 vs. ±10.3), suggesting more stable training dynamics. We also note that our primary evaluation metric Pass@16 inherently 17 Table 7: Prompt used in multi-turn 1-shot generation. 
+
+<|im_start|>system You are a helpful assistant.<|im_end|> <|im_start|>user Let S = {5k |k ∈ Z, 0 ≤ k ≤ 2004 }. Given that 52004 = 5443 · · · 0625 has 1401 digits, how many elements of S begin with the digit 1?<|im_end|> <|im_start|>assistant Note that 5n has the same number of digits as 5n−1 if and only if 5n−1 has a leading digit 1. Therefore, there are 2004 - 1401 = 603 numbers with leading digit 1 among the set {51, 52, 53, · · · 52003 }. However, 50 also starts with 1, so the answer is 603 + 1 = \boxed{604}.<|im_end|> <|im_start|>user [question] Please reason step by step, and put your final answer within \boxed{}.<|im_end|> <|im_start|>assistant 
+
+Table 8: Mean ± std over 3 independent runs on Qwen2.5-Math-7B.                                 
+
+> Methods MATH-500 AIME2024 AIME2025 AMC2023 GPQA MMLU-PRO KnowLogic Avg.
+> GRPO 88.0 ±0.6 45.5 ±3.9 30.0 ±3.3 85.0 ±2.5 61.2 ±3.1 61.8 ±1.3 65.0 ±3.1 62.4 ±0.7
+> DAPO 87.8 ±1.4 38.9 ±10.3 30.0 ±3.3 89.2 ±3.8 62.3 ±4.1 61.2 ±4.0 64.0 ±3.8 61.9 ±1.1
+> CPO 88.8 ±0.4 58.9 ±1.9 40.0 ±3.3 92.5 ±2.5 68.0 ±2.3 68.4 ±1.5 68.3 ±0.5 69.4 ±0.8
+
+mitigates evaluation variance by aggregating over 16 sampled responses per problem, further reducing the influence of random sampling. 
+
+F.2 CPO on the Zero-Advantage Problem 
+
+Table 9: Performance comparison of CPO, RL-ZVP, and the base model across benchmarks under the zero-advantage controlled setting. 
+
+Methods MATH-500 AIME2024 AIME2025 AMC2023 GPQA MMLU-PRO KnowLogic Avg. 
+
+Qwen2.5-Math-7B 87.8 43.3 30.0 85.0 70.5 63.4 55.8 62.3 + RL-ZVP 87.2 43.3 30.0 85.0 67.1 63.1 53.2 61.3 + CPO 88.8 50.0 33.3 87.5 69.6 64.3 58.0 64.5 
+
+For zero-advantage prompts, existing entropy-based methods such as RL-ZVP attempt to assign a high advantage for high-entropy tokens. However, since entropy only captures uncertainty without distinguishing whether a token contributes to correct or incorrect reasoning, the resulting signal remains correctness-agnostic: it may inadvertently reinforce confused or erroneous token choices that happen to exhibit high entropy. CPO addresses this in a more principled manner. CPO uses the token-level contrastive disagreement δi,t as the shaped advantage, which is theoretically and empirically demonstrated in Section 3.1 to serve as a reliable proxy for token-level correctness probability. This provides a more meaningful and directionally reliable advantage signal compared to existing entropy-intervened methods. In our experiments, this advantage is reflected in the consistently superior performance of CPO over RL-ZVP across both in-domain and out-of-domain benchmarks (e.g. , +9.5% average on Qwen2.5-Math-7B and +6.6% on Qwen3-Base-4B). To further isolate the contribution of CPO on zero-advantage prompts, we conduct a controlled experiment where only rollouts from zero-advantage groups are used for training, comparing advantage shaping of CPO and RL-ZVP under this setting. The results demonstrate that CPO consistently outperforms RL-ZVP under this controlled zero-advantage setting, with a +3.2% average improvement. This confirms that the advantage signals of CPO is more useful over entropy-based methods. 18 F.3 Comparison with SFT and Distillation Methods 
+
+Table 10: Performance comparison of CPO with SFT and distillation baselines on Qwen2.5-Math-7B.                                  
+
+> Methods MATH-500 AIME2024 AIME2025 AMC2023 GPQA MMLU-PRO KnowLogic Avg.
+> Original 87.8 43.3 30.0 85.0 70.5 63.4 55.8 62.3 SFT 79.6 23.3 16.6 65.0 52.0 49.1 61.4 49.6 Distillation 85.2 43.3 33.3 85.0 77.9 65.7 70.3 65.8
+> CPO 89.0 60.0 43.3 92.5 68.8 69.0 68.9 70.2
+
+To ensure fair comparison under equivalent data conditions, we conduct additional experiments comparing CPO with SFT and distillation baselines on Qwen2.5-Math-7B, where the distillation baseline is constructed by fine-tuning the model on trajectories self-sampled with reference-guided prompts. As shown in Table 10, vanilla SFT degrades substantially (-12.7 avg.) compared to the original Qwen2.5-Math-7B, while distillation recovers much of the performance (+3.5 avg.), and CPO achieves the best results by a significant margin (+7.9 avg.). SFT suffers from a fundamental distribution mismatch: the concise ground-truth trajectories are far from the model’s own generation distribution, making them difficult to learn from directly. Distillation mitigates this by using reference-guided self-sampling to generate trajectories that are initially much closer to the model’s own distribution. Moreover, the additional reference information guides the model to produce more reasonable and learnable samples, which explains the consistent performance gains over vanilla SFT. However, distillation remains inherently off-policy: the sampled trajectories are collected once and fixed as static supervised targets. As training progresses and the policy evolves, these fixed targets become increasingly misaligned with the current model distribution, ultimately limiting its performance. CPO avoids this issue entirely by operating fully on-policy: the reference answer is never used as a imitation target, but solely to compute a token-level contrastive signal at each training step using the current policy, allowing the contrastive signal to evolve alongside the model and preserving full exploration capability. 19
