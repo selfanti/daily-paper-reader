@@ -6,49 +6,50 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-19
-- 运行时间：2026-07-19 21:10:34 UTC
+- 最新运行日期：2026-07-20
+- 运行时间：2026-07-20 21:36:43 UTC
 - 运行状态：成功
-- 本次总论文数：9
-- 精读区：1
-- 速读区：8
+- 本次总论文数：10
+- 精读区：6
+- 速读区：4
 
 ### 今日简报（AI）
-1. 今日推荐9篇论文，精读1篇《Hy-Embodied-VLM-1.0: Efficient Physical-World Agents》（8.0/10），速读8篇。  
-2. 最值得关注的是高效具身VLM智能体方向，以及主动流控制中的启发式学习、图结构在智能体系统中的应用。  
-3. 建议优先精读《Hy-Embodied-VLM-1.0》掌握物理世界智能体前沿，再浏览速读中的《EvoGraph-R1》和《MyAG》拓展设计思路。
-- 详情：[/202607/19/README](/202607/19/README)
+今日日报精选10篇论文，聚焦智能体强化学习在工具环境与优化器两大前沿突破。最值得关注的两项9分研究：ToolVerse解锁大规模长期任务场景，以及Muon优化器在特定条件下显著提升智能体学习效率。建议普通读者重点理解工具环境复杂性与优化器匹配策略对智能体性能的潜在影响。
+- 详情：[/202607/20/README](/202607/20/README)
 
 ### 精读区论文标签
-1. [Hy-Embodied-VLM-1.0: Efficient Physical-World Agents](/202607/19/2607.12894v1-hy-embodied-vlm-10-efficient-physical-world-agents)  
+1. [ToolVerse: Unlocking Massive Environments and Long-Horizon Tasks for Agentic Reinforcement Learning](/202607/20/2607.15660v1-toolverse-unlocking-massive-environments-and-long-horizon-tasks-for-agentic-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向智能体强化学习的海量环境与工具集成
+2. [When Does Muon Help Agentic Reinforcement Learning?](/202607/20/2607.16169v1-when-does-muon-help-agentic-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：Muon优化器在智能体强化学习中的应用
+3. [PhysClaw-0: A Symbiotic Agentic System for Robot Autonomy via Language Corrections](/202607/20/2607.14047v1-physclaw-0-a-symbiotic-agentic-system-for-robot-autonomy-via-language-corrections)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：面向物理世界智能体的具身基础模型，具备动作推理和适应能力
+   evidence：通过保留修正实现智能体自我进化
+4. [Recursive Harness Self-Improvement](/202607/20/2607.15524v1-recursive-harness-self-improvement)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：智能体自我进化的递归优化方法
+5. [Process Reward Informed Tree Rollout for Effective Multi-Turn RL](/202607/20/2607.15610v1-process-reward-informed-tree-rollout-for-effective-multi-turn-rl)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：过程奖励引导的树形展开用于多轮强化学习
+6. [When Do Multi-Agent Systems Help? An Information Bottleneck Perspective](/202607/20/2607.16133v1-when-do-multi-agent-systems-help-an-information-bottleneck-perspective)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：从信息瓶颈视角分析多智能体系统
 
 ### 速读区论文标签
-1. [Heuristic Learning for Active Flow Control Using Coding Agents](/202607/19/2607.11565v1-heuristic-learning-for-active-flow-control-using-coding-agents)  
+1. [Filtering Harmful Actions Isn't Enough: Phantom Transfer in Agentic SDF](/202607/20/2607.10750v1-filtering-harmful-actions-isnt-enough-phantom-transfer-in-agentic-sdf)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：使用编码智能体进行启发式强化学习
-2. [EvoGraph-R1: Self-Evolving Multimodal Knowledge Hypergraphs for Agentic Retrieval](/202607/19/2607.12764v1-evograph-r1-self-evolving-multimodal-knowledge-hypergraphs-for-agentic-retrieval)  
+   evidence：用于强化学习训练的合成智能体轨迹
+2. [CLaC@FinMMEval 2026 Task 3: Sentiment-Augmented Deep Reinforcement Learning for Active Trading -- An Alpha-Reward Approach](/202607/20/2607.16028v1-clacfinmmeval-2026-task-3-sentiment-augmented-deep-reinforcement-learning-for-active-trading----an-alpha-reward-approach)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：自进化知识超图赋能智能体检索
-3. [MyAG: A Graph-Based Framework for Designing and Analyzing Composable LLM Agent Systems](/202607/19/2607.13474v1-myag-a-graph-based-framework-for-designing-and-analyzing-composable-llm-agent-systems)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：基于图的可组合LLM智能体系统设计框架，支持灵活决策和学习
-4. [Explaining Reinforcement Learning Agents via Inductive Logic Programming](/202607/19/2607.13655v1-explaining-reinforcement-learning-agents-via-inductive-logic-programming)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：通过归纳逻辑编程解释强化学习智能体
-5. [A Noise-Robust Elicit-to-Optimize Framework for Distortion Riskmetrics via Inverse Reinforcement Learning](/202607/19/2607.14373v1-a-noise-robust-elicit-to-optimize-framework-for-distortion-riskmetrics-via-inverse-reinforcement-learning)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：用于智能体风险偏好推断和策略优化的逆强化学习与强化学习
-6. [Collaborative Spatial Learning with Multi-LLM Agents in Networked Social Experiments](/202607/19/2607.14574v1-collaborative-spatial-learning-with-multi-llm-agents-in-networked-social-experiments)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：多LLM智能体协作学习
-7. [Auditing Belief-Conditioned LLM Agents in Hidden-Information Social Deduction Games](/202607/19/2607.10814v1-auditing-belief-conditioned-llm-agents-in-hidden-information-social-deduction-games)  
+   evidence：用于交易智能体的策略梯度方法
+3. [Harness Handbook: Making Evolving Agent Harnesses Readable,Navigable, and Editable](/202607/20/2607.13285v1-harness-handbook-making-evolving-agent-harnesses-readablenavigable-and-editable)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：多智能体隐藏信息社交推理游戏中的信念审计
-8. [Active Offline-to-Online Reinforcement Learning](/202607/19/2607.11720v1-active-offline-to-online-reinforcement-learning)  
+   evidence：演化智能体工具集
+4. [Behavioral Controllability of Agentic Models for Information Extraction: From Fixed Workflows to Reflective Agents](/202607/20/2607.15715v1-behavioral-controllability-of-agentic-models-for-information-extraction-from-fixed-workflows-to-reflective-agents)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：主动离线到在线强化学习用于策略微调
+   evidence：研究反思型LLM智能体在信息抽取中的记忆使用
 
 
 <div class="dpr-home-promo-card">
