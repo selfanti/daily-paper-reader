@@ -6,50 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-20
-- 运行时间：2026-07-20 21:36:43 UTC
+- 最新运行日期：2026-07-21
+- 运行时间：2026-07-21 21:12:02 UTC
 - 运行状态：成功
-- 本次总论文数：10
+- 本次总论文数：17
 - 精读区：6
-- 速读区：4
+- 速读区：11
 
 ### 今日简报（AI）
-今日日报精选10篇论文，聚焦智能体强化学习在工具环境与优化器两大前沿突破。最值得关注的两项9分研究：ToolVerse解锁大规模长期任务场景，以及Muon优化器在特定条件下显著提升智能体学习效率。建议普通读者重点理解工具环境复杂性与优化器匹配策略对智能体性能的潜在影响。
-- 详情：[/202607/20/README](/202607/20/README)
+今日精选17篇论文，聚焦多智能体协商决策与具身智能操作系统两大前沿方向。最值得关注的是《MIND-CAVs》中基于意图驱动的自主系统，以及《PhyAgentOS》提出的认知规划与物理执行解耦架构。建议读者优先精读这两篇9分论文，并关注速读列表中关于记忆与规划协同的进阶讨论。
+- 详情：[/202607/21/README](/202607/21/README)
 
 ### 精读区论文标签
-1. [ToolVerse: Unlocking Massive Environments and Long-Horizon Tasks for Agentic Reinforcement Learning](/202607/20/2607.15660v1-toolverse-unlocking-massive-environments-and-long-horizon-tasks-for-agentic-reinforcement-learning)  
+1. [MIND-CAVs: Multi-Intelligence Negotiation and Decision System for CAVs based on Intent-Driven Autonomy](/202607/21/2607.14688v2-mind-cavs-multi-intelligence-negotiation-and-decision-system-for-cavs-based-on-intent-driven-autonomy)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向智能体强化学习的海量环境与工具集成
-2. [When Does Muon Help Agentic Reinforcement Learning?](/202607/20/2607.16169v1-when-does-muon-help-agentic-reinforcement-learning)  
+   evidence：用于连接自动驾驶车辆的多智能体谈判与决策框架
+2. [PhyAgentOS: A Self-Evolving Operating System for Embodied Agents with Decoupled Cognitive Planning and Physical Execution](/202607/21/2607.16636v1-phyagentos-a-self-evolving-operating-system-for-embodied-agents-with-decoupled-cognitive-planning-and-physical-execution)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：Muon优化器在智能体强化学习中的应用
-3. [PhysClaw-0: A Symbiotic Agentic System for Robot Autonomy via Language Corrections](/202607/20/2607.14047v1-physclaw-0-a-symbiotic-agentic-system-for-robot-autonomy-via-language-corrections)  
+   evidence：具身Agent的自演化操作系统
+3. [On Optimal Event-Triggered Distributed Control for Stochastic Multi-Agent Systems via Reinforcement Learning](/202607/21/2607.17635v1-on-optimal-event-triggered-distributed-control-for-stochastic-multi-agent-systems-via-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：基于事件触发策略的强化学习多智能体分布式控制
+4. [Exploratory and Assimilating Reflection: Reflective Recall Cycle for Long-term Memory](/202607/21/2607.17879v1-exploratory-and-assimilating-reflection-reflective-recall-cycle-for-long-term-memory)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：自主Agent长期记忆框架
+5. [Aggregate in the Advantage, Not the Ratio: A Canonical-Form Analysis of Cooperative Multi-Agent Policy Optimization](/202607/21/2607.17924v1-aggregate-in-the-advantage-not-the-ratio-a-canonical-form-analysis-of-cooperative-multi-agent-policy-optimization)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：分析合作多智能体策略优化中的聚合方式
+6. [Physics-enhanced reinforcement learning for real-time optimal control of dynamical systems](/202607/21/2607.16177v1-physics-enhanced-reinforcement-learning-for-real-time-optimal-control-of-dynamical-systems)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：通过保留修正实现智能体自我进化
-4. [Recursive Harness Self-Improvement](/202607/20/2607.15524v1-recursive-harness-self-improvement)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：智能体自我进化的递归优化方法
-5. [Process Reward Informed Tree Rollout for Effective Multi-Turn RL](/202607/20/2607.15610v1-process-reward-informed-tree-rollout-for-effective-multi-turn-rl)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：过程奖励引导的树形展开用于多轮强化学习
-6. [When Do Multi-Agent Systems Help? An Information Bottleneck Perspective](/202607/20/2607.16133v1-when-do-multi-agent-systems-help-an-information-bottleneck-perspective)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：从信息瓶颈视角分析多智能体系统
+   evidence：物理增强的强化学习用于控制
 
 ### 速读区论文标签
-1. [Filtering Harmful Actions Isn't Enough: Phantom Transfer in Agentic SDF](/202607/20/2607.10750v1-filtering-harmful-actions-isnt-enough-phantom-transfer-in-agentic-sdf)  
+1. [When to Plan: Learning to Select Between Reactive Control and Deliberative Planning](/202607/21/2607.16421v1-when-to-plan-learning-to-select-between-reactive-control-and-deliberative-planning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：学习在反应式与深思熟虑决策之间选择
+2. [From Memory to Skills: Evidence-Grounded Co-Evolution Governance for Long-Horizon LLM Agents](/202607/21/2607.16621v1-from-memory-to-skills-evidence-grounded-co-evolution-governance-for-long-horizon-llm-agents)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：长程LLM智能体的记忆-技能共进化
+3. [RECON: Benchmarking Agent Memory for Compositional Reasoning over Long Contexts](/202607/21/2607.16716v1-recon-benchmarking-agent-memory-for-compositional-reasoning-over-long-contexts)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：基准测试智能体在长上下文中的组合推理记忆能力
+4. [Reward-Driven LLM Agent Workflows: Synthesizing POMDP Routing and Self-Correction for Autonomous Decision-Making](/202607/21/2607.17038v1-reward-driven-llm-agent-workflows-synthesizing-pomdp-routing-and-self-correction-for-autonomous-decision-making)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：结合POMDP路由和自我纠正奖励实现自主决策
+5. [Do AI Agents Know When a Task Is Simple? Toward Complexity-Aware Reasoning and Execution](/202607/21/2607.13034v1-do-ai-agents-know-when-a-task-is-simple-toward-complexity-aware-reasoning-and-execution)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：用于强化学习训练的合成智能体轨迹
-2. [CLaC@FinMMEval 2026 Task 3: Sentiment-Augmented Deep Reinforcement Learning for Active Trading -- An Alpha-Reward Approach](/202607/20/2607.16028v1-clacfinmmeval-2026-task-3-sentiment-augmented-deep-reinforcement-learning-for-active-trading----an-alpha-reward-approach)  
+   evidence：面向自主智能体决策的复杂度感知执行
+6. [RELIC: Revealed Principles for Learning Interpretable Composable Skills in Multi-Agent Planning](/202607/21/2607.16745v1-relic-revealed-principles-for-learning-interpretable-composable-skills-in-multi-agent-planning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：用于交易智能体的策略梯度方法
-3. [Harness Handbook: Making Evolving Agent Harnesses Readable,Navigable, and Editable](/202607/20/2607.13285v1-harness-handbook-making-evolving-agent-harnesses-readablenavigable-and-editable)  
+   evidence：多智能体技能学习与隐私保护协调
+7. [Evolution of cooperation with temporal information](/202607/21/2607.16816v1-evolution-of-cooperation-with-temporal-information)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：时间信息促进多智能体系统中的合作
+8. [Counterfactual Shapley Credit Assignment](/202607/21/2607.16999v1-counterfactual-shapley-credit-assignment)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：强化学习智能体的信度分配
+9. [Clarify Before Executing: A Self-Evolving Agent for Resolving Intent Asymmetry in 3D Tool Orchestration](/202607/21/2607.16352v1-clarify-before-executing-a-self-evolving-agent-for-resolving-intent-asymmetry-in-3d-tool-orchestration)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：演化智能体工具集
-4. [Behavioral Controllability of Agentic Models for Information Extraction: From Fixed Workflows to Reflective Agents](/202607/20/2607.15715v1-behavioral-controllability-of-agentic-models-for-information-extraction-from-fixed-workflows-to-reflective-agents)  
+   evidence：通过澄清对话解决意图不对称的自进化智能体
+10. [SAGE: A Socially-Aware Generative Engine for Heterogeneous Multi-Agent Navigation](/202607/21/2607.16619v1-sage-a-socially-aware-generative-engine-for-heterogeneous-multi-agent-navigation)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：研究反思型LLM智能体在信息抽取中的记忆使用
+   evidence：多智能体协调学习
+11. [Non-Asymptotic Best Policy Identification Guarantees in Online Reinforcement Learning](/202607/21/2607.17201v1-non-asymptotic-best-policy-identification-guarantees-in-online-reinforcement-learning)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：在线强化学习最优策略识别保证
 
 
 <div class="dpr-home-promo-card">
