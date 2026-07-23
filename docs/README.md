@@ -6,74 +6,61 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-22
-- 运行时间：2026-07-22 21:08:27 UTC
+- 最新运行日期：2026-07-23
+- 运行时间：2026-07-23 21:20:49 UTC
 - 运行状态：成功
-- 本次总论文数：18
-- 精读区：7
-- 速读区：11
+- 本次总论文数：13
+- 精读区：6
+- 速读区：7
 
 ### 今日简报（AI）
-今日处理18篇论文，精读7篇，重点推荐两篇9.0文章：负载感知同步智能体强化学习（WAR）与自我修改的Lean证明代理。前者优化同步RL rollout调度，后者通过验证者-基准共演化实现自动定理证明。普通读者可关注速读中的多智能体强化学习在基础设施韧性及紧凑模型参数高效推理方向。
-- 详情：[/202607/22/README](/202607/22/README)
+今日精选13篇论文，重点攻坚多智能体协同与长时推理，其中两篇满分研究分别提出耦合分层框架与图结构经验复用。  
+最值得关注：CHMAS分层框架在多智能体RL中的耦合协同，以及基于图记忆的制造环境动态适应方法。  
+对于普通读者，建议优先阅读这些论文中的记忆与分层结构设计，它们在长时推理和离线RL中的实战价值最高。
+- 详情：[/202607/23/README](/202607/23/README)
 
 ### 精读区论文标签
-1. [WAR: Workload-Aware Rollouts for Synchronous Agentic Reinforcement Learning](/202607/22/2607.17299v1-war-workload-aware-rollouts-for-synchronous-agentic-reinforcement-learning)  
+1. [CHMAS: A Coupled Hierarchical Framework for Multi-Agent Reinforcement Learning](/202607/23/2607.19555v1-chmas-a-coupled-hierarchical-framework-for-multi-agent-reinforcement-learning)  
+   标签：评分：10.0/10、query:agentic-rl
+   evidence：耦合分层多智能体强化学习框架
+2. [Coordinating from Memory: Graph-Structured Experience Reuse for Multi-Agent Adaptation in Dynamic Manufacturing](/202607/23/2607.19985v1-coordinating-from-memory-graph-structured-experience-reuse-for-multi-agent-adaptation-in-dynamic-manufacturing)  
+   标签：评分：10.0/10、query:agentic-rl
+   evidence：基于图结构经验重用的多智能体强化学习适应
+3. [Neuro-Symbolic Meta-Policies for Temporal Knowledge-Graph Memory under Partial Observability](/202607/23/2607.18368v1-neuro-symbolic-meta-policies-for-temporal-knowledge-graph-memory-under-partial-observability)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向同步智能体强化学习的工作负载感知回滚
-2. [Self-Modifying Lean Proof Agents with Verifier-Grounded Benchmark Coevolution](/202607/22/2607.17352v1-self-modifying-lean-proof-agents-with-verifier-grounded-benchmark-coevolution)  
+   evidence：部分可观测环境下时态知识图谱记忆的神经符号元策略
+4. [Dreamer-CPC: Message Learning with World Models for Decentralized Multi-agent Reinforcement Learning](/202607/23/2607.19809v1-dreamer-cpc-message-learning-with-world-models-for-decentralized-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：自我进化的智能体工作流变异
-3. [Value-Aware Prediction for Robust Multi-Agent Coordination Under Communication Loss](/202607/22/2607.17914v1-value-aware-prediction-for-robust-multi-agent-coordination-under-communication-loss)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：基于价值感知的通信中断鲁棒多智能体协调
-4. [Scalable Policy Optimization for Networked Multi-Agent Reinforcement Learning with Continuous State-Action Spaces](/202607/22/2607.18554v1-scalable-policy-optimization-for-networked-multi-agent-reinforcement-learning-with-continuous-state-action-spaces)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：面向网络化多智能体强化学习的可扩展策略梯度
-5. [A Self-Evolving Default Action for Cooperative Tasks with Continuous Action Space](/202607/22/2607.18597v1-a-self-evolving-default-action-for-cooperative-tasks-with-continuous-action-space)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：多智能体合作中的自进化默认动作
-6. [Supra Cognitive Modes: A Routed Architecture for Agent Memory](/202607/22/2607.19096v1-supra-cognitive-modes-a-routed-architecture-for-agent-memory)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：智能体记忆路由架构
-7. [Comparative Study of Multi-Agent Actor-Critic Algorithms in Parameterized Action Reinforcement Learning](/202607/22/2607.19117v1-comparative-study-of-multi-agent-actor-critic-algorithms-in-parameterized-action-reinforcement-learning)  
-   标签：评分：9.0/10、query:agentic-rl
-   evidence：多智能体actor-critic算法用于合作任务
+   evidence：去中心化多智能体强化学习与消息学习
+5. [Stigmergic Graph Memory: An Environment-Aware Approach for Many-to-Many Multi-Agent Pickup and Delivery](/202607/23/2607.15182v1-stigmergic-graph-memory-an-environment-aware-approach-for-many-to-many-multi-agent-pickup-and-delivery)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：用于多智能体取送货的基于信息素的图记忆机制
+6. [RoboHarness: Memory-Driven Orchestration of Heterogeneous Robot Policies for Long-Horizon Planning](/202607/23/2607.18060v1-roboharness-memory-driven-orchestration-of-heterogeneous-robot-policies-for-long-horizon-planning)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：记忆驱动的异构机器人策略编排
 
 ### 速读区论文标签
-1. [MADA-RL: Multi-Agent Debate-Aware Reinforcement Learning for Parameter-Efficient Reasoning in Compact Models](/202607/22/2607.18006v1-mada-rl-multi-agent-debate-aware-reinforcement-learning-for-parameter-efficient-reasoning-in-compact-models)  
+1. [Conservative Query and Adaptive Regularization for Offline RL Under Uncertainty Estimation](/202607/23/2607.19199v1-conservative-query-and-adaptive-regularization-for-offline-rl-under-uncertainty-estimation)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：多智能体辩论感知强化学习用于紧凑模型的参数高效推理
-2. [Decentralized Multi-agent Reinforcement Learning for Resilient Critical Infrastructures](/202607/22/2607.18359v1-decentralized-multi-agent-reinforcement-learning-for-resilient-critical-infrastructures)  
+   evidence：不确定性估计下带专家偏好查询的离线强化学习
+2. [S3: Stable Subgoal Selection by Constraining Uncertainty of Coarse Dynamics in Hierarchical Reinforcement Learning](/202607/23/2607.19232v1-s3-stable-subgoal-selection-by-constraining-uncertainty-of-coarse-dynamics-in-hierarchical-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：去中心化多智能体强化学习用于弹性基础设施
-3. [Strategy-Following Multi-Agent Deep Reinforcement Learning Considering Control Strategies Provided to Other Agents](/202607/22/2607.18719v1-strategy-following-multi-agent-deep-reinforcement-learning-considering-control-strategies-provided-to-other-agents)  
+   evidence：分层强化学习中的稳定子目标选择
+3. [PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning](/202607/23/2607.20064v1-pro-long-programmatic-memory-enables-long-horizon-reasoning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：多智能体深度强化学习中的策略跟随与协作
-4. [From Trajectories to Instructions: Language-Conditioned Meta-Reinforcement Learning](/202607/22/2607.18830v1-from-trajectories-to-instructions-language-conditioned-meta-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：语言条件元强化学习用于智能体适应
-5. [DSWorld: A Data Science World Model for Efficient Autonomous Agents](/202607/22/2607.15901v1-dsworld-a-data-science-world-model-for-efficient-autonomous-agents)  
+   evidence：提出使用程序化记忆的最小化上下文管理方法，用于长程推理
+4. [Learning Latency-Aware Orchestration for Multi-Agent Systems](/202607/23/2607.13359v2-learning-latency-aware-orchestration-for-multi-agent-systems)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：通过世界模型实现自主智能体决策
-6. [The Optimization Trilemma: Efficiency, Comfort and Fairness in Decentralized Multi-agent Coordination](/202607/22/2607.17311v1-the-optimization-trilemma-efficiency-comfort-and-fairness-in-decentralized-multi-agent-coordination)  
+   evidence：基于学习的多智能体系统延迟感知编排
+5. [Knowledge-Centric Self-Improvement](/202607/23/2607.19592v1-knowledge-centric-self-improvement)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：去中心化多智能体协调公平性
-7. [Theoretical Foundations of $\max$@$k$ Reinforcement Learning](/202607/22/2607.17823v1-theoretical-foundations-of-maxk-reinforcement-learning)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：最大@k强化学习的理论分析
-8. [PRIME: Plasticity Recovery in Multi-Agent Environments for UAV-Assisted Emergency Communication Networks](/202607/22/2607.17922v1-prime-plasticity-recovery-in-multi-agent-environments-for-uav-assisted-emergency-communication-networks)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：多智能体RL中的可塑性恢复用于适应
-9. [A Slow-Fast Stochastic Framework for Zeroth-Order Distributed Time-Varying Optimization](/202607/22/2607.14734v1-a-slow-fast-stochastic-framework-for-zeroth-order-distributed-time-varying-optimization)  
+   evidence：通过知识库的智能体自我进化
+6. [JANUS: Foreseeing Latent Risk for Long-Horizon Agent Safety](/202607/23/2607.19913v1-janus-foreseeing-latent-risk-for-long-horizon-agent-safety)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：多智能体分布式优化与协作
-10. [Reinforcement Learning: From Algorithms To Foundation Models](/202607/22/2607.17560v1-reinforcement-learning-from-algorithms-to-foundation-models)  
+   evidence：多智能体模拟与共享策略训练用于RL安全预测
+7. [Continuous-Time Reinforcement Learning for $N$-Player Stochastic Differential Games with Exploratory Policies](/202607/23/2607.19928v1-continuous-time-reinforcement-learning-for-n-player-stochastic-differential-games-with-exploratory-policies)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：学位论文涵盖博弈论中的多智能体强化学习和基础模型时代
-11. [Generalize and Guide: Decomposing Rewards for Few-Shot Inverse Reinforcement Learning](/202607/22/2607.17760v1-generalize-and-guide-decomposing-rewards-for-few-shot-inverse-reinforcement-learning)  
-   标签：评分：6.0/10、query:agentic-rl
-   evidence：少样本逆强化学习用于智能体学习
+   evidence：N人随机微分博弈的连续时间强化学习
 
 
 <div class="dpr-home-promo-card">
