@@ -6,61 +6,79 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-23
-- 运行时间：2026-07-23 21:20:49 UTC
+- 最新运行日期：2026-07-24
+- 运行时间：2026-07-24 21:03:57 UTC
 - 运行状态：成功
-- 本次总论文数：13
-- 精读区：6
-- 速读区：7
+- 本次总论文数：19
+- 精读区：9
+- 速读区：10
 
 ### 今日简报（AI）
-今日精选13篇论文，重点攻坚多智能体协同与长时推理，其中两篇满分研究分别提出耦合分层框架与图结构经验复用。  
-最值得关注：CHMAS分层框架在多智能体RL中的耦合协同，以及基于图记忆的制造环境动态适应方法。  
-对于普通读者，建议优先阅读这些论文中的记忆与分层结构设计，它们在长时推理和离线RL中的实战价值最高。
-- 详情：[/202607/23/README](/202607/23/README)
+今日精读9篇，速读10篇，聚焦强化学习的连续动作协同与智能体记忆学习两大方向。  
+最值得关注：《A Self-Evolving Default Action》提出连续动作空间的自演化默认动作机制（9.0分）与《AttriMem》的归因引导过程反馈记忆优化（9.0分）。  
+建议后续关注强化学习中的记忆与动作适应性创新，可助力复杂任务智能体的自适应能力提升。
+- 详情：[/202607/24/README](/202607/24/README)
 
 ### 精读区论文标签
-1. [CHMAS: A Coupled Hierarchical Framework for Multi-Agent Reinforcement Learning](/202607/23/2607.19555v1-chmas-a-coupled-hierarchical-framework-for-multi-agent-reinforcement-learning)  
-   标签：评分：10.0/10、query:agentic-rl
-   evidence：耦合分层多智能体强化学习框架
-2. [Coordinating from Memory: Graph-Structured Experience Reuse for Multi-Agent Adaptation in Dynamic Manufacturing](/202607/23/2607.19985v1-coordinating-from-memory-graph-structured-experience-reuse-for-multi-agent-adaptation-in-dynamic-manufacturing)  
-   标签：评分：10.0/10、query:agentic-rl
-   evidence：基于图结构经验重用的多智能体强化学习适应
-3. [Neuro-Symbolic Meta-Policies for Temporal Knowledge-Graph Memory under Partial Observability](/202607/23/2607.18368v1-neuro-symbolic-meta-policies-for-temporal-knowledge-graph-memory-under-partial-observability)  
+1. [A Self-Evolving Default Action for Cooperative Tasks with Continuous Action Space](/202607/24/2607.18597v2-a-self-evolving-default-action-for-cooperative-tasks-with-continuous-action-space)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：部分可观测环境下时态知识图谱记忆的神经符号元策略
-4. [Dreamer-CPC: Message Learning with World Models for Decentralized Multi-agent Reinforcement Learning](/202607/23/2607.19809v1-dreamer-cpc-message-learning-with-world-models-for-decentralized-multi-agent-reinforcement-learning)  
+   evidence：用于连续动作多智能体任务的自我演化默认动作
+2. [AttriMem: Attribution-Guided Process Feedback for Agent Memory Learning](/202607/24/2607.21106v1-attrimem-attribution-guided-process-feedback-for-agent-memory-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：去中心化多智能体强化学习与消息学习
-5. [Stigmergic Graph Memory: An Environment-Aware Approach for Many-to-Many Multi-Agent Pickup and Delivery](/202607/23/2607.15182v1-stigmergic-graph-memory-an-environment-aware-approach-for-many-to-many-multi-agent-pickup-and-delivery)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：用于多智能体取送货的基于信息素的图记忆机制
-6. [RoboHarness: Memory-Driven Orchestration of Heterogeneous Robot Policies for Long-Horizon Planning](/202607/23/2607.18060v1-roboharness-memory-driven-orchestration-of-heterogeneous-robot-policies-for-long-horizon-planning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：记忆驱动的异构机器人策略编排
+   evidence：归因引导的代理记忆学习过程反馈
+3. [Causal-AgentIR: Self-Evolving Causal Memory for Adaptive Image Restoration Agents](/202607/24/2607.21125v1-causal-agentir-self-evolving-causal-memory-for-adaptive-image-restoration-agents)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：智能体自进化因果记忆
+4. [FedAgentKE: Federated Semantic Knowledge Evolution for Heterogeneous Agents](/202607/24/2607.21361v1-fedagentke-federated-semantic-knowledge-evolution-for-heterogeneous-agents)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向异构智能体的联邦语义知识进化
+5. [MemTools: A Unified Research Framework for Interoperable Agent Memory](/202607/24/2607.21404v1-memtools-a-unified-research-framework-for-interoperable-agent-memory)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向智能体内存互操作性的统一研究框架
+6. [PATS: Policy-Aware Training Scaffolding for Agentic Reinforcement Learning](/202607/24/2607.21419v1-pats-policy-aware-training-scaffolding-for-agentic-reinforcement-learning)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向智能体强化学习的策略感知训练脚手架
+7. [AREX: Towards a Recursively Self-Improving Agent for Deep Research](/202607/24/2607.21461v1-arex-towards-a-recursively-self-improving-agent-for-deep-research)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：用于深度研究的递归自改进智能体
+8. [Compact Latent Coordination for Autonomous Vehicles at Unsignalized Intersections](/202607/24/2607.21488v1-compact-latent-coordination-for-autonomous-vehicles-at-unsignalized-intersections)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向自动驾驶车辆协调的分层多智能体强化学习
+9. [Agentic Context Management: Solving Agent Memory and Cost by Treating Them as Lifecycle and Architecture Problems](/202607/24/2607.21503v1-agentic-context-management-solving-agent-memory-and-cost-by-treating-them-as-lifecycle-and-architecture-problems)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：将代理上下文管理视为生命周期和架构问题
 
 ### 速读区论文标签
-1. [Conservative Query and Adaptive Regularization for Offline RL Under Uncertainty Estimation](/202607/23/2607.19199v1-conservative-query-and-adaptive-regularization-for-offline-rl-under-uncertainty-estimation)  
+1. [Sample-Efficient Learning from Agent Experience](/202607/24/2607.21051v1-sample-efficient-learning-from-agent-experience)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：不确定性估计下带专家偏好查询的离线强化学习
-2. [S3: Stable Subgoal Selection by Constraining Uncertainty of Coarse Dynamics in Hierarchical Reinforcement Learning](/202607/23/2607.19232v1-s3-stable-subgoal-selection-by-constraining-uncertainty-of-coarse-dynamics-in-hierarchical-reinforcement-learning)  
+   evidence：经验蒸馏实现高效智能体学习
+2. [Deep Reinforcement Learning for Adaptive Gain Tuning in Control of Teleoperation Manipulators with Joint Flexibility and Time-Varying Delays](/202607/24/2607.21145v1-deep-reinforcement-learning-for-adaptive-gain-tuning-in-control-of-teleoperation-manipulators-with-joint-flexibility-and-time-varying-delays)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：分层强化学习中的稳定子目标选择
-3. [PRO-LONG: Programmatic Memory Enables Long-Horizon Reasoning](/202607/23/2607.20064v1-pro-long-programmatic-memory-enables-long-horizon-reasoning)  
+   evidence：深度强化学习（TD3）智能体用于遥操作机械臂自适应控制
+3. [Expert Behavior Prior Reinforcement Learning](/202607/24/2607.21302v1-expert-behavior-prior-reinforcement-learning)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：提出使用程序化记忆的最小化上下文管理方法，用于长程推理
-4. [Learning Latency-Aware Orchestration for Multi-Agent Systems](/202607/23/2607.13359v2-learning-latency-aware-orchestration-for-multi-agent-systems)  
+   evidence：使用专家行为先验的强化学习
+4. [Beyond Episodic Evaluation: Memory Architectural Bottlenecks in Sequential Embodied Question Answering](/202607/24/2607.21571v1-beyond-episodic-evaluation-memory-architectural-bottlenecks-in-sequential-embodied-question-answering)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：顺序具身智能体的记忆架构
+5. [Adaptive Multi-Horizon Reinforcement Learning](/202607/24/2607.20656v1-adaptive-multi-horizon-reinforcement-learning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：基于学习的多智能体系统延迟感知编排
-5. [Knowledge-Centric Self-Improvement](/202607/23/2607.19592v1-knowledge-centric-self-improvement)  
+   evidence：自适应时序视野的强化学习决策方法
+6. [From Agent Failures to Text Policies: What Works and What Breaks](/202607/24/2607.20668v1-from-agent-failures-to-text-policies-what-works-and-what-breaks)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：通过知识库的智能体自我进化
-6. [JANUS: Foreseeing Latent Risk for Long-Horizon Agent Safety](/202607/23/2607.19913v1-janus-foreseeing-latent-risk-for-long-horizon-agent-safety)  
+   evidence：从智能体轨迹和人类反馈学习策略
+7. [GRADRAG: Cross-Component Prompt Adaptation for Coordinated Multi-Agent RAG](/202607/24/2607.21324v1-gradrag-cross-component-prompt-adaptation-for-coordinated-multi-agent-rag)  
+   标签：评分：7.0/10、query:agentic-rl
+   evidence：多智能体RAG系统的跨组件提示适应
+8. [SAGE: A Socially-Aware Generative Engine for Heterogeneous Multi-Agent Navigation](/202607/24/2607.16619v2-sage-a-socially-aware-generative-engine-for-heterogeneous-multi-agent-navigation)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：多智能体模拟与共享策略训练用于RL安全预测
-7. [Continuous-Time Reinforcement Learning for $N$-Player Stochastic Differential Games with Exploratory Policies](/202607/23/2607.19928v1-continuous-time-reinforcement-learning-for-n-player-stochastic-differential-games-with-exploratory-policies)  
+   evidence：异构多智能体导航的社会感知生成引擎
+9. [Compositional Semantic Communication for Physical AI: Category Theory Meets Game Theory](/202607/24/2607.18115v1-compositional-semantic-communication-for-physical-ai-category-theory-meets-game-theory)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：N人随机微分博弈的连续时间强化学习
+   evidence：多智能体协调的语义通信框架
+10. [Perspective Latents as an Architectural Condition for Causal Emergence in Active Inference Agents](/202607/24/2607.20708v1-perspective-latents-as-an-architectural-condition-for-causal-emergence-in-active-inference-agents)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：主动推理智能体架构在强化学习中的因果涌现研究
 
 
 <div class="dpr-home-promo-card">
