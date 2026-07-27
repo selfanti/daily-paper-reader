@@ -1,0 +1,1618 @@
+Title: Deconstructing Off-Policy Ratios: Entropy-Scaled Trust Regions for Asynchronous Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2607.22186v1
+
+Published Time: Mon, 27 Jul 2026 00:39:11 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Deconstructing Off-Policy Ratios: Entropy-Scaled Trust Regions for Asynchronous Reinforcement Learning 
+
+Guanqun Zhao 1,5 ∗† , Zijun Xie 2,5 ∗† , Binbin Zheng 3,5 ∗† 
+
+Enlei Gong 5‡, Jiafeng Lu 5, Yehan Yang 4, Aoqi Hu 5, Zeyu Chen 5‡
+
+> 1
+
+Beijing University of Posts and Telecommunications, 2Peking University, 3University of Science and Technology of China 
+
+> 4
+
+Institute of Computing Technology, Chinese Academy of Sciences, 5Baidu Inc. 
+
+Abstract 
+
+Asynchronous reinforcement learning (RL) accelerates large language model (LLM) post-training by overlapping rollout generation with policy optimization, but the resulting stale, off-policy data can destabilize optimization and ultimately cause policy collapse. Existing methods typically retain or discard tokens based solely on the magnitude of their impor-tance ratios, applying the same threshold uniformly across token positions. In this work, we reveal that the natural scale of the importance ratio varies systematically with token en-tropy. Under asynchronous dynamics, this entropy-ratio scal-ing dictates two distinct phenomena: at low entropy, the in-herent train-inference discrepancy is drastically amplified into substantial sampling noise; at high entropy, in-flight weight updates naturally induce pronounced, legitimate exploratory deviations. Consequently, magnitude-only correction inadver-tently admits the amplified noise while strictly masking out the essential exploration triggered by in-flight updates. To address this, we propose the Entropy-Scaled Trust Region (ESTR), which scales each token’s off-policy deviation by its local entropy, requiring no auxiliary forward passes or explicit version-switch detection. Across long-horizon agentic tasks and mathematical reasoning benchmarks, ESTR consistently outperforms existing asynchronous methods and achieves the best train-inference consistency. Compared with synchronous GRPO, ESTR attains comparable accuracy while improving training speed by 2.6×.
+
+1 Introduction 
+
+Reinforcement learning (RL) has become the dominant paradigm for aligning large language models (DeepSeek-AI 2026) and for eliciting long-horizon reasoning (Chen et al. 2025; Yu et al. 2025; Zheng et al. 2025) and agentic behav-ior (GLM-5-Team et al. 2026). To scale RL to long, multi-turn rollouts, modern systems increasingly adopt asynchronous 
+
+training (Sheng et al. 2025; Fu et al. 2026a; Lu et al. 2025; Piché et al. 2025; Hu et al. 2026; Wu et al. 2025; Bai et al. 2026), where trajectory generation and policy optimization are decoupled and run concurrently. This dramatically im-proves throughput (Li et al. 2026a) but breaks the on-policy 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Work done during an internship at Baidu. 
+
+> ‡
+
+Corresponding author. 0 1 2 3 4        
+
+> Token entropy Ht
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> |δt|
+> Both keep (93.8%)
+> Both mask (3.8%)
+> Saved by ESTR (1.2%)
+> Newly masked (1.2%)
+> Fixed: |δ| = 0.15
+> ESTR: |δ| = √ τ(H+ε)
+> Mean |δt|per bin
+
+Figure 1: Entropy and ratio scale. The per-bin mean |δt|
+
+(purple) grows with Ht. A fixed threshold (dashed) admits low-entropy noise (red) and clips high-entropy exploration (blue), whereas our entropy-scaled boundary (solid) sepa-rates them. assumption (Li et al. 2026b): each update consumes rollouts sampled from behavior policies that lag behind and diverge from the target policy being optimized. In long multi-turn rollouts, a single trajectory may even span multiple weight versions. Optimizing against such stale, ill-defined behav-ior policies injects high-variance off-policy gradients that, in the worst case, drive training into irreversible policy col-lapse (Zheng, Zhao, and Chen 2025). Mitigating this instabil-ity without sacrificing the throughput benefits of asynchrony is thus a central challenge for scaling RL on LLMs. Existing stabilization methods fall into three families: im-portance sampling correction, i.e., interval clipping (Li et al. 2026c; Ömer Veysel Çağatan et al. 2026; Fu et al. 2026b; Luo et al. 2026; Xie et al. 2026) and hard masking (Yao et al. 2025; Team et al. 2025; Guo et al. 2026; Zheng, Zhao, and Chen 2025); staleness-mismatch decoupling (Fu et al. 2026a; Guan et al. 2026); and off-policy objective design (Ritter et al. 2026; Yuan et al. 2025). Despite their differences, these methods rest on two implicit premises that both fail in asyn-chronous agentic RL. One is that a token’s trustworthiness can be read from the magnitude of its importance ratio. We find instead that this magnitude is intrinsically governed by token entropy , its natural scale growing with entropy. At con-arXiv:2607.22186v1 [cs.AI] 24 Jul 2026 fident, low-entropy tokens, a near-zero probability amplifies a small train-inference gap into a large ratio that is mere noise rather than genuine drift, whereas at high entropy asyn-chronous in-flight weight updates inject large ratios that carry genuine exploration, which a magnitude threshold wrongly suppresses. The other is that each trajectory comes from a single, well-defined behavior policy. Yet a long multi-turn rollout is produced by a mixture of weight versions diverg-ing from the target to varying degrees, so no single reference behavior policy is even well defined. Motivated by these empirical findings, we propose the Entropy-Scaled Trust Region (ESTR). Specifically, our main contributions are: 
+
+• We establish a fundamental entropy-ratio relation, prov-ing that the importance ratio’s natural scale is governed by token entropy. This reveals that conventional magnitude-only masking fundamentally fails at low entropy, where it erroneously admits amplified sampling noise. 
+
+• We decompose asynchronous staleness to identify an overlooked intra-trajectory version switching mecha-nism. We demonstrate that these in-flight updates trig-ger concurrent surges in token entropy and importance ratios, which constitute genuine exploration that conven-tional methods indiscriminately suppress. 
+
+• We propose the Entropy-Scaled Trust Region (ESTR), a token-level trust region for asynchronous RL whose boundary expands and contracts with each token’s en-tropy, requiring no magnitude bias or behavior-policy reconstruction. Across long-horizon agentic tasks and complex reasoning benchmarks, ESTR consistently sur-passes the strongest asynchronous baseline, reaching 37.3 avg@1 on BrowseComp-Plus versus 34.9 for the best prior method, and matches synchronous GRPO while training 2.6× faster. 
+
+2 Related Work 
+
+To mitigate the instability of asynchronous LLM RL, prior works have explored various stabilization strategies. While these methods perform strongly in standard settings, their effectiveness rests on assumptions that break down under the highly dynamic nature of asynchronous agentic training. A prominent line of work controls variance through 
+
+importance-sampling corrections . One family discards out-of-bounds tokens directly, either by interval clip-ping (Ömer Veysel Çağatan et al. 2026; Fu et al. 2026b; Shen et al. 2026; Li et al. 2026c), which constrains each ra-tio to a fixed interval, or by hard masking (Yao et al. 2025; Team et al. 2025; Guo et al. 2026; Zheng, Zhao, and Chen 2025), which zeroes out the contribution of any token whose ratio exceeds a preset bound. Both rest on the same premise, reading a token’s untrustworthiness off the magnitude of its importance ratio and letting a single global threshold, shared across all positions irrespective of their local uncertainty, decide which tokens are kept. A second family modulates updates through finer-grained stability signals: ESPO (Sheng et al. 2026) regroups sequences according to their entropy before correction, but such regrouping presumes a relatively stable entropy structure across a batch, whereas under asyn-chronous rollouts staleness and in-flight version switches per-turb per-token entropy and make the grouping itself noisy; AEPO (Dong et al. 2025) balances entropy across the tra-jectory, yet requires explicitly locating specific high-entropy positions and the turn-switching points of agentic rollouts, introducing additional overhead; and VCPO (Huang et al. 2026) uses the effective sample size as an aggregated vari-ance signal to dynamically scale updates. Although these methods move beyond raw magnitude, entropy or variance still enters as an external reweighting or grouping heuristic layered on top of a trust region that is treated as position-invariant, leaving the boundary of a valid deviation uniform rather than redefined according to each token’s local state. Another direction is staleness–mismatch decoupling (Fu et al. 2026a; Guan et al. 2026), which approximates the be-havior policy that actually generated each rollout in order to separate genuine policy drift from benign staleness, and correct only the former. This isolation, however, hinges on the existence of a single, well-defined behavior policy for the trajectory—an assumption that does not hold in the asyn-chronous agentic setting. In long multi-turn rollouts, in-flight weight updates synchronize the inference engine to newer parameters mid-generation , so a single trajectory is progres-sively produced by a mixture of weight versions rather than one fixed policy. There is thus no complete, uniform behavior policy to recover for the whole trajectory, and the version that generated any given token must itself be inferred, making the clean separation of drift from staleness difficult to realize. A related direction is off-policy objective design (Ritter et al. 2026; Shen et al. 2026; Luo et al. 2026; Yuan et al. 2025), which redesigns the objective to reuse stale data with-out hard cutoffs, either by softening clipping into a distribu-tional variance penalty or by regressing against a reference policy without importance ratios. Yet the former imposes a batch-level, position-invariant budget that still cannot sepa-rate low-entropy noise from high-entropy exploration, while the latter forgoes importance correction altogether, treating every token uniformly regardless of its off-policy deviation. Across these lines, the common limitation is a boundary of trust that is fixed either by ratio magnitude or at the sequence level, decoupled from the local state of each token. Our work departs from this view. Rather than tuning a global cutoff or reconstructing a behavior policy, ESTR scales the trust region to each token’s local entropy, standardizing each deviation by its own local entropy. This design is grounded in an empirical observation that the natural scale of the importance ratio is tightly coupled with token entropy, the relationship that motivates and underpins the method. 
+
+3 Motivation 
+
+To understand why magnitude-only suppression struggles in asynchronous agentic RL, we analyze the joint distribu-tion of token entropy Ht and the log-importance-ratio |δt|
+
+on real rollouts using Qwen3-30B-A3B on BrowseComp-Plus (Chen et al. 2025). We find that |δt| is inherently coupled 
+
+with token entropy, suggesting that a single global cutoff may not fully accommodate this state-dependent variance. Time 
+
+Sy nchronous RL 
+
+As ynchronous RL        
+
+> Behavior Policy
+> versions
+> Training
+> Sync1 Sync2
+> Rollout
+> Worker
+> Rollout
+> Worker
+> Training
+> Worker
+> Training
+> Worker
+> Sync
+> Sync3 Sync4
+> Training
+> Training Training Training Training
+> Await
+> 1
+> 2
+> 3
+> 1
+> 2
+> 3333
+> 4
+> 5
+> 4
+> 5
+> 66
+> 77
+> 8
+> 4
+> 5
+> 6
+
+...                 
+
+> Blocked by slowest rollout
+> weight-push preemption
+> Training
+> 4
+> 5
+> 6
+> 7
+> 8
+> Sync5
+> Inter-Trajectory Lag Intra-Trajectory Switching
+> Trajectory 3
+> Last Token Version First Token Version Target Policy Version
+> <think> We need to solve the equation 3x -5=16. First, we add........
+> Entropy
+> IS Weight
+> Low High
+> version switch point
+
+Figure 2: Synchronous vs. asynchronous agentic RL. Asynchronous RL removes the idle pipeline bubbles of synchronous RL, at the cost of a single trajectory spanning multiple weight versions μvt . The resulting staleness decomposes into intra-trajectory version switching and inter-trajectory lag , with the former inducing abrupt surges in token entropy and importance ratios at switch points. −0.25         
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> 1.25
+> Token Entropy
+> ±1.0 Std. Dev.
+> Mean
+> Aligned Switch Point
+> −30 −20 −10 010 20 30
+> Aligned Token Offset (Centered at Max Entropy)
+> −0.1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Token  |δ|
+> ±1.0 Std. Dev.
+> Mean
+> Aligned Switch Point
+
+Figure 3: Token entropy H and ratio magnitude |δ| aligned at an intra-trajectory version switch where t = 0 . Both surge synchronously. 
+
+3.1 Ratio Magnitude Relates to Entropy 
+
+Empirically, the magnitude of the ratio is not uniform but grows with token entropy. As shown by the per-bin mean in Figure 1 (purple curve), the average |δt| increases monoton-ically with Ht. We summarize this core relation as follows: 
+
+E[δ2
+
+t ] ∝ Ht. (1) Rather than a constant horizontal line, the bound of valid |δt|
+
+expands as entropy increases. Formal mathematical proofs for this relation are provided in the Appendix. Given that the natural scale of |δt| is governed by entropy, we must exam-ine how the massive deviations observed in asynchronous RL align with this expected scale across different entropy regimes. 
+
+3.2 Dual Phenomena under Asynchronous Dynamics 
+
+As illustrated in Figure 2, unlike synchronous RL, asyn-chronous RL maximizes throughput by eliminating pipeline bubbles. However, this causes in-flight weight updates to sync mid-generation. Let vtgt be the target policy version at the current update, and let vfirst and vlast be the weight versions that generated the first and last tokens of the roll-out, respectively. We formalize this by decomposing the total staleness vtgt − vfirst into two components: 
+
+∆intra ≜ vlast − vfirst , ∆inter ≜ vtgt − vlast . (2) The term ∆intra captures the intra-trajectory version switch ,meaning a single long trajectory spans multiple weight ver-sions. When a version switch occurs mid-trajectory, the newly updated weights evaluate a prefix generated by older weights, causing both Ht and |δt| to spike concurrently at the switch point ( t = 0 ; Figure 3). By Eq. (1), this joint surge factorizes as 
+
+|δt| = σt
+
+pHt, zt ≜ δt
+
+√Ht
+
+, E[z2
+
+t ] ≈ σ2
+
+t , (3) so the spike is carried entirely by the entropy factor √Ht,while the standardized deviation zt stays at scale σt = O(1) ,invariant to it (Appendix). Hence at a switch 
+
+|δt| = σt
+
+pHt > c yet z2
+
+t ≈ σ2
+
+t bounded : (4) a fixed threshold |δt| ≤ c discards these ratios as drift, whereas they are in fact valid exploration within the natu-ral high-entropy envelope. Conversely, the low-entropy region in Figure 1 exhibits massive |δt| values tracing concave arcs. At a confident posi-tion the model reduces to a binary choice between a dominant token ( 1 − q) and a sampled off-mode alternative ( q ≈ 0), so the entropy hugs the binary bound 
+
+Ht ≈ Hbin (q) = −q log q − (1 − q) log(1 − q), (5) independent of vocabulary size. When the off-mode token is sampled, the train-inference mismatch ξ is amplified by the near-zero denominator, and the delta method gives 
+
+E[δ2 
+
+> t
+
+| q] ≈ Var( ξ)
+
+q2 ∝ 1 − qq −−−→ 
+
+> q→0
+
+∞. (6) Since Hbin (q) → 0 as q → 0 while 1−qq diverges, Eq. (5)–(6) jointly produce the concave, entropy-opening arcs (deriva-tion in the Appendix). These outliers are amplified sam-pling noise, not policy drift: fixed-magnitude thresholds ad-mit them, whereas our entropy-scaled rule discards them. 
+
+3.3 An Entropy-Scaled Design Principle 
+
+These observations establish a trust criterion, where the entropy-ratio relation itself dictates the boundary between valid updates and harmful drift . Fluctuations within the natural envelope of their local entropy are genuine explo-ration, whereas outliers exceeding this scale are amplified sampling noise. A fixed-magnitude threshold applies one uniform boundary across the joint distribution, suppressing valid exploration at high entropy while admitting inflated noise at low entropy. This motivates a principled paradigm: 
+
+the trust region should be dynamically scaled by local en-tropy. Enforcing such an entropy-scaled threshold preserves deviations that match their natural scale and better fits the dynamics of asynchronous RL, which we formalize next. 
+
+4 Method 
+
+The preceding analysis established that the natural scale of the importance ratio is dictated by local entropy, and that a trustworthy update criterion must be relative to this scale. We now formalize this principle as the Entropy-Scaled Trust Region (ESTR). At token position t with state st, let μt(· | st) denote the behavior policy that generated token yt, and πθ (· | st) the target policy being optimized. We define the log-importance-ratio δt and the behavior-policy entropy Ht as: 
+
+δt ≜ log πθ (yt | st)
+
+μt(yt | st) , (7) 
+
+Ht ≜ − X
+
+> w∈V
+
+μt(w | st) log μt(w | st). (8) 
+
+4.1 A Second-Order Trust Region 
+
+To construct an entropy-scaled threshold, we must first ex-amine how deviations are constrained. Asynchronous RL estimates the policy gradient for πθ using data sampled by the behavior policy μt. When the two are locally close, the per-token KL divergence admits a second-order expansion (derivation in the Appendix): 
+
+DKL (μt ∥ πθ ) = Ev∼μt
+
+ πθ (v)
+
+μt(v) − 1 − log πθ (v)
+
+μt(v)
+
+
+
+≈ 12 Ev∼μt
+
+δt(v)2 . (9) A trust region therefore bounds the second moment of the log-ratio. The conventional fixed budget δ2 
+
+> t
+
+≤ c implicitly assumes this moment is position-invariant (homoscedastic). The scaling relation of Eq. (1), however, shows that it grows with local entropy: the data are intrinsically heteroscedastic, and a constant budget is mis-scaled at every entropy level. 
+
+4.2 An Entropy-Standardized Budget 
+
+The remedy is to constrain not the raw deviation but the devi-ation measured in units of its own local scale. Let νt denote the position-dependent scale of δ2 
+
+> t
+
+; by Eq. (1), νt ∝ Ht.We define the standardized deviation and impose a uniform budget on it: 
+
+zt ≜ δt
+
+√νt
+
+, z2 
+
+> t
+
+≤ τ, (10) which restores a single, position-invariant trust region across all entropy regimes. Concretely, we instantiate the scale as 
+
+νt ≜ Ht + ϵ, ϵ > 0, (11) where ϵ guards against degenerate near-zero entropy and Ht
+
+is read off the inference-side logits at no extra cost. Modeling 
+
+πθ as a small logit perturbation of μt with per-logit variance 
+
+σ2 
+
+> t
+
+, a first-order expansion gives (Appendix) 
+
+E[δ2 
+
+> t
+
+] = σ2
+
+> t
+
+X
+
+> w∈V
+
+μt(w) 1 − μt(w) ≈ σ2 
+
+> t
+
+Ht, (12) so the standardized deviation carries a position-invariant scale, 
+
+E[z2 
+
+> t
+
+] = E
+
+ δ2
+
+> t
+
+νt
+
+
+
+≈ σ2 
+
+> t
+
+, (13) independent of entropy. The same scale governs the low-entropy regime, whose amplified-noise envelope (1 − q)/q 
+
+(Eq. (6)) diverges as q → 0 yet stays monotonically tied to 
+
+Ht (Appendix). Normalizing by νt = Ht + ϵ thus tightens the budget exactly where this noise dominates, while the bounded Ht keeps the criterion numerically stable. 
+
+4.3 Entropy-Scaled Keep Mask 
+
+Substituting the entropy scale (11) into the standardized trust region (10) yields the entropy-scaled keep rule. Defining the entropy-scaled score 
+
+St ≜ δ2
+
+> t
+
+Ht + ϵ , (14) a token is retained iff it lies within the entropy-dependent boundary: 
+
+St ≤ τ ⇐⇒ |δt| ≤ pτ (Ht + ϵ). (15) The score St measures each token’s deviation relative to the natural scale permitted by its local entropy, while τ controls the acceptance budget. The criterion therefore tightens the boundary where low-entropy noise dominates and widens it where high-entropy deviations reflect exploration, filtering amplified sampling noise without the magnitude bias of a fixed threshold. Proposition 1 (Strict Generalization) The keep rule (15) 
+
+accepts a token inside the entropy-dependent boundary 
+
+bESTR (Ht) ≜ pτ (Ht + ϵ). (16) 
+
+Forcing the scale to be constant, Ht + ϵ ≡ C, collapses this to the fixed threshold |δt| ≤ √τ C of prior methods, which the two boundaries share at the single crossover H⋆ =
+
+C − ϵ. Away from it, bESTR is strictly tighter at low entropy, where large ratios are amplified noise, and strictly wider at high entropy, where they are exploration, contracting to a floor √τ ϵ as Ht → 0 and growing like √τ H t as entropy increases. Proof in the Appendix. 
+
+4.4 The ESTR Objective 
+
+ESTR gates the per-token policy gradient with the entropy-scaled keep mask Mi,t . With group-normalized advantage 
+
+Ai,t , the per-token quantities are 
+
+ri,t = πθ (oi,t | si,t )
+
+μi,t (oi,t ) , δi,t = log ri,t , (17) 
+
+Mi,t = 1[Si,t ≤ τ ] , Si,t = δ2
+
+> i,t
+
+Hi,t + ϵ . (18) Though both act on the same importance ratio, the mask and the PPO clip play orthogonal roles. The clip bounds the step size of trusted tokens, whereas Mi,t enforces the trust region by zeroing out any token that violates the entropy-scaled boundary, preventing severe off-policy deviations from cor-rupting the update. The full objective is 
+
+LESTR (θ) = − Ex∼D , {oi}Gi=1 ∼μ(·| x)
+
+"
+
+1
+
+PGi=1 |oi|
+
+> G
+
+X
+
+> i=1
+> |oi|
+
+X
+
+> t=1
+
+Mi,t ·
+
+min  ri,t Ai,t , clip( ri,t , 1 − ϵlow , 1 + ϵhigh ) Ai,t 
+
+#
+
+. (19) Since μi,t is fixed, ∇θ ri,t = ri,t ∇θ log πθ and the hard mask is a stop-gradient gate, yielding 
+
+∇θ LESTR = − E
+
+"
+
+1
+
+P 
+
+> i
+
+|oi|
+
+X
+
+> i,t
+
+Mi,t Ci,t ri,t Ai,t 
+
+× ∇ θ log πθ (oi,t | si,t )
+
+#
+
+, (20) where Ci,t ∈ { 0, 1} is the clip indicator (Appendix). A masked token ( Mi,t = 0 ) is dropped from the loss entirely, whereas a clipped token ( Ci,t = 0 ) still enters the loss but with zero gradient. As a diagnostic of how aggressively the trust region discards tokens, we track the empirical masked fraction 
+
+ρmask = 1 − 1
+
+P 
+
+> i
+
+|oi|
+
+X
+
+> i,t
+
+Mi,t . (21) In summary, ESTR is an entropy-scaled trust region for asynchronous RL. By scaling off-policy deviations against the local entropy scale, it filters amplified sampling noise at low entropy while preserving the genuine exploration in-jected by intra-trajectory version switches, precisely the sig-nal that fixed-magnitude thresholds discard, securing training stability at the full throughput of asynchronous optimization. 
+
+5 Experiment 
+
+5.1 Setup 
+
+Tasks. We evaluate ESTR on two task families. Long-horizon multi-turn tool use produces long rollouts that in-terleave reasoning with external tool calls: (i) agentic deep search on BrowseComp-Plus (Chen et al. 2025) with Qwen3-30B-A3B (Team 2025); and (ii) tool-integrated math on multi-turn GSM8K (Cobbe et al. 2021) under a binary exact-match reward. Mathematical reasoning tests general-ization beyond the long-horizon regime: we train on DAPO-Math (Yu et al. 2025) with Qwen2.5-7B (Team 2024) and evaluate on AIME 2024 (Zhang and Math-AI 2024), 2025 (Zhang and Math-AI 2025), and 2026 (Zhang and Math-AI 2026). 
+
+Baselines. All methods share the same experimental con-figuration, differing only in the token-level acceptance rule; all masking baselines act on the same off-policy ratio πθ /μ 
+
+as ESTR. Sync is synchronous GRPO (Guo et al. 2025); 
+
+Async is vanilla asynchronous training with no correction; 
+
+IcePop (Team et al. 2025) keeps a token when its ratio lies within a fixed interval; and KPop (Guo et al. 2026) keeps a token when the bidirectional binary KL between behavior and target token probabilities stays below a threshold. 
+
+Implementation. All experiments are implemented in the verl framework (Sheng et al. 2025) on H800 GPUs (8 per node), using disaggregated rollout and training pools in the asynchronous setting. The synchronous baseline colocates generation and training on the same total hardware, so all efficiency comparisons are made under equal resource bud-gets. Full hyperparameters, per-task resource splits, training configurations, and hyperparameter sensitivity studies are provided in the appendix. 
+
+5.2 Long-Horizon Multi-Turn Tool Use 
+
+Using the staleness definition from Eq. (2), we evaluate two long-horizon settings: agentic search on BrowseComp-Plus (∆intra =5 , ∆inter =1 ), and tool-integrated math on GSM8K (∆intra =5 , ∆inter =13 ). In both settings, ESTR significantly outperforms all other asynchronous baselines. By scaling the trust region to local entropy, ESTR successfully stabilizes training while preserving the legitimate exploration naturally induced by intra-trajectory version switches. On BrowseComp-Plus, ESTR reaches 37.3 avg@1, sur-passing all asynchronous baselines by a clear margin, as detailed in Table 1 (Async 28.9, IcePop 32.5, KPop 34.9). The underlying training dynamics provide further insights. Figure 5a illustrates that ESTR maintains a steady increase in policy entropy, ensuring progressive exploration. Con-currently, Figure 5b demonstrates that ESTR achieves the Method Qwen3-30B-A3B Qwen2.5-7B BrowseComp-Plus GSM8K AIME24 AIME25 AIME26 AIME Avg. avg@1 avg@4 avg@4 pass@4 avg@4 pass@4 avg@4 pass@4 avg@4 pass@4 GRPO(Sync) 38.55 96.07 19.84 27.73 16.67 27.20 16.12 28.12 17.54 27.68 GRPO(Async) 28.91 60.72 14.17 25.69 14.16 22.57 12.50 20.75 13.61 23.00 ICEPop 32.53 65.01 17.52 27.42 15.78 25.45 14.16 22.01 15.82 24.96 KPop 34.94 70.51 18.74 26.61 15.12 25.08 14.79 24.73 16.22 25.47 
+
+ESTR (Ours) 37.34 95.69 20.03 31.78 15.64 26.23 15.46 27.14 17.04 28.38 
+
+Table 1: Main results. ESTR consistently outperforms all asynchronous baselines across agentic search, multi-turn math, and AIME, matching the synchronous GRPO. 0 50 100 150 200 
+
+> Training step
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> Validation accuracy (mean@1)
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+Figure 4: Validation accuracy (avg@1) on BrowseComp-Plus across asynchronous methods. best train-inference consistency by effectively controlling the rollout–target KL divergence. As a result, its validation accu-racy consistently outperforms the other asynchronous meth-ods throughout the training process, as depicted in Figure 4. Additional training dynamics for all tasks are provided in the Appendix. Under the more aggressive GSM8K configuration, Fig-ure 6 shows that IcePop and KPop destabilize, with their training scores dropping irreversibly within a few hundred steps, whereas ESTR trains stably and achieves the high-est performance. As reported in Table 1, ESTR reaches 95.7 on GSM8K, essentially matching synchronous GRPO, while the asynchronous baselines collapse to 60–71. This shared failure stems from the baselines’ fundamental design. Magnitude-only correction discards the high-|δt| tokens that carry essential exploration at high entropy, so these methods degrade and eventually fail as the off-policy gap expands. ESTR instead evaluates each token relative to its entropy scale, remaining well-calibrated across both settings. 
+
+5.3 Mathematical Reasoning 
+
+Figure 7 shows training rewards on DAPO-Math with Qwen2.5-7B ( ∆intra =8 , ∆inter =10 ). Naïve asynchronous training collapses irreversibly early in training; IcePop and KPop avoid collapse but plateau at a lower reward; ESTR improves throughout training and attains the highest final re-0 50 100 150 200 
+
+> Training step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Policy entropy
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+(a) Policy entropy 0 50 100 150 200  
+
+> Training step
+> 3.5
+> 4.0
+> 4.5
+> 5.0
+> 5.5
+> KL ( K3, ×10 −3 )
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+(b) Rollout–target KL 
+
+Figure 5: BCP training dynamics (Qwen3-30B-A3B): ESTR sustains a steady, stable policy entropy and achieves the best train-inference consistency (lowest rollout–target KL) among all asynchronous methods. ward. Table 1 reports downstream accuracy on AIME 2024– 2026: ESTR reaches an avg@4 of 17 .04 , closely approaching the synchronous baseline of 17 .54 despite the aggressive stal-eness. Furthermore, it achieves the highest pass@4 of 28 .38 
+
+compared to 27 .68 for the synchronous baseline, indicating that the preserved high-entropy exploration translates into broader solution coverage rather than mere stability. 
+
+Mask behavior and variance control. Figure 8 examines 
+
+how each keep rule attains its stability. As shown in the left panel of Figure 8, ESTR attains the lowest masked fraction 
+
+ρmask (Eq. (21)), consistently discarding the fewest tokens— roughly an order of magnitude below the fixed-threshold baselines. Despite sacrificing this minimal amount of to-kens, it successfully maintains the lowest and most stable IS-ratio deviation throughout training, as illustrated in the right panel of Figure 8. In contrast, IcePop’s deviation drifts steadily upward in late training even though its ρmask is sub-stantially higher. By achieving superior training stability at the lowest token cost, ESTR demonstrates that its entropy-scaled boundary removes precisely the harmful, noise-driven outliers rather than indiscriminately truncating high-ratio ex-ploration. This directly instantiates the trust-region argument of Eq. (9): bounding the standardized deviation is sufficient to keep the second moment of the log-ratio in check. 
+
+Robustness to each staleness component. Using the de-composition of Eq. (2), we stress each staleness source in isolation. The left panel of Figure 9 presents a sweep 0 100 200 300 
+
+Training step 
+
+0.850 
+
+0.875 
+
+0.900 
+
+0.925 
+
+0.950 
+
+0.975 
+
+1.000 
+
+> Training rewards
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+Figure 6: Training score on multi-turn GSM8K (Qwen2.5-7B). The asynchronous baselines collapse within a few hun-dred steps, whereas ESTR trains stably. 0 200 400 600 800 
+
+Training step 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+> Training rewards
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+Figure 7: Training rewards on DAPO-Math (Qwen2.5-7B, 
+
+∆intra =8 , ∆inter =10 ). Vanilla GRPO collapses irreversibly; IcePop and KPop plateau; ESTR improves throughout and attains the highest reward. over the intra-trajectory staleness ∆intra ∈ { 1, 5, 7, 9} with 
+
+∆inter =1 , while the right panel displays the inter-trajectory staleness ∆inter ∈ { 1, 5, 15 , 20 , 30 } with ∆intra =1 . Under these stress tests, no configuration collapses. Instead, rewards degrade gracefully and monotonically as staleness grows, confirming that the entropy-scaled trust region absorbs both mid-trajectory version switches and stale off-policy batches without requiring any staleness-specific tuning. 
+
+Method Throughput s/step Speedup GRPO(Sync) 82.56 1356.47 1.0×
+
+ESTR 214.38 514.84 2.6×
+
+Table 2: Training efficiency on DAPO-Math. Throughput is in tokens/s per GPU; s/step is per-step wall-clock time; speedup is relative to synchronous GRPO. 
+
+5.4 Training Efficiency 
+
+Table 2 quantifies the throughput benefit that motivates asyn-chronous training in the first place, comparing ESTR against the synchronous baseline on identical hardware and paral-0 200 400 600 800     
+
+> Training step
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> Masked fraction  ρmask  (×10 −4 ) ESTR
+> ICEPop
+> KPop 0200 400 600 800
+> Training step
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> IS ratio std ( ×10 −2 )
+> ESTR
+> ICEPop
+> KPop
+
+Figure 8: Mask behavior on DAPO-Math. Left: masked frac-tion ρmask ; right: IS-ratio standard deviation. ESTR attains the lowest ρmask yet keeps the lowest, most stable IS-ratio deviation, targeting harmful noise rather than exploration. 0 200 400 600 800              
+
+> Training step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Training rewards
+> Sync
+> Δintra = 1
+> Δintra = 5
+> Δintra = 7
+> Δintra = 9 0200 400 600 800
+> Training step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Training rewards
+> Sync
+> Δinter = 1
+> Δinter = 5
+> Δinter = 15
+> Δinter = 20
+> Δinter = 30
+
+Figure 9: Staleness sweeps on DAPO-Math. Left: intra-trajectory staleness ∆intra ∈ {1, 5, 7, 9} (∆inter =1 ). Right: inter-trajectory staleness ∆inter ∈ { 1, 5, 15 , 20 , 30 }
+
+(∆intra =1 ). lelism. By decoupling generation from parameter updates, ESTR lifts rollout throughput by 2.6× and shortens the per-step wall-clock time by 62% . Crucially, this speedup comes at no accuracy cost: as shown in Table 1, ESTR matches the synchronous run on avg@4 and surpasses it on pass@4. The keep rule itself adds no measurable overhead—one entropy read per token—so the asynchronous speedup is realized essentially for free. 
+
+6 Conclusion 
+
+We introduce the Entropy-Scaled Trust Region (ESTR) to address the instability of asynchronous LLM reinforcement learning. By demonstrating that off-policy deviations scale intrinsically with token entropy, ESTR replaces conven-tional fixed-magnitude thresholds with an entropy-scaled trust region. This formulation systematically filters low-entropy noise while preserving high-entropy exploration, naturally absorbing the perturbations of intra-trajectory ver-sion switches without auxiliary overhead. Consequently, ESTR achieves synchronous-level accuracy while retaining the full throughput advantages of asynchronous optimiza-tion. Future work will explore extending this framework to tackle problem-solving in even longer-horizon agentic tasks under extreme asynchronous regimes. 
+
+References 
+
+Bai, Y.; Tong, X.; Wang, J.; Liu, H.; Pan, L.; Li, J.; Wang, Z.; HAO, J.; Yuan, M.; and Wu, F. 2026. D-ARL: A Distribution-Matched Asynchronous Reinforcement Learning Framework for Language Reasoning. Chen, Z.; Ma, X.; Zhuang, S.; Nie, P.; Zou, K.; Liu, A.; Green, J.; Patel, K.; Meng, R.; Su, M.; Sharifymoghaddam, S.; Li, Y.; Hong, H.; Shi, X.; Liu, X.; Thakur, N.; Zhang, C.; Gao, L.; Chen, W.; and Lin, J. 2025. BrowseComp-Plus: A More Fair and Transparent Evaluation Benchmark of Deep-Research Agent. arXiv:2508.06600. Cobbe, K.; Kosaraju, V.; Bavarian, M.; Chen, M.; Jun, H.; Kaiser, L.; Plappert, M.; Tworek, J.; Hilton, J.; Nakano, R.; Hesse, C.; and Schulman, J. 2021. Training Verifiers to Solve Math Word Problems. arXiv preprint arXiv:2110.14168 .DeepSeek-AI. 2026. DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence. Dong, G.; Bao, L.; Wang, Z.; Zhao, K.; Li, X.; Jin, J.; Yang, J.; Mao, H.; Zhang, F.; Gai, K.; Zhou, G.; Zhu, Y.; Wen, J.-R.; and Dou, Z. 2025. Agentic Entropy-Balanced Policy Optimization. arXiv:2510.14545. Fu, W.; Gao, J.; Shen, X.; Zhu, C.; Mei, Z.; He, C.; Xu, S.; Wei, G.; Mei, J.; Wang, J.; Yang, T.; Yuan, B.; and Wu, Y. 2026a. AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning. arXiv:2505.24298. Fu, X.; Lin, J.; Fang, Y.; Hu, C.; Qin, C.; Shao, Z.; Zheng, B.; Pan, L.; and Zeng, K. 2026b. From log π to π: Taming Divergence in Soft Clipping via Bilateral Decoupled Decay of Probability Gradient Weight. arXiv:2603.14389. GLM-5-Team; :; Zeng, A.; Lv, X.; Hou, Z.; Du, Z.; Zheng, Q.; Chen, B.; Yin, D.; Ge, C.; Huang, C.; Xie, C.; Zhu, C.; Yin, C.; Wang, C.; Pan, G.; Zeng, H.; Zhang, H.; Wang, H.; Chen, H.; Zhang, J.; Jiao, J.; Guo, J.; Wang, J.; Du, J.; Wu, J.; Wang, K.; Li, L.; Fan, L.; Zhong, L.; Liu, M.; Zhao, M.; Du, P.; Dong, Q.; Lu, R.; Shuang-Li; Cao, S.; Liu, S.; Jiang, T.; Chen, X.; Zhang, X.; Huang, X.; Dong, X.; Xu, Y.; Wei, Y.; An, Y.; Niu, Y.; Zhu, Y.; Wen, Y.; Cen, Y.; Bai, Y.; Qiao, Z.; Wang, Z.; Wang, Z.; Zhu, Z.; Liu, Z.; Li, Z.; Wang, B.; Wen, B.; Huang, C.; Cai, C.; Yu, C.; Li, C.; Hu, C.; Zhang, C.; Zhang, D.; Lin, D.; Yang, D.; Wang, D.; Ai, D.; Zhu, E.; Yi, F.; Chen, F.; Wen, G.; Sun, H.; Zhao, H.; Hu, H.; Zhang, H.; Liu, H.; Zhang, H.; Peng, H.; Tai, H.; Zhang, H.; Liu, H.; Wang, H.; Yan, H.; Ge, H.; Liu, H.; Chu, H.; Zhao, J.; Wang, J.; Zhao, J.; Ren, J.; Wang, J.; Zhang, J.; Gui, J.; Zhao, J.; Li, J.; An, J.; Li, J.; Yuan, J.; Du, J.; Liu, J.; Zhi, J.; Duan, J.; Zhou, K.; Wei, K.; Wang, K.; Luo, K.; Zhang, L.; Sha, L.; Xu, L.; Wu, L.; Ding, L.; Chen, L.; Li, M.; Lin, N.; Ta, P.; Zou, Q.; Song, R.; Yang, R.; Tu, S.; Yang, S.; Wu, S.; Zhang, S.; Li, S.; Li, S.; Fan, S.; Qin, W.; Tian, W.; Zhang, W.; Yu, W.; Liang, W.; Kuang, X.; Cheng, X.; Li, X.; Yan, X.; Hu, X.; Ling, X.; Fan, X.; Xia, X.; Zhang, X.; Zhang, X.; Pan, X.; Zou, X.; Zhang, X.; Liu, Y.; Wu, Y.; Li, Y.; Wang, Y.; Zhu, Y.; Tan, Y.; Zhou, Y.; Pan, Y.; Zhang, Y.; Su, Y.; Geng, Y.; Yan, Y.; Tan, Y.; Bi, Y.; Shen, Y.; Yang, Y.; Li, Y.; Liu, Y.; Wang, Y.; Li, Y.; Wu, Y.; Zhang, Y.; Duan, Y.; Zhang, Y.; Liu, Z.; Jiang, Z.; Yan, Z.; Zhang, Z.; Wei, Z.; Chen, Z.; Feng, Z.; Yao, Z.; Chai, Z.; Wang, Z.; Zhang, Z.; Xu, B.; Huang, M.; Wang, H.; Li, J.; Dong, Y.; and Tang, J. 2026. GLM-5: from Vibe Coding to Agentic Engineering. arXiv:2602.15763. Guan, Z.; Guo, Y.; Sun, H.; Huang, W.; Di, S.; Wu, L.; Wu, X. J.; and Zhao, H. 2026. Missing Old Logits in Asyn-chronous Agentic RL: Semantic Mismatch and Repair Meth-ods for Off-Policy Correction. arXiv:2605.12070. Guo, D.; Yang, D.; Zhang, H.; Song, J.; Wang, P.; Zhu, Q.; Xu, R.; Zhang, R.; Ma, S.; Bi, X.; Zhang, X.; Yu, X.; Wu, Y.; Wu, Z. F.; Gou, Z.; Shao, Z.; Li, Z.; Gao, Z.; Liu, A.; Xue, B.; Wang, B.; Wu, B.; Feng, B.; Lu, C.; Zhao, C.; Deng, C.; Ruan, C.; Dai, D.; Chen, D.; Ji, D.; Li, E.; Lin, F.; Dai, F.; Luo, F.; Hao, G.; Chen, G.; Li, G.; Zhang, H.; Xu, H.; Ding, H.; Gao, H.; Qu, H.; Li, H.; Guo, J.; Li, J.; Chen, J.; Yuan, J.; Tu, J.; Qiu, J.; Li, J.; Cai, J. L.; Ni, J.; Liang, J.; Chen, J.; Dong, K.; Hu, K.; You, K.; Gao, K.; Guan, K.; Huang, K.; Yu, K.; Wang, L.; Zhang, L.; Zhao, L.; Wang, L.; Zhang, L.; Xu, L.; Xia, L.; Zhang, M.; Zhang, M.; Tang, M.; Zhou, M.; Li, M.; Wang, M.; Li, M.; Tian, N.; Huang, P.; Zhang, P.; Wang, Q.; Chen, Q.; Du, Q.; Ge, R.; Zhang, R.; Pan, R.; Wang, R.; Chen, R. J.; Jin, R. L.; Chen, R.; Lu, S.; Zhou, S.; Chen, S.; Ye, S.; Wang, S.; Yu, S.; Zhou, S.; Pan, S.; Li, S. S.; Zhou, S.; Wu, S.; Yun, T.; Pei, T.; Sun, T.; Wang, T.; Zeng, W.; Liu, W.; Liang, W.; Gao, W.; Yu, W.; Zhang, W.; Xiao, W. L.; An, W.; Liu, X.; Wang, X.; Chen, X.; Nie, X.; Cheng, X.; Liu, X.; Xie, X.; Liu, X.; Yang, X.; Li, X.; Su, X.; Lin, X.; Li, X. Q.; Jin, X.; Shen, X.; Chen, X.; Sun, X.; Wang, X.; Song, X.; Zhou, X.; Wang, X.; Shan, X.; Li, Y. K.; Wang, Y. Q.; Wei, Y. X.; Zhang, Y.; Xu, Y.; Li, Y.; Zhao, Y.; Sun, Y.; Wang, Y.; Yu, Y.; Zhang, Y.; Shi, Y.; Xiong, Y.; He, Y.; Piao, Y.; Wang, Y.; Tan, Y.; Ma, Y.; Liu, Y.; Guo, Y.; Ou, Y.; Wang, Y.; Gong, Y.; Zou, Y.; He, Y.; Xiong, Y.; Luo, Y.; You, Y.; Liu, Y.; Zhou, Y.; Zhu, Y. X.; Huang, Y.; Li, Y.; Zheng, Y.; Zhu, Y.; Ma, Y.; Tang, Y.; Zha, Y.; Yan, Y.; Ren, Z. Z.; Ren, Z.; Sha, Z.; Fu, Z.; Xu, Z.; Xie, Z.; Zhang, Z.; Hao, Z.; Ma, Z.; Yan, Z.; Wu, Z.; Gu, Z.; Zhu, Z.; Liu, Z.; Li, Z.; Xie, Z.; Song, Z.; Pan, Z.; Huang, Z.; Xu, Z.; Zhang, Z.; and Zhang, Z. 2025. DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. Nature , 645(8081): 633–638. Guo, J.; Sun, Y.; Huang, Z.; Wang, Z.; Wen, Z.; Zhang, Z.; Zhou, J.; and Kok, S. 2026. KPop: Taming Train-ing–Inference Mismatch in Reinforcement Learning with Adaptive Masking Regions. Hu, T.; Liu, X.; Xiao, Y.; Zheng, Y.; Huang, X.; Ding, J.; Zhang, Y.; Liang, T.; Zang, H.; Chen, Q.; Sun, Y.; Shi, W.; Zhang, C.; Wang, W.; Gu, Q.; Sun, Y.; Xie, Y.; and Cai, X. 2026. DORA: A Scalable Asynchronous Rein-forcement Learning System for Language Model Training. arXiv:2604.26256. Huang, L. J.; Zhang, Z.; Hu, Q.; Yang, S.; and Han, S. 2026. Stable Asynchrony: Variance-Controlled Off-Policy RL for LLMs. arXiv:2602.17616. Li, H.; Lin, S.; Fu, F.; Zhou, Y.; Ji, X.; Zhao, Y.; Wang, L.; Jiang, J.; and Cui, B. 2026a. Unleashing Efficient Asyn-chronous RL Post-Training via Staleness-Constrained Roll-out Coordination. arXiv:2601.12784. Li, Y.; Liu, J.; Xu, J.; Tong, Y.; Li, Z.; Liu, Q.; and Wang, B. 2026b. Trust Region Masking for Long-Horizon LLM Reinforcement Learning. arXiv:2512.23075. Li, Y.; Wang, B.; Gao, Y.; Yao, Y.; Wang, X.; Yin, Z.; and Qiu, X. 2026c. BandPO: Bridging Trust Regions and Ratio Clipping via Probability-Aware Bounds for LLM Reinforce-ment Learning. arXiv:2603.04918. Lu, H.; Liu, Z.; Xiong, S.; He, Y.; Gao, W.; Wu, Y.; Wang, W.; Liu, J.; Li, Y.; Zhao, H.; Huang, J.; Yang, S.; Li, X.; Luo, Y.; Liu, Z.; Pan, L.; Yan, J.; Wang, W.; Su, W.; Wang, J.; Qu, L.; and Zheng, B. 2025. Part II: ROLL Flash – Accelerating RLVR and Agentic Training with Asynchrony. arXiv:2510.11345. Luo, Y.; Han, S.; Hu, Y.; Li, D.; and Hao, J. 2026. Ratio-Variance Regularized Policy Optimization for Efficient LLM Fine-tuning. arXiv:2601.03320. Piché, A.; Kamalloo, E.; Pardinas, R.; Chen, X.; and Bahdanau, D. 2025. PipelineRL: Faster On-policy Re-inforcement Learning for Long Sequence Generation. arXiv:2509.19128. Ritter, D.; Oertell, O.; Guo, B.; Chang, J.; Brantley, K.; and Sun, W. 2026. LLMs Can Learn to Reason Via Off-Policy RL. arXiv:2602.19362. Shen, G.; Zhao, C.; Cheng, X.; Huang, L.; and Yu, X. 2026. VESPO: Variational Sequence-Level Soft Policy Optimiza-tion for Stable Off-Policy LLM Training. arXiv:2602.10693. Sheng, G.; Zhang, C.; Ye, Z.; Wu, X.; Zhang, W.; Zhang, R.; Peng, Y.; Lin, H.; and Wu, C. 2025. HybridFlow: A Flexible and Efficient RLHF Framework. In Proceedings of the Twentieth European Conference on Computer Systems ,EuroSys ’25, 1279–1297. ACM. Sheng, Y.; Huang, Y.; Liu, S.; Zeng, A.; and Zhang, H. 2026. ESPO: Entropy Importance Sampling Policy Optimization. arXiv:2512.00499. Team, L.; Shen, A.; Li, B.; Hu, B.; Jing, B.; Chen, C.; Huang, C.; Zhang, C.; Yang, C.; Lin, C.; Wen, C.; Li, C.; Zhao, D.; Yuan, D.; You, D.; Mao, F.; Meng, F.; Xu, F.; Li, G.; Wang, G.; Dai, H.; Zheng, H.; Liu, H.; Guo, J.; Liu, J.; Liu, J.; Fu, J.; Shi, J.; Wang, J.; Lai, J.; Yang, J.; Mei, J.; Zhou, J.; Zhao, J.; Zhao, J.; Xu, K.; Su, L.; Chen, L.; Tang, L.; Jiang, L.; Fu, L.; Xu, L.; Shi, L.; Liao, L.; Zheng, L.; Li, M.; Chen, M.; Zuo, Q.; Cheng, Q.; Cao, Q.; Shi, Q.; Guo, Q.; Zhu, S.; Wang, S.; Zheng, S.; Li, S.; Gu, S.; Chen, S.; Wu, T.; Zhang, T.; Zhang, T.; Zhou, T.; Bie, T.; Yang, T.; Hong, W.; Ren, W.; Chen, W.; Yu, W.; Zheng, W.; Wang, X.; Yan, X.; Wan, X.; Zhao, X.; Kong, X.; Tang, X.; Han, X.; Wang, X.; Yang, X.; Hu, X.; Zhang, Y.; Sun, Y.; Shan, Y.; Wang, Y.; Xu, Y.; Liu, Y.; Guo, Y.; Wang, Y.; Yan, Y.; Wang, Y.; Guo, Y.; Li, Z.; Xu, Z.; Li, Z.; Zhang, Z.; Gui, Z.; Pan, Z.; Huang, Z.; Lan, Z.; Ding, Z.; Zhang, Z.; Li, Z.; Liu, Z.; Wang, Z.; and Wen, Z. 2025. Every Step Evolves: Scaling Reinforcement Learning for Trillion-Scale Thinking Model. arXiv:2510.18855. Team, Q. 2024. Qwen2.5: A Party of Foundation Models. Team, Q. 2025. Qwen3 Technical Report. arXiv:2505.09388. Wu, B.; Wang, S.; Tang, Y.; Ding, J.; Helenowski, E.; Tan, L.; Xu, T.; Gowda, T.; Chen, Z.; Zhu, C.; Tang, X.; Qian, Y.; Zhu, B.; and Hou, R. 2025. LlamaRL: A Distributed Asyn-chronous Reinforcement Learning Framework for Efficient Large-scale LLM Training. arXiv:2505.24034. Xie, Z.; You, Y.; Li, Y.; Gong, E.; Chen, Z.; Chen, Q.; Cheng, Y.; Jiang, P.; and Mu, Y. 2026. ACPO: Adaptive Credit Policy Optimization via Fine-Grained Surrogate En-tropy. arXiv:2607.03126. Yao, F.; Liu, L.; Zhang, D.; Dong, C.; Shang, J.; and Gao, J. 2025. Your Efficient RL Framework Secretly Brings You Off-Policy RL Training. Yu, Q.; Zhang, Z.; Zhu, R.; Yuan, Y.; Zuo, X.; Yue, Y.; Dai, W.; Fan, T.; Liu, G.; Liu, L.; Liu, X.; Lin, H.; Lin, Z.; Ma, B.; Sheng, G.; Tong, Y.; Zhang, C.; Zhang, M.; Zhang, W.; Zhu, H.; Zhu, J.; Chen, J.; Chen, J.; Wang, C.; Yu, H.; Song, Y.; Wei, X.; Zhou, H.; Liu, J.; Ma, W.-Y.; Zhang, Y.-Q.; Yan, L.; Qiao, M.; Wu, Y.; and Wang, M. 2025. DAPO: An Open-Source LLM Reinforcement Learning System at Scale. arXiv:2503.14476. Yuan, Y.; Chen, F.; Jia, Z.; Rakhlin, A.; and Xie, T. 2025. Trajectory Bellman Residual Minimization: A Simple Value-Based Method for LLM Reasoning. arXiv:2505.15311. Zhang, Y.; and Math-AI, T. 2024. American Invitational Mathematics Examination (AIME) 2024. Zhang, Y.; and Math-AI, T. 2025. American Invitational Mathematics Examination (AIME) 2025. Zhang, Y.; and Math-AI, T. 2026. American Invitational Mathematics Examination (AIME) 2026. Zheng, C.; Liu, S.; Li, M.; Chen, X.-H.; Yu, B.; Gao, C.; Dang, K.; Liu, Y.; Men, R.; Yang, A.; Zhou, J.; and Lin, J. 2025. Group Sequence Policy Optimization. arXiv:2507.18071. Zheng, H.; Zhao, J.; and Chen, B. 2025. Prosperity before Collapse: How Far Can Off-Policy RL Reach with Stale Data on LLMs? arXiv:2510.01161. Ömer Veysel Çağatan; Akgün, B.; Şahin, G. G.; and Zhao, X. 2026. Clipping-Free Policy Optimization for Large Lan-guage Models. arXiv:2601.22801. A Proof of the Entropy–Ratio Scaling Law 
+
+The Motivation section of the main text establishes the em-pirical scaling law E[δ2 
+
+> t
+
+] ∝ Ht (Eq. (1) of the main text). We now derive it analytically by modeling asynchronous off-policy deviation as a logit perturbation. 
+
+Setup and notation. At step t with state st, let V be the vo-cabulary. Let ρ = ( ρw)w∈V be the inference-side (behavior) distribution used during rollout, with logits z; that is, 
+
+ρw = ezw
+
+P 
+
+> v∈V
+
+ezv , Ht ≜ − X
+
+> w∈V
+
+ρw log ρw, (22) where Ht is the Shannon entropy. The token y is sampled from ρ. We model the training-side (target) policy as a logit perturbation of the inference distribution: 
+
+πθ (w) = ezw +ηw
+
+P 
+
+> v∈V
+
+ezv +ηv , E[ηw] = 0 , Var( ηw) = σ2 
+
+> t
+
+,
+
+(23) where the ηw are mutually independent across the vocabulary and σ2 
+
+> t
+
+measures the local off-policy perturbation strength in-duced by asynchronous staleness. Define the log-importance-ratio 
+
+δ(y) ≜ log πθ (y)
+
+ρ(y) , (24) let 1[·] denote the indicator function, and write 
+
+LSE( x) ≜ log X
+
+> w∈V
+
+exw . (25) 
+
+Proposition 2 (Entropy–ratio scaling) Under the first-order (small-η) approximation of (23) ,
+
+Ey∼ρ
+
+δ(y)2 = σ2
+
+> t
+
+X
+
+> w∈V
+
+ρw(1 − ρw), (26) 
+
+and, applying the pointwise approximation 1 − ρw ≈− log ρw, which is accurate for concentrated distributions, 
+
+Ey∼ρ
+
+δ(y)2 ≈ σ2 
+
+> t
+
+Ht. (27) 
+
+Proof. Taking logarithms of 
+
+ρ(y) = ezy
+
+P 
+
+> v
+
+ezv , πθ (y) = ezy +ηy
+
+P 
+
+> v
+
+ezv +ηv , (28) and subtracting (the zy terms cancel) gives 
+
+δ(y) = ηy − LSE( z + η) − LSE( z). (29) Since ∂ LSE( z)/∂z w = ρw, a first-order expansion at η = 0 
+
+yields 
+
+LSE( z + η) ≈ LSE( z) + X
+
+> w
+
+ρwηw. (30) Substituting into (29), 
+
+δ(y) ≈ ηy − X
+
+> w
+
+ρwηw = X
+
+> w
+
+ 1[w = y] − ρw
+
+ηw. (31) Because E[ηw] = 0 , we have E[δ(y)] = 0 ; in particular, E[δ2]
+
+coincides with Var( δ) to this order. By the independence of the ηw and Var( ηw) = σ2 
+
+> t
+
+,
+
+Eδ(y)2 | y = σ2
+
+> t
+
+X
+
+> w
+
+ 1[w = y] − ρw
+
+2
+
+= σ2
+
+> t
+
+
+
+1 − 2ρy + X
+
+> w
+
+ρ2
+
+> w
+
+
+
+. (32) Averaging over the sampled token y ∼ ρ, and using P 
+
+> y
+
+ρy =1 and P 
+
+> y
+
+ρy · ρy = P 
+
+> w
+
+ρ2
+
+> w
+
+,
+
+Ey∼ρ
+
+δ(y)2 = σ2
+
+> t
+
+
+
+1 − 2 X
+
+> w
+
+ρ2 
+
+> w
+
++ X
+
+> w
+
+ρ2
+
+> w
+
+
+
+= σ2
+
+> t
+
+
+
+1 − X
+
+> w
+
+ρ2
+
+> w
+
+
+
+= σ2
+
+> t
+
+X
+
+> w
+
+ρw(1 − ρw),
+
+(33) which proves (26). Applying 1 − ρw ≈ − log ρw term by term gives 
+
+X
+
+> w
+
+ρw(1 − ρw) ≈ − X
+
+> w
+
+ρw log ρw = Ht, (34) establishing (27). 
+
+Switch-point invariance of the standardized deviation. 
+
+The scaling law of Proposition 2 also explains why an intra-trajectory version switch, which inflates both Ht and |δt|,does not destabilize the entropy-scaled criterion. At a switch the behavior policy μt (old weights) and the target πθ (new weights) differ by a logit perturbation of per-logit variance 
+
+σ2 
+
+> t
+
+, as in (23). 
+
+Proposition 3 (Switch-point invariance) Under the per-turbation model of (23) , the standardized deviation zt ≜
+
+δt/√Ht + ϵ satisfies 
+
+E[z2 
+
+> t
+
+] = E[δ2 
+
+> t
+
+]
+
+Ht + ϵ ≈ σ2 
+
+> t
+
+Ht
+
+Ht + ϵ ≤ σ2 
+
+> t
+
+, (35) 
+
+with equality as ϵ → 0. Hence, although a switch inflates both the entropy Ht and the raw deviation |δt| = σt
+
+√Ht,the standardized deviation zt is governed by the perturbation strength σt alone and is invariant to the entropy spike. 
+
+Proof. By Proposition 2, E[δ2 
+
+> t
+
+] ≈ σ2 
+
+> t
+
+Ht. Dividing by the deterministic scale Ht + ϵ gives the equality in (35); since 
+
+Ht/(Ht + ϵ) ≤ 1 for ϵ ≥ 0, the bound E[z2 
+
+> t
+
+] ≤ σ2 
+
+> t
+
+fol-lows, and Ht/(Ht + ϵ) → 1 as ϵ → 0. The raw deviation 
+
+|δt| = pE[δ2 
+
+> t
+
+] = σt
+
+√Ht scales with the entropy factor √Ht, whereas dividing by √Ht + ϵ removes it, leaving only 
+
+σt. A fixed-magnitude rule |δt| ≤ c is therefore triggered by the √Ht spike alone, while the standardized criterion is not. 
+
+■
+
+Empirical symmetry of the signed deviation. Eq. (31) implies E[δ(y)] = 0 to first order, so the off-policy devi-ation is symmetric about zero and its natural scale is fully captured by the second moment. Figure 10 confirms this on real BrowseComp-Plus rollouts: the signed δt distributes symmetrically around zero at every entropy level, with the 0 1 2 3 4        
+
+> Token entropy Ht
+> −0.3
+> −0.2
+> −0.1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> δt
+> Both keep (93.8%)
+> Both mask (3.8%)
+> Saved by ESTR (1.2%)
+> Newly masked (1.2%)
+> Fixed: |δ| = 0.15
+> ESTR: |δ| = √ τ(H+ε)
+> Mean δtper bin ( ±)
+
+Figure 10: Signed log-ratio δt versus token entropy Ht on BrowseComp-Plus rollouts. The distribution is symmetric about zero, and the per-bin mean envelope (purple, ±) grows with entropy. The ESTR boundary (green) tracks this natu-ral scale, whereas the fixed threshold (dashed) admits low-entropy noise and discards high-entropy exploration. per-bin mean envelope ( ±) expanding as √Ht, in line with Proposition 2. This symmetry justifies gating tokens by the sign-free score δ2 
+
+> t
+
+/(Ht + ϵ) without treating positive and negative deviations separately. The signed view also visu-alizes the two failure modes of a fixed threshold: it newly masks legitimate high-entropy exploration (blue) while ad-mitting amplified low-entropy noise (red), both of which the entropy-scaled boundary handles correctly. 
+
+B Low-Entropy Regime: Amplified Off-Mode Noise and the Concave Arc 
+
+The preceding section characterizes the expected scale of δ2 
+
+> t
+
+.We now explain the extreme outliers observed at low entropy in the joint distribution (Figure 2 of the main text), which manifest as distinct concave arcs, and derive the variance law E[δ2 
+
+> t
+
+] ≈ 1−qq invoked in the Method section. 
+
+Variance law via the delta method. At position t, let q ≜
+
+πθ (yt | st) be the realized target probability of the sampled token. Model the behavior probability as a sampling-side perturbation, μt(yt) = q (1 + η) with η = ∆ /q and ∆ ≜
+
+μt(yt)−q. Treating the realization of the token as a Bernoulli event gives Var(∆) ∝ q(1 − q). Since δt = − log(1 + η) ≈−η to first order, the delta method yields 
+
+Var( δt | q) ≈ Var(∆) 
+
+q2 ∝ q(1 − q)
+
+q2 = 1 − qq . (36) As q → 0—an off-mode token drawn at a highly confident position—the variance diverges purely because the near-zero denominator inflates a marginal absolute probability gap be-tween the training and inference engines. Such outliers are amplified sampling noise, not policy drift. 
+
+The concave binary-entropy envelope. To see why these outliers trace concave arcs in the (H, |δ|) plane, consider the minimum entropy attainable at a given confidence level. For a position whose mode carries probability 1 − u (with 
+
+u ≜ 1−q the off-mode mass), entropy is minimized when the residual mass u concentrates on a single alternative token, yielding the binary entropy 
+
+Hbin = −(1 − u) log(1 − u) − u log u, (37) independently of vocabulary size; empirically the low-entropy population hugs this lower bound. On the high-confidence branch u → 0+, a Taylor expansion gives 
+
+Hbin (u) = u (1 − log u) + O(u2), (38) while by (36) the standard-deviation scale of the log-ratio is 
+
+¯δ ∝
+
+q u 
+
+> 1−u
+
+≈ √u. (39) Eliminating u between the two expressions, 
+
+¯δ ≈
+
+s
+
+Ht
+
+1 − log u −−−−→ 
+
+> Ht→0
+
+0. (40) Since − log u → +∞, the envelope vanishes strictly more slowly than √Ht, forcing the bounding envelope into the concave, entropy-opening arc observed in Figure 2 of the main text rather than a horizontal line. 
+
+C Second-Order Expansion of the KL Divergence 
+
+The Method section (“A Second-Order Trust Region”) states that 
+
+DKL (μt ∥ πθ ) ≈ 12 Ev∼μt
+
+δt(v)2. (41) Writing δt(v) = log  πθ (v)/μ t(v), note first the exact iden-tity 
+
+Ev∼μt
+
+ πθ (v)
+
+μt(v) − 1
+
+
+
+= X
+
+> v
+
+πθ (v) − X
+
+> v
+
+μt(v) = 0 , (42) so the KL divergence can be written without approximation as 
+
+DKL (μt ∥ πθ ) = Ev∼μt
+
+ πθ (v)
+
+μt(v) − 1 − log πθ (v)
+
+μt(v)
+
+
+
+. (43) The integrand equals eδt(v) − 1 − δt(v), whose second-order Taylor expansion is 12 δt(v)2 + O(δ3 
+
+> t
+
+). Hence, when μt and 
+
+πθ are locally close, 
+
+DKL (μt ∥ πθ ) ≈ 12 Ev∼μt
+
+δt(v)2. (44) Moreover, since E[δt] ≈ 0 under the perturbation model of the entropy–ratio scaling law derived above, the second moment coincides with the variance to this order, recovering the trust-region-on-variance reading used in the main text. 
+
+D Joint Monotonicity of Hbin (q) and 1−qq
+
+The Method section replaces the singular variance scale 1−qq
+
+with the entropy Ht. Here q ∈ (0 , 12 ] denotes the vanish-ing off-mode mass at a confident position. We show that this substitution is order-preserving: the two quantities are strictly monotone in q on (0 , 12 ], so one is a strictly mono-tone reparameterization of the other and thresholding them is equivalent up to a monotone change of scale. 0.0 2.5 5.0 7.5 
+
+Token entropy Ht
+
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> μt(yt ∣ st)
+
+(a) High entropy ⇒ low-prob token   
+
+> Binned mean
+> 10 −2 10 −1 10 0
+
+μt(yt ∣ st)
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> Mask rate
+
+(b) Mask rate by token probability      
+
+> Fixed threshold
+> ESTR
+> Target 5%
+> 0.00 0.25 0.50 0.75 1.00
+
+μt(yt ∣ st)
+
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> Min  |Δ p| to trigger mask
+
+(c) Probability sensitivity of mask 
+
+> Fixed threshold
+> ESTR
+
+Figure 11: The keep rules in probability space. (a) The sampled token’s behavior probability μt falls monotonically with entropy 
+
+Ht (red: per-bin mean). (b) Mask rate vs. token probability: similar budgets, but the fixed threshold masks harder at low probabilities. (c) Minimum drift |∆p| to trigger the mask: the fixed threshold grows linearly, (ec − 1) μt (up to 0.15 ), whereas ESTR stays bounded near 0.05 —sensitive where low-entropy noise arises. 
+
+Monotonicity of the variance scale. Define 
+
+f (q) ≜ 1 − qq = 1
+
+q − 1. (45) Differentiating, 
+
+f ′(q) = − 1
+
+q2 < 0, f ′′ (q) = 2
+
+q3 > 0, (46) so f is strictly decreasing and convex on (0 , 12 ]. Its range is 
+
+lim  
+
+> q→0+
+
+f (q) = + ∞, f   12
+
+ = 1 , (47) i.e., the variance scale grows without bound as the off-mode mass vanishes. 
+
+Monotonicity of the binary entropy. For 
+
+Hbin (q) = −q log q − (1 − q) log(1 − q), (48) term-by-term differentiation gives 
+
+ddq 
+
+ − q log q = −(log q + 1) , (49) 
+
+ddq 
+
+ − (1 − q) log(1 − q) = log(1 − q) + 1 , (50) and summing the two yields 
+
+H′
+
+> bin
+
+(q) = log 1 − qq . (51) For q ∈ (0 , 12 ) we have 1−qq > 1, hence H′
+
+> bin
+
+(q) > 0: Hbin is strictly increasing on (0 , 12 ]. Differentiating (51) once more, 
+
+H′′ 
+
+> bin
+
+(q) = − 1
+
+q − 11 − q < 0, (52) so Hbin is strictly concave, and it vanishes at the confident limit, 
+
+lim 
+
+> q→0+
+
+Hbin (q) = 0 . (53) 
+
+Monotone reparameterization. Since f is a strictly de-creasing bijection from (0 , 12 ] onto [1 , ∞), it is invertible with 
+
+q = f −1(y) = 11 + y , y ∈ [1 , ∞). (54) Composing, define φ ≜ Hbin ◦ f −1, i.e., 
+
+φ(y) = Hbin 
+
+ 11 + y
+
+
+
+. (55) By the chain rule, using H′ 
+
+> bin
+
+> 0 and (f −1)′(y) =
+
+− 1(1+ y)2 < 0,
+
+φ′(y) = H′
+
+> bin
+
+ f −1(y) · (f −1)′(y) < 0, (56) so φ is strictly decreasing. Hence Hbin is a strictly monotone (order-reversing) reparameterization of f = 1−qq , and for any budget c,
+
+1 − qq ≤ c ⇐⇒ Hbin (q) ≥ φ(c), (57) so a bound on the variance scale is equivalent to an entropy threshold. 
+
+Why entropy is the preferred scale. Although 1−qq and 
+
+Hbin are threshold-equivalent, they differ sharply in numeri-cal behavior. As q → 0+ the raw scale 1−qq diverges, whereas 
+
+Hbin stays bounded in [0 , log 2] . Moreover the empirically used Ht is an aggregate statistic of the full next-token distri-bution, rather than a function of a single realized probability, so it is robust to single-token sampling noise. These proper-ties justify using Ht as the local scale in the keep rule. 
+
+Probability-space view of the two rules. Figure 11 recasts the comparison above in probability space. Panel (a) verifies the premise of this section: high entropy corresponds to low realized token probability, so Ht is a faithful, smoothly vary-ing proxy for the confidence level q. Panel (c) then exposes the magnitude bias of a fixed threshold from a complementary angle. Inverting |δt| ≤ c shows that the absolute probability BrowseComp-Plus DAPO-Math GSM8K Policy model Qwen3-30B-A3B (MoE) Qwen2.5-7B Qwen2.5-7B Train backend Megatron Megatron Megatron Rollout engine SGLang SGLang SGLang Task type multi-turn agentic single-turn multi-turn tool Reward LLM judge rule-based rule-based Total nodes ( ×8 H800) 4 2 2Train nodes 2 1 1Rollout nodes 2 1 1Train GPUs / Rollout GPUs 16 / 16 8 / 8 8 / 8 Actor TP/PP/CP/EP 2/1/8/8 2/1/1/1 2/1/1/1 Ref TP/PP/CP/EP 2/1/4/8 2/1/1/1 2/1/1/1 Rollout TP/EP 8/1 2/1 2/1 Rollout samples n 8 8 8Global batch (prompts) 16 128 256 Prompt length 4096 2048 2048 Response length 32768 12288 8192 Max model length 40960 15376 12288 Max turns 100 100 100 ESTR τ (default) 0.7 1.6 1.6 Entropy floor ϵ 0.01 0.01 0.01 Staleness threshold 5 20 10 Param-sync interval 1 2 4Partial rollout yes yes yes Rollout mem. util. 0.50 0.70 0.70 Epochs 5 12 12 Table 3: Per-task training configuration. All runs are fully asynchronous (disaggregated train/rollout pools). drift needed to trigger the mask scales linearly with μt: at confident positions the rule tolerates drifts an order of mag-nitude larger than at uncertain ones, which is exactly how the amplified low-entropy noise of Eq. (36) slips through. The entropy-scaled boundary instead keeps this trigger sensitiv-ity bounded across the entire probability range, tightening where confidence is high. Panel (b) confirms that this reallo-cation is not achieved by masking more overall: the two rules mask comparable fractions at every probability level, and the fixed threshold is in fact more aggressive only at the lowest probabilities—the exploratory tokens it should preserve. The entropy-scaled rule thus redistributes a similar masking bud-get from legitimate exploration to amplified noise, consistent with the geometric analysis of the Strict Generalization prop-erty below. 
+
+E Proof of the Strict Generalization Property 
+
+Proposition 4 (Strict Generalization) The fixed-threshold keep rule is the degenerate, position-invariant special case of the ESTR keep rule; conversely, ESTR is a strict, entropy-dependent generalization of it. 
+
+Setup. The ESTR keep rule accepts a token when 
+
+δ2
+
+> t
+
+Ht + ϵ ≤ τ ⇐⇒ |δt| ≤ pτ (Ht + ϵ), (58) so its acceptance boundary in the (H, |δ|) plane is the entropy-dependent curve 
+
+bESTR (Ht) ≜ pτ (Ht + ϵ). (59) 
+
+Fixed thresholding as a special case. Suppose the scale is forced to be position-invariant, i.e., 
+
+Ht + ϵ ≡ C (60) for some constant C > 0 (the homoscedastic assumption). Substituting into (58) collapses the rule to 
+
+|δt| ≤ √τ C ≜ c, (61) which is exactly the fixed-threshold mask |δt| ≤ c employed by prior methods such as IcePop. Hence fixed-threshold masking is recovered whenever the entropy dependence is removed, establishing it as the constant-scale degenerate case of ESTR. 
+
+Geometric comparison. Now compare the ESTR bound-ary (59) against the constant boundary |δ| = c with the same 
+
+τ . Equating the two, 
+
+pτ (Ht + ϵ) = √τ C ⇐⇒ Ht = C−ϵ ≜ H⋆, (62) so the two boundaries intersect at the single entropy level 
+
+H⋆. Since bESTR is strictly increasing in Ht,
+
+Ht < H ⋆ =⇒ bESTR (Ht) < c, (63) 
+
+Ht > H ⋆ =⇒ bESTR (Ht) > c. (64) 0 50 100 150 200 
+
+> Training step
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Gradient norm
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+(a) Gradient norm 0 50 100 150 200  
+
+> Training step
+> 14
+> 16
+> 18
+> 20
+> 22
+> 24
+> Number of turns
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+(b) Interaction turns 0 50 100 150 200  
+
+> Training step
+> 15.0
+> 17.5
+> 20.0
+> 22.5
+> 25.0
+> 27.5
+> Response length ( ×10 3 tokens)
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+(c) Response length 0 50 100 150 200 
+
+> Training step
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> Training reward
+> ESTR
+> KPop
+> ICEPop
+> GRPO
+
+(d) Training reward 0 50 100 150 200  
+
+> Training step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Log perplexity
+> ESTR
+> KPop
+> ICEPop
+
+(e) Training-side log-perplexity 0 50 100 150 200  
+
+> Training step
+> 500
+> 1000
+> 1500
+> 2000
+> 2500
+> Time per step (s)
+> ESTR
+> Sync
+
+(f) Per-step wall-clock time 
+
+Figure 12: Training dynamics on BrowseComp-Plus (Qwen3-30B-A3B). Top row: (a) gradient norm, (b) number of interaction turns, and (c) rollout response length. Bottom row: (d) training reward, (e) training-side log-perplexity on the generated tokens, and (f) per-step wall-clock time (ESTR vs. the synchronous run). Panels (a)–(d) compare the asynchronous methods (ESTR, KPop, IcePop, and vanilla GRPO) under the same configuration; panel (e) compares the three keep-rule methods (ESTR, KPop, IcePop). That is, relative to the fixed threshold, ESTR is strictly tighter 
+
+at low entropy—rejecting the amplified sampling noise of the low-entropy regime, whose scale 1−qq diverges as en-tropy vanishes—and strictly wider at high entropy, retaining the genuine exploration characterized by the entropy–ratio scaling law. In the two limits, 
+
+lim  
+
+> Ht→0
+
+bESTR (Ht) = √τ ϵ, (65) 
+
+bESTR (Ht) ∼ pτ H t → ∞ (Ht → ∞ ), (66) so the admissible deviation contracts to a small floor at near-zero entropy and grows without bound as entropy increases. 
+
+Conclusion. The fixed-threshold rule is thus the single hor-izontal slice H⋆ = C − ϵ of the entropy-opening ESTR boundary. ESTR reduces to it exactly under the homoscedas-tic assumption, and otherwise strictly departs from it in an entropy-dependent manner, which proves the claim. ■
+
+F Derivation of the ESTR Policy Gradient 
+
+We derive the gradient of the ESTR objective and verify the clip indicator Ci,t used in the main text. Let the per-token surrogate be 
+
+gi,t = min  ri,t Ai,t , clip( ri,t , 1 − ϵlow , 1 + ϵhigh ) Ai,t 
+
+,
+
+(67) so that LESTR (θ) = −E 1P 
+
+> i|oi|
+
+P 
+
+> i,t
+
+Mi,t gi,t 
+
+.
+
+Two elementary facts. First, the behavior policy μi,t that produced the rollout is fixed with respect to θ, so 
+
+∇θ ri,t = ∇θ
+
+πθ (oi,t | si,t )
+
+μi,t (oi,t )= ri,t ∇θ log πθ (oi,t | si,t ).
+
+(68) Second, the keep mask Mi,t = 1[δ2
+
+> i,t
+
+/(Hi,t + ϵ) ≤ τ ] is piecewise constant in θ, hence ∇θ Mi,t = 0 almost every-where, and we treat it as a stop-gradient gate. 
+
+Gradient of the clipped surrogate. Write ui,t ≜
+
+∇θ log πθ (oi,t | si,t ). The term gi,t is piecewise, and its gradient vanishes precisely when the min selects the flat clipped branch. A case analysis on the sign of Ai,t and the position of ri,t relative to the clip interval shows that this 0
+
+> 1
+> 2
+> 3
+> |δt|
+
+step 0 (mask 0.1%)        
+
+> kept ( Si<τ)
+> masked ( Si≥τ)
+> |δ| = √ τ(H+ε)
+
+step 100 (mask 0.2%) step 200 (mask 0.8%) step 300 (mask 0.2%)    
+
+> 0246
+
+Ht
+
+> 0
+> 1
+> 2
+> 3
+> |δt|
+
+step 400 (mask 0.6%)    
+
+> 0246
+
+Ht
+
+step 500 (mask 1.4%)    
+
+> 0246
+
+Ht
+
+step 600 (mask 0.8%)    
+
+> 0246
+
+Ht
+
+step 800 (mask 4.8%) 
+
+ESTR mask: St = δ 2 
+
+> t
+
+/( Ht + ε), Mt = [St < τ], τ = 0.7 , ε = 10 −8 Figure 13: Evolution of the ESTR keep mask in the (Ht, |δt|) plane on BrowseComp-Plus (Qwen3-30B-A3B, τ =0 .7). Each panel is the per-token joint distribution at one training step: kept tokens ( St < τ ) in blue, masked tokens ( St ≥ τ ) in red, and the boundary |δ| = pτ (Ht + ϵ) in green (masked fraction in each title). Most tokens stay inside the boundary, masked outliers concentrate on the low-entropy arcs, and the masked fraction adapts automatically as the off-policy gap widens late in training. happens only on the two flat branches, so 
+
+∇θ gi,t =
+
+
+
+0, Ai,t > 0, r i,t > 1 + ϵhigh ,
+
+0, Ai,t < 0, r i,t < 1 − ϵlow ,ri,t Ai,t ui,t , otherwise. (69) Collecting the two flat branches into the indicator 
+
+Ci,t = 1 − 1[Ai,t > 0, r i,t > 1 + ϵhigh ]
+
+− 1[Ai,t < 0, r i,t < 1 − ϵlow ] ∈ { 0, 1}, (70) all cases collapse to the single expression ∇θ gi,t =
+
+Ci,t ri,t Ai,t ui,t .
+
+Full gradient. Multiplying by the stop-gradient mask Mi,t 
+
+and taking the expectation gives 
+
+∇θ LESTR (θ) = − Ex∼D , {oi}∼ μ(·| x)
+
+"
+
+1
+
+P 
+
+> i
+
+|oi|×
+
+> G
+
+X
+
+> i=1
+> |oi|
+
+X
+
+> t=1
+
+Mi,t Ci,t ri,t Ai,t ui,t 
+
+#
+
+, (71) which is the main-text policy gradient. In particular a token with Mi,t = 0 contributes exactly zero, so the entropy-scaled mask removes the gradient of every token that violates the trust region, without affecting the gradient of the retained tokens. ■
+
+G Training Configuration 
+
+All tasks share GRPO advantages, no KL penalty ( βKL =0 ), asymmetric clipping (0 .20 , 0.28) , token-mean loss, zero en-tropy bonus, and a constant learning rate 1×10 −6 (AdamW). ESTR is a token-level keep rule δ2 
+
+> t
+
+/(Ht + ϵ) ≤ τ (ϵ=0 .01 )applied on top of GRPO, with rollout log-probabilities as the proximal anchor (bypass mode) and full parameter/gradi-ent/optimizer offloading with activation recomputation. The complete per-task configuration is summarized in Table 3. 
+
+H Hyperparameter Sensitivity 
+
+We probe the sensitivity of ESTR to its two most relevant knobs, varying one at a time while holding all other settings fixed as in Table 3. Tables 4 and 5 report the effect of the keep threshold τ on BrowseComp-Plus and DAPO-Math, and Table 6 reports the effect of the global batch size on DAPO-Math. Across a broad range of τ (0.7–1.6) performance stays within roughly one point on both tasks, indicating that ESTR is not sensitive to the exact threshold; a mild optimum ap-pears around τ ≈ 1.0 on BrowseComp-Plus and τ ≈ 1.6 on 0 50 100 150 200 250 300 350 
+
+> Training step
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> Token entropy
+> Sync
+> Async
+> ESTR
+> ICEPop
+> KPop
+
+(a) Token entropy 0 50 100 150 200 250 300 350  
+
+> Training step
+> 10 −5
+> 10 −4
+> 10 −3
+> 10 −2
+> 10 −1
+> 10 0
+> Masked token fraction
+> ESTR
+> ICEPop
+> KPop
+
+(b) Masked token fraction 0 50 100 150 200 250 300 350  
+
+> Training step
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> Validation accuracy (mean@4)
+> Sync
+> Async
+> ESTR
+> ICEPop
+> KPop
+
+(c) Validation accuracy (mean@4) 
+
+Figure 14: Training dynamics on multi-turn GSM8K (Qwen2.5-7B). (a) Token entropy: vanilla GRPO and IcePop blow up, while ESTR stays stable and tracks the synchronous run. (b) Masked token fraction: IcePop’s blows up by orders of magnitude; ESTR keeps it low and stable. (c) Validation accuracy (mean@4): ESTR tracks the synchronous run, whereas the asynchronous baselines collapse once their entropy destabilizes. the harder AIME splits. Increasing the global batch size im-proves DAPO-Math accuracy and largely saturates beyond 
+
+128 prompts. All AIME numbers are reported as mean@4 (4 samples per problem). 
+
+τ =0 .7 τ =1 .0 τ =1 .6
+
+Accuracy 35.97 37.34 37.15 Reward 29.87 32.25 30.62 Table 4: Sensitivity to the ESTR keep threshold τ on BrowseComp-Plus (Qwen3-30B-A3B); other settings as in Table 3. 
+
+τ 0.7 1.0 1.6
+
+AIME-2024 (mean@4) 19.67 19.85 20.03 AIME-2025 (mean@4) 14.33 16.12 15.64 AIME-2026 (mean@4) 13.49 15.21 15.46 Table 5: Sensitivity to τ on DAPO-Math (Qwen2.5-7B); other settings as in Table 3. Global batch (prompts) 32 64 128 256 
+
+AIME-2024 (mean@4) 16.97 18.26 20.03 19.87 AIME-2025 (mean@4) 13.23 14.19 15.64 15.58 AIME-2026 (mean@4) 12.94 14.47 15.46 16.32 Table 6: Sensitivity to global batch size (prompts) on DAPO-Math (Qwen2.5-7B); τ =1 .6, other settings as in Table 3. 
+
+I Additional Training Dynamics 
+
+To complement the main-text results, we report additional training-dynamics curves for each task. Unless otherwise noted, all curves show the asynchronous methods (ESTR, KPop, IcePop, and vanilla GRPO) under the same configu-ration as the corresponding main-text experiment, and raw values are smoothed with an exponential moving average for readability. 
+
+I.1 BrowseComp-Plus 
+
+Figure 12 tracks six signals on BrowseComp-Plus (Qwen3-30B-A3B). On the gradient norm (Figure 12a), vanilla GRPO spikes sharply (early version switches and late bursts) and IcePop/KPop drift upward with the off-policy gap, whereas ESTR stays low and stable—local entropy normalization sup-presses the noise-driven updates that inflate the gradient. This stability is productive, not conservative: ESTR reaches the fewest turns (Figure 12b) and shortest responses (Figure 12c) yet the highest final reward (Figure 12d), with vanilla GRPO lowest and IcePop/KPop in between. Log-perplexity (Figure 12e) is not “lower is better”: ESTR rises smoothly to the highest value alongside its highest re-ward, IcePop spikes late (tracking instability), and KPop stays lowest (weaker learning). ESTR is also faster: unlike the syn-chronous baseline that stalls at every step (Figure 12f), it overlaps rollout with training and settles at a substantially lower, stable per-step time. 
+
+Mask evolution over training. Figure 13 visualizes how the entropy-scaled keep rule operates in the (Ht, |δt|) plane as training progresses, providing a dynamic counterpart to the static boundary of Figure 1 in the main text. Three ob-servations stand out. First, at every stage the kept population fills precisely the region beneath the entropy-scaled bound-ary: the spread of |δt| widens with Ht exactly as predicted by the scaling law of Proposition 2, confirming that the bound-ary tracks the natural scale of the deviation rather than an arbitrary cutoff. Second, the masked tokens (red) are domi-nated by the low-entropy outliers that trace the concave arcs analyzed earlier for the low-entropy regime—the amplified train-inference noise— whereas large deviations at high en-tropy remain almost entirely inside the boundary and are re-tained as legitimate exploration. Third, the masked fraction is self-regulating: it stays below 1% through most of training and rises only to 4.8% at step 800 , when the accumulated off-policy gap inflates deviations across the batch. The rule thus tightens its effect exactly when and where harmful de-viations emerge, without any schedule or staleness-specific tuning, which explains the order-of-magnitude lower mask-ing rates reported in the main text. 0 200 400 600 800 
+
+> Training step
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Sequence masked fraction (%)
+> ESTR
+> ICEPop
+> KPop
+
+(a) Sequence masked fraction 0 200 400 600 800  
+
+> Training step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> Token entropy
+> ESTR
+> Async
+> ICEPop
+> KPop
+
+(b) Token entropy 0 200 400 600 800  
+
+> Training step
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> Training reward
+> bs 32
+> bs 64
+> bs 128
+> bs 256
+
+(c) Reward vs. batch size 0 200 400 600 800  
+
+> Training step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> 1.6
+> Masked fraction ( ×10 −3 )
+> bs 32
+> bs 64
+> bs 128
+> bs 256
+
+(d) Mask vs. batch size 
+
+Figure 15: Training dynamics on DAPO-Math (Qwen2.5-7B). (a) Sequence-level masked fraction (ESTR, IcePop, KPop) and (b) token entropy (ESTR, vanilla GRPO, IcePop, KPop) for the asynchronous methods. (c)–(d) ESTR’s sensitivity to the global batch size ( 32 /64 /128 /256 , darker = larger): (c) training reward (mapped [−1, 1] → [0 , 1] ) and (d) the entropy-scaled masked fraction ( ×10 −3). Curves are EMA-smoothed and truncated at 800 steps. 
+
+I.2 Multi-turn GSM8K 
+
+Figures 14a and 14b report token entropy and masking on multi-turn GSM8K (Qwen2.5-7B). IcePop is the most un-stable: its entropy spikes until the run destabilizes, and its masked fraction drifts up by orders of magnitude, discard-ing a large share of tokens. Vanilla GRPO also loses control of its entropy, spiking out of the healthy range late in train-ing. ESTR instead keeps both entropy and masked fraction low and stable throughout, discarding only the harmful noise rather than genuine exploration. This carries over to accuracy (Figure 14c): ESTR tracks the synchronous run within about one point and reaches the highest final accuracy among asynchronous methods, whereas vanilla GRPO, IcePop, and KPop each collapse as their entropy destabilizes and never recover. ESTR is thus the only asynchronous method that stays stable and matches the synchronous accuracy trajectory. 
+
+I.3 DAPO-Math 
+
+Figures 15a and 15b expose how each method trades stabil-ity against exploration on DAPO-Math (Qwen2.5-7B). Ice-Pop masks 40% –65% of sequences throughout and KPop shows large intermittent spikes, whereas ESTR keeps the sequence-level masked fraction below ∼5% (Figure 15a): fixed thresholds cannot separate genuine high-entropy ex-ploration from noise, so they either over-discard or oscillate, while ESTR’s entropy-scaled boundary removes only the am-plified low-entropy noise. The entropy curves (Figure 15b) confirm this: vanilla GRPO’s entropy explodes upward with-out bound, IcePop and KPop collapse toward zero through over-suppression, and ESTR alone sustains a gradual, con-trolled rise—masking not less but the right tokens. Sweeping the global batch over 32 /64 /128 /256 (Fig-ures 15c and 15d), training reward improves monotonically (≈0.33 → 0.44 ) with diminishing returns beyond 128 , driven by lower gradient variance. Crucially, the masked fraction stays negligible (below ∼0.6×10 −3) across the entire sweep, so larger batches help through variance reduction rather than by altering the trust region—matching the accuracy sensitiv-ity in Table 6.
