@@ -6,73 +6,75 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-28
-- 运行时间：2026-07-28 21:36:02 UTC
+- 最新运行日期：2026-07-29
+- 运行时间：2026-07-29 21:42:55 UTC
 - 运行状态：成功
 - 本次总论文数：17
 - 精读区：6
 - 速读区：11
 
 ### 今日简报（AI）
-今日推荐17篇论文，重点精读两篇9.0高分论文：混合优势估计统一Critic的VLM智能体强化学习，以及分布式多智能体强化学习用于无人机辅助车联网轨迹规划。  
-最值得关注的方向是VLM智能体强化学习的优势估计改进与多智能体无人机轨迹优化。  
-建议优先精读这两篇9.0分工作，为长时序任务或分布式系统设计提供新思路。
-- 详情：[/202607/28/README](/202607/28/README)
+今日精读17篇，重点聚焦AI代理长上下文控制与冷冻LLM领域学习，速读侧重多智能体协同与自验证奖励机制。
+
+最值得看的是精读两篇9.0分论文：关于可寻址压缩实现长上下文控制，以及为冷冻LLM代理注入领域知识的控制系统与数据集。
+
+建议优先精读这两篇高分论文，并顺带关注速读中多智能体图系统的自适应注意力编排，掌握最新控制与学习范式。
+- 详情：[/202607/29/README](/202607/29/README)
 
 ### 精读区论文标签
-1. [Hybrid Advantage Estimation with Unified Critic for VLM Agentic Reinforcement Learning](/202607/28/2607.23605v1-hybrid-advantage-estimation-with-unified-critic-for-vlm-agentic-reinforcement-learning)  
+1. [Addressable Recall Compaction for Long Context-Window Control in AI Agents](/202607/29/2607.25066v1-addressable-recall-compaction-for-long-context-window-control-in-ai-agents)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：直接针对VLM智能体强化学习的混合优势估计方法
-2. [TRUAV: Distributed Multi-Agent Reinforcement Learning for Trajectory Planning and Routing Enhancement in UAV-Aided IoT-Enabled VANETs](/202607/28/2607.23734v1-truav-distributed-multi-agent-reinforcement-learning-for-trajectory-planning-and-routing-enhancement-in-uav-aided-iot-enabled-vanets)  
+   evidence：可寻址召回压缩框架，直接针对智能体记忆架构设计
+2. [A Control System, a Dataset, and a Recipe for Making Frozen LLM Agents Learn a Domain](/202607/29/2607.25415v1-a-control-system-a-dataset-and-a-recipe-for-making-frozen-llm-agents-learn-a-domain)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：分布式多智能体强化学习用于无人机协同
-3. [ACM: Agentic Context Management for Long Horizon Tasks](/202607/28/2607.23809v1-acm-agentic-context-management-for-long-horizon-tasks)  
+   evidence：基于强化学习对冻结LLM智能体外套进行策略学习
+3. [Cooperative Multi-UAV Navigation in Complex Environments via Systematic Multi-Agent Deep Reinforcement Learning](/202607/29/2607.25754v1-cooperative-multi-uav-navigation-in-complex-environments-via-systematic-multi-agent-deep-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：受人类记忆启发的智能体上下文管理与外部记忆
-4. [MemChain: Learning Interpretable Memory Traces for Memory-Augmented LLM Agents](/202607/28/2607.24097v1-memchain-learning-interpretable-memory-traces-for-memory-augmented-llm-agents)  
+   evidence：基于记忆的多智能体深度强化学习实现无人机协作导航
+4. [Speculate While You Reason: Teaching Agents to Predict Their Next Tool Call via Joint Agent-Speculator RL](/202607/29/2607.25816v1-speculate-while-you-reason-teaching-agents-to-predict-their-next-tool-call-via-joint-agent-speculator-rl)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：可解释记忆轨迹用于记忆增强的LLM智能体
-5. [A Self-Evolving Default Action for Cooperative Tasks with Continuous Action Space](/202607/28/2607.18597v3-a-self-evolving-default-action-for-cooperative-tasks-with-continuous-action-space)  
+   evidence：联合智能体-推测者强化学习训练智能体预测工具调用，降低延迟
+5. [UniMem: Complementary Episodic-to-Parametric Memory for Boundary-Agnostic Task Streams](/202607/29/2607.26017v1-unimem-complementary-episodic-to-parametric-memory-for-boundary-agnostic-task-streams)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向LLM智能体的互补性情景到参数化记忆
+6. [ConsistencyGate: Preventing Memory Contamination in LLM Agents via Self-Consistency Admission Control](/202607/29/2607.22962v1-consistencygate-preventing-memory-contamination-in-llm-agents-via-self-consistency-admission-control)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：连续合作多智能体任务中的自演化默认动作
-6. [Adaptive Multi-Horizon Reinforcement Learning](/202607/28/2607.20656v2-adaptive-multi-horizon-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：自适应多时间范围强化学习用于变化环境中的鲁棒适应
+   evidence：通过自一致性准入控制防止LLM智能体记忆污染
 
 ### 速读区论文标签
-1. [Progress-conditioned Group Policy Optimization for Long-Horizon Agentic Tasks](/202607/28/2607.22724v1-progress-conditioned-group-policy-optimization-for-long-horizon-agentic-tasks)  
+1. [Focus Is All You Need: Adaptive Goal-aware Attention Orchestration for Multi-Agent Graph Systems](/202607/29/2607.23678v1-focus-is-all-you-need-adaptive-goal-aware-attention-orchestration-for-multi-agent-graph-systems)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：基于进度条件的组策略优化用于长期智能体任务
-2. [Commitment To Cooperation With Self-Negotiated Contracts](/202607/28/2607.22750v1-commitment-to-cooperation-with-self-negotiated-contracts)  
+   evidence：自适应目标感知注意力编排用于多智能体协调
+2. [From RLVR to RLSVR: Task Transformation Induces Self-Verifiable Rewards for Open-Ended LLM Self-Improvement](/202607/29/2607.23802v1-from-rlvr-to-rlsvr-task-transformation-induces-self-verifiable-rewards-for-open-ended-llm-self-improvement)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：基于合约的多智能体合作机制
-3. [MEMENTO: Memory-Guided Memetic Code-as-Policy Evolution](/202607/28/2607.22832v1-memento-memory-guided-memetic-code-as-policy-evolution)  
+   evidence：通过任务转换和自验证奖励实现LLM的强化学习自我改进
+3. [From Cognitive Architectures to Language Agents: A Mechanism-Level Review of Lineage, Convergence, and Migration Gaps](/202607/29/2607.23942v1-from-cognitive-architectures-to-language-agents-a-mechanism-level-review-of-lineage-convergence-and-migration-gaps)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：记忆引导的策略自我进化方法
-4. [Finite-Time Analysis of the Natural Policy Gradient in Finite-Horizon Markov Decision Processes](/202607/28/2607.22982v1-finite-time-analysis-of-the-natural-policy-gradient-in-finite-horizon-markov-decision-processes)  
+   evidence：对智能体记忆、规划与适应机制的全面综述，契合复合主题
+4. [EviBack: Search-Agent Reinforcement Learning via Evidence-Constrained Teacher Backoff](/202607/29/2607.23955v1-eviback-search-agent-reinforcement-learning-via-evidence-constrained-teacher-backoff)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：自然策略梯度在有限时间马尔可夫决策过程中的有限时间分析
-5. [SeekJudge: A Practical Reward Framework for Reinforcement Learning in Computer-Use Agents](/202607/28/2607.23263v1-seekjudge-a-practical-reward-framework-for-reinforcement-learning-in-computer-use-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：为计算机使用自主代理设计强化学习奖励框架
-6. [Hierarchical Soft Actor-Critic for Sparse-Reward Long-Horizon Reinforcement Learning](/202607/28/2607.23726v1-hierarchical-soft-actor-critic-for-sparse-reward-long-horizon-reinforcement-learning)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：分层SAC算法用于稀疏奖励任务中的策略梯度训练
-7. [Expert Behavior Prior Reinforcement Learning](/202607/28/2607.21302v2-expert-behavior-prior-reinforcement-learning)  
+   evidence：使用证据约束教师回退的搜索智能体强化学习
+5. [Optimal Reward Shaping: Autonomous Car Parking Case Study](/202607/29/2607.23617v1-optimal-reward-shaping-autonomous-car-parking-case-study)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：使用Q引导条件变分自编码器的专家行为先验强化学习
-8. [Toward User-Conditioned Evaluation of Personal LLM Agents under Temporal Interventions](/202607/28/2607.21635v1-toward-user-conditioned-evaluation-of-personal-llm-agents-under-temporal-interventions)  
+   evidence：通过奖励塑形实现自主泊车的强化学习
+6. [Moral Hazard in Multi-Agent Language Models](/202607/29/2607.23982v1-moral-hazard-in-multi-agent-language-models)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：时间干预下个人LLM智能体的记忆感知评估
-9. [AgentOmnia: Scaling Agentic Models for Full-Scenario Applications](/202607/28/2607.23124v1-agentomnia-scaling-agentic-models-for-full-scenario-applications)  
+   evidence：使用道德风险游戏分析多智能体合作失败
+7. [ACRL: Adaptive Control of Training-Inference Discrepancy for Stable Reinforcement Learning](/202607/29/2607.24062v1-acrl-adaptive-control-of-training-inference-discrepancy-for-stable-reinforcement-learning)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：全场景智能体模型扩展，包含强化学习和数据合成
-10. [Kimi K3: Open Frontier Intelligence](/202607/28/2607.24653v1-kimi-k3-open-frontier-intelligence)  
+   evidence：自适应控制训练-推理差异以实现稳定强化学习
+8. [From Proprietary to Open-Source: Bridging the Distribution Gap via Multi-Agent Protocol Distillation in Agentic Search](/202607/29/2607.24280v1-from-proprietary-to-open-source-bridging-the-distribution-gap-via-multi-agent-protocol-distillation-in-agentic-search)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：在通用、智能体和编码领域进行强化学习
-11. [Are You Still the Agent I Authorized? Earned Authority under a Fixed Ceiling for Evolving Agents](/202607/28/2607.23586v1-are-you-still-the-agent-i-authorized-earned-authority-under-a-fixed-ceiling-for-evolving-agents)  
+   evidence：面向智能体搜索的多智能体协议蒸馏
+9. [HACO: Hedged Agent Computing for Reliable LLM Systems](/202607/29/2607.19215v1-haco-hedged-agent-computing-for-reliable-llm-systems)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：演化中AI智能体的授权问题
+   evidence：面向可靠LLM智能体决策的运行时控制方案
+10. [Bridging Reinforcement Learning and Optimal Control via Feasible Action Mapping](/202607/29/2607.23930v1-bridging-reinforcement-learning-and-optimal-control-via-feasible-action-mapping)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：通过可行动作映射整合强化学习与最优控制
+11. [Explainable Reinforcement Learning via Physics-Aware Policy Distillation](/202607/29/2607.24672v1-explainable-reinforcement-learning-via-physics-aware-policy-distillation)  
+   标签：评分：6.0/10、query:agentic-rl
+   evidence：将TD3智能体策略蒸馏为可解释决策树
 
 
 <div class="dpr-home-promo-card">

@@ -1,0 +1,1914 @@
+Title: HACO: Hedged Agent Computing for Reliable LLM Systems
+
+URL Source: https://arxiv.org/pdf/2607.19215v1
+
+Published Time: Wed, 22 Jul 2026 01:12:32 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# HACO: Hedged Agent Computing for Reliable LLM Systems 
+
+Enhan Li 1, Hongyang Du 1∗
+
+> 1
+
+The University of Hong Kong 
+
+Abstract 
+
+As large language model (LLM) agents move from isolated prompting to long-horizon workflows, failures increasingly arise at the role-to-instance binding bound-ary, where task-specific role requests must be assigned to concrete agent instances under current service, network, and query conditions. Existing agent system re-search has improved role specialization, workflow topology, memory, and tool use, but often assumes a fixed stable execution environment. This assumption limits deployed reliability, because the same role request can exhibit different latency, failure probability, and output quality across agent instances operating under different service regions and network conditions. We propose Hedged Agent Computing (HACO), a runtime control scheme that treats each role request as a reliability-constrained selection problem over candidate agent instances, each cou-pling a role type, an LLM, and a concrete execution environment. Different from routing, HACO adaptively selects a hedge set of candidates for each invocation. Its allocation rule combines optimistic ranking, which prioritizes candidates with high estimated quality, reliability, and informative uncertainty, with conservative reliability accumulation, which stops selection only after the hedge set reaches a target success probability. Through experience harvesting, HACO updates candi-date and link profiles from all executed candidate traces, including quality, success, latency, and network statistics. Experiments on various benchmarks, together with runtime degradation studies, show that HACO improves robustness and output quality under changing deployment conditions, while using lower token and latency cost than exhaustive parallel execution. 
+
+1 Introduction Execution Environment 
+
+> LLM
+> Agent Instance2
+> Role Type
+> DC 1
+> Agent Instance1
+> DC 2
+> DC 3
+> High latency
+> Good link
+> Unreliable
+> Agent Instance3
+
+Figure 1: Three coupled axes of role invocation in MAS. LLM-based agent systems, especially multi-agent systems (MAS), have become a common paradigm for complex task execution and advanced automation [ 24 , 41 , 17 , 51 ]. Compared with single-LLM execution, agent systems can distribute a task across specialized role types, coordinate intermediate outputs, cross-check partial results, and repair errors through iterative feedback. These coordination gains are especially valuable for tasks that require goal decomposition, intermediate coordina-tion, iterative refinement, and long-horizon execution. As a result, agent systems have become an important direction for building practical AI systems, especially in domains such as data analysis, decision support, and scientific discovery. This shift has also changed how practical agents are designed. Modern agent systems are increasingly built with complete 
+
+> ∗Corresponding author. Preprint. arXiv:2607.19215v1 [cs.NI] 21 Jul 2026
+
+agent harnesses instead of standalone models with prompts [ 4, 45 ]. In practice, reliable execution depends on surrounding components such as tool interfaces, memory management, safety controls, and execution orchestration. Recent work therefore places growing emphasis on persistent state [ 57 ], controller design [ 33 ], execution layers, and tool coordina-tion [42], because these components often determine whether agents can maintain progress through long and error-prone workflows. However, this system perspective remains primarily organized around software-level MAS design, including role type specialization and system topology of agents. When validating these designs, they often vary LLM backbones in the agent instances to show performance differences and robustness under the same MAS design [ 54 ]. As Fig. 1 illustrates, once the system topology is fixed, this view attributes uncertainty mainly to the agent role type or the LLM’s capability, such as reasoning or tool-use quality, while treating the execution environment of the agent instance as a fixed background condition. The coupling among the capability of the selected LLM, its role type and the execution environment receives comparatively little attention. However, the fixed-environment assumption breaks down in real deployments. Even when the MAS software topology and role invocation remain unchanged, the final behavior depends heavily on the agent instance that performs the concrete operation. Specifically, a role invocation may pass through different service providers and execution regions. Its behavior is shaped by both LLM capability and physical environment factors, e.g., network latency, bandwidth fluctuation, transient failures, resource contention, and service interruptions, of the selected agent instance. Consequently, two invocations that are identical at the software level may exhibit substantially different latency, execution reliability, and outcomes under different execution environments. In practice, the role type is typically determined by the MAS design, while LLM choice and runtime conditions remain operational variables. For example, modern LLM serving platforms expose region and deployment choices as runtime or configuration variables, so the same role invocation request may not always execute in the same physical location [ 34 , 18 , 1, 37 ] (More examples are given in Appendix A). Moreover, recent infrastructure incidents, including Red Sea submarine-cable disruptions and Azure’s West Europe thermal event, show that physical and regional execution conditions can directly affect service latency and availability [ 12 , 11 , 35 ]. Therefore, agent systems should not attribute uncertainty only to model reasoning or software logic, but should also account for execution location, network paths, and region-level infrastructure state. We therefore view role invocation as a coupled runtime decision over role type, LLM choice, and execution environment, and extend the conventional agent-instance abstraction by adding execution environment as a third axis. Inspired by the success of redundancy and fault-tolerance mechanisms in distributed systems, we use hedged concurrent execution to manage invocation-level uncertainty in computing and communication environments. HACO focuses on the role-invocation allocation point, which is different from single-route selection in LLM routing [ 13 , 36 ], post-hoc escalation in fallback or cascade methods [ 55 , 21 ], serving-batch construction in batch inference [30 , 58 ], and output selection or synthesis in MoA-style or Best-of-N aggregation [ 27 , 48 , 49 ]. It asks a preceding execution-control question: before a role request is executed, whether multiple candidate agent instances should execute the same request, which candidates should be activated, and when the allocated redundancy is sufficient. Appendix B provides a structured comparison with related runtime and inference-time paradigms. Motivated by these insights, we propose Hedged Agent COmputing (HACO) , where the core selection unit is a candidate agent instance , i.e., a concrete role-specific LLM deployment in an execution environment; we use candidate as shorthand thereafter. HACO allocates a small hedge set of candidates and uses the resulting execution traces to refine future allocation decisions. Our contributions are summarized as: • We model role invocation in LLM-based agent systems as a three-axis runtime decision over role type, LLM choice, and execution environment. This formulation exposes the role-to-instance binding boundary as a source of reliability, latency, and quality variation under concrete runtime conditions. • We introduce HACO, a redundancy-based runtime control paradigm that selects reliability-constrained hedge sets over heterogeneous agent instances. Through experience harvesting, HACO refines candidate and link profiles, allowing the system to adapt redundancy to runtime conditions and balance robustness against execution cost. • We evaluate HACO across representative benchmarks and stress settings, showing that it improves robustness and output quality while offering a controllable trade-off among system reliability, task success, and execution cost measured by token usage and latency. 2Experience Store     
+
+> Profiles & History
+> Phase 1:
+> Role Abstraction Phase 2: Redundancy Allocation Phase 3: Hedged Execution Phase 4:
+> Experience Harvesting
+> Controller/
+> Workflow
+> Ex ecution
+> environment
+> ACognitive Capability
+> ，
+> B Physical Reliability
+> a1
+> DC 1
+> Fast
+> Stable
+> a2
+> DC 2
+> Slow
+> Stable
+> a3
+> DC 1
+> High
+> Capacity
+> a5
+> DC 3
+> Low
+> Capacity
+
+...    
+
+> 2.1 Optimistic
+> Prioritization
+> 2.2 Conservative
+> Reliability
+> Accumulation
+> stop when
+> Hedge set
+> Ranked
+> candidates
+> Parallel execution across global datacenters
+> a1
+> DC 1
+> a4
+> DC 4
+> a2
+> DC 2
+> C Effective Cost
+> Trace 2Trace 1Trace 4
+> Winner Selection
+> Selected Response
+> Observed agent failure/latency
+> 4.1 Agent Profile Update
+> Quality
+> Success
+> Latency
+> 4.2 Link Profile Update
+> Bandwidth
+> Jitter
+> Loss
+> Online profile refinement
+> Query
+> Context
+> Role
+
+Figure 2: Overview of the HACO paradigm. 
+
+2 Related Work and Theory Motivation 
+
+Agent harnesses. Recent work increasingly treats LLM agents as complete execution systems supported by agent harnesses, where the surrounding layer manages context construction, memory access, tool invocation, validation, and lifecycle control [ 4, 45 , 57 , 33 , 42 ]. This harness view shows that practical agent performance depends on system mechanisms that maintain progress across long-horizon and failure-prone workflows, beyond the capability of the underlying model in a single turn. HACO builds on this system-level perspective, but studies a different control problem, i.e., how to allocate redundant execution when runtime conditions are uncertain. 
+
+LLM-based multi-agent systems. Research on LLM-based MAS mainly focuses on how agents are organized, how they communicate, and how they are controlled during complex tasks [ 22 , 51 ,43 ]. Representative systems include workflow-based role specialization such as MetaGPT [ 24 ], communication-centric collaboration such as ChatDev [41], and orchestrator-led delegation such as Magentic-One [ 17 ]. These works improve collaboration structure, communication protocols, and controller design. HACO addresses a complementary question, i.e., given a fixed MAS workflow, how should each role invocation be executed when candidate capability, network condition, and execution reliability vary at runtime. 
+
+Redundant and parallel agent execution. Redundancy is a common mechanism for improving re-liability in deployed systems, but it also introduces execution cost [ 8]. Existing agent methods mainly use parallelism for full generation with post-hoc selection or structured wide search. For example, MoA-style method executes all candidates and selects the final output after generation [ 48 ], while A-MapReduce and AgentSwing use structured parallelism for wide search and long-horizon branch routing [ 7 , 14 ]. Agent-diversity studies further show that parallel agents can provide complementary information [ 52 ]. These methods demonstrate the value of parallel execution, but do not decide how much redundancy each role invocation needs under changing runtime conditions. Redundancy is theoretically supported as a stabilizing mechanism under uncertainty and can reduce failure risk in multi-agent execution [ 5], but excessive redundancy increases token usage, latency, and coordination cost. HACO builds on this principle by treating redundancy as a query-dependent runtime control variable and formulating allocation as a reliability-constrained subset-selection problem: 
+
+min 
+
+S⊆A 
+
+X
+
+ai∈S 
+
+Ci s.t. P(qualified success | S ) ≥ τ. (1) Here, S is the hedge set, τ is the target reliability, and Ci penalizes the candidate activation footprint, not realized wall-clock latency; the realized latency is t(awinner ) in 3.3. 
+
+3 The HACO Paradigm 
+
+HACO treats redundancy as a runtime control variable, deciding how many and which candidate agent instances to activate for each role invocation. As shown in Fig. 2, HACO consists of four stages, i.e., role abstraction, redundancy allocation, hedged execution, and experience harvesting. 33.1 Phase 1: Role Abstraction 
+
+HACO starts from role invocation events produced by the underlying MAS. A role type refers to a functional component such as planner, coder, debugger, or filter. At step t, a role invocation event is 
+
+et = ( rt, x t), (2) where rt is the role type to invoke and xt is the input payload that is constructed from the original query q and the current task context Ct, including intermediate plans, execution results, error messages, and outputs from previous roles. For example, a debugger payload may contain the original query together with the failed coder output, traceback, and current notebook state. This abstraction connects the MAS controller to HACO’s redundancy allocation mechanism. Given Eq. (2) , HACO uses rt to identify the candidate pool and sends the same payload xt to the selected candidate agent instances. The controller could be a predefined workflow, a finite-state machine, a decentralized negotiation protocol, a MetaGPT-style workflow [ 24 ], or a single-agent controller, depending on MAS design. Without loss of generality, our experiments instantiate HACO with a relatively complex FSM-based controller derived from DATAWISE, as detailed in Appendix C.1. HACO itself only requires the controller to emit role invocation events in the form of Eq. (2). 
+
+3.2 Phase 2: Redundancy Allocation 
+
+Given a role invocation, HACO selects a hedge set S ⊆ A that meets a target reliability level with low latency-aware resource cost. To this end, HACO characterizes each candidate with uncertainty-aware utility components and allocates redundancy through dual-bound coordination. 
+
+Candidate Characterization. We characterize each candidate ai along three dimensions, i.e., uncertain cognitive capability, physical execution reliability, and latency-aware resource cost. 
+
+1. Cognitive Capability. Let θi ∈ [0 , 1] denote the expected normalized output-quality capability of candidate ai. HACO models θi using a Beta prior, a standard choice for variables restricted to the unit interval [15, 29, 32]: 
+
+θi ∼ Beta( αi, β i), (3) which is initialized with αi = βi = 1 . After observing a normalized output-quality score qi ∈ [0 , 1] ,HACO applies a lightweight soft-count update: 
+
+αi ← αi + qi, βi ← βi + (1 − qi). (4) The posterior mean and standard deviation are 
+
+μi = αi
+
+αi + βi
+
+, σi =
+
+s
+
+αiβi
+
+(αi + βi)2(αi + βi + 1) . (5) Here, μi estimates the expected capability of the selected candidate ai, while σi captures uncertainty. 
+
+2. Physical Execution Reliability. Let f (i)int denote the internal failure rate of candidate ai, and let ℓ(i)net 
+
+denote the network loss rate. We define the execution success probability as 
+
+ρi = (1 − f (i)int )(1 − ℓ(i)net ). (6) For tractability, HACO considers conditional independence across candidates when estimating Eq. 6. 
+
+3. Latency-Aware Resource Cost. For each candidate, HACO estimates an effective latency by combining the candidate’s processing time and the expected communication overhead: 
+
+Ti = t(i)proc + ki
+
+max( ϵB, b i − κj i) . (7) Here, t(i)proc denotes the historical average processing latency of candidate i, ki is the estimated message size, bi is the observed effective bandwidth, and ji is the unit bandwidth jitter. The coefficient κ > 0 models how strongly bandwidth jitter reduces the effective bandwidth term. To reflect the diminishing sensitivity of user-perceived delay, HACO defines a scale-normalized logarithmic latency cost with the estimated latency Ti based on the Weber–Fechner law [44]: 
+
+Ci = ln 
+
+
+
+1 + Ti
+
+T0
+
+
+
+, (8) 4where T0 is a reference latency, instantiated as the median estimated latency among candidates for the current routing step. HACO converts this latency-aware resource cost into a stable discount factor: 
+
+Di = 1 + ηC i, (9) where η controls the strength of latency penalization. Compared with directly using Ci, this form preserves the logarithmic delay effect, penalizes larger latency monotonically, and avoids excessive punishment of high-latency candidates and excessive reward for near-zero latency. 
+
+Dual-Bound Coordination. Based on the candidate characterization results, HACO allocates re-dundancy with a dual-bound coordination mechanism. Candidate ranking and redundancy termination face different uncertainty risks. For ranking, overly pessimistic estimates may hide under-observed but potentially strong candidates. For termination, overly optimistic estimates may stop the hedge construction too early and weaken system reliability. HACO addresses these two risks with separate estimates, i.e., an optimistic utility for ranking candidates and a conservative reliability estimate for deciding when the hedge set is sufficient. 
+
+1. Optimistic Prioritization. For each candidate ai, HACO computes an optimism-adjusted utility 
+
+U + 
+
+> i
+
+= min(1 , μ i + λσ i) ρi
+
+Di
+
+, (10) where μi and σi are the mean and standard deviation of the candidate’s posterior output-quality estimation (i.e., Eq. 5) , λ is the exploration coefficient, ρi denotes the estimated execution success probability (i.e., Eq. 6), and Di is the stable latency discount factor (i.e., Eq. 9). Candidates are ranked in descending order of U + 
+
+> i
+
+. This utility favors candidates with high estimated capability of the selected LLM and high execution reliability, while applying a controlled latency discount. The uncertainty bonus λσ i encourages exploration of under-observed but potentially strong candidates. 
+
+2. Conservative Reliability Accumulation. Following the ranking, HACO incrementally constructs the hedge set using a pessimistic execution reliability estimate: 
+
+R− 
+
+> i
+
+= min (0 .98 , max( ϵR, μ i − γσ i) · ρi) . (11) Here, μi − γσ i gives a lower-confidence estimate of the candidate’s output-quality capability, and 
+
+ρi discounts this estimate by the candidate’s physical execution reliability. The lower bound ϵR
+
+stabilizes the capability term, while the upper cap 0.98 avoids perfect single-candidate reliability. This conservative estimate is used only for stopping, so that HACO does not terminate hedge construction based on overly optimistic reliability estimates. Let Pfail denote the cumulative failure probability that all currently selected candidates fail. Starting from Pfail = 1 , HACO updates: 
+
+Pfail ← Pfail (1 − R− 
+
+> i
+
+) (12) whenever a new candidate is added. Redundancy allocation stops when 
+
+1 − Pfail ≥ τ, (13) or when the candidate pool is exhausted. A single shared estimate is insufficient for both purposes: an overly conservative utility estimate would suppress exploration, whereas an overly optimistic one would weaken the stopping guarantee. In this way, Phase 2 decides both which candidates should enter the hedge set and how many to select under the conservative stopping rule. The resulting ordering-and-stopping rule is analyzed in Appendix D.2, which establishes conservative reliability under the U + 
+
+> i
+
+-induced ordering. 
+
+3.3 Phase 3: Hedged Execution 
+
+Given the hedge set selected, HACO launches all candidates in S in parallel and returns once the highest-utility successful candidate is determined. Remaining traces are harvested asynchronously for future profile updates. For each executed candidate ai ∈ S , let si ∈ { 0, 1} denote whether the execution succeeds, and let ti denote its observed completion time. HACO denotes the execution-successful candidates observed for winner selection as 
+
+S+ = {ai ∈ S | si = 1 }. (14) 5If S+ = ∅, HACO emits a role-failure payload to the controller for recovery and skips winner selection. Otherwise, HACO returns the candidate with the highest optimistic prioritization utility: 
+
+awinner = arg max  
+
+> ai∈S +
+
+U + 
+
+> i
+
+. (15) The observed invocation latency is the time when the selected winner can be determined: 
+
+Tobs = max t(awinner ), max     
+
+> aj∈S :U+
+> j>U +
+> awinner
+
+tres 
+
+> j
+
+!
+
+, (16) where tres  
+
+> j
+
+denotes the resolution time of a higher-utility candidate, and the inner maximum is omitted when the set is empty. Thus, HACO ties blocking latency to the winner-decision time and uses the same U + 
+
+> i
+
+signal for final selection, trading post-execution reranking for lower evaluation overhead. 
+
+3.4 Phase 4: Experience Harvesting 
+
+A key advantage of HACO is that redundancy is used not only for robust execution, but also for experience harvesting since all executed candidates in the hedge set could provide useful feedback for future allocation decisions. Specifically, for each executed candidate ai ∈ S t, HACO records its LLM-judge quality signal 
+
+qi, success status si, completion time ti, token usage, internal failure status, and communication telemetry. Here, St denotes the hedge set at step t (and we write S when the step index is omitted). These traces are aggregated into two complementary profiles: 
+
+Candidate profiles. HACO updates uncertainty-aware capability estimate from LLM-judge quality signals. Here, qi is used to update the Beta profile in Eq. (4) and changes the posterior mean and uncertainty (μi, σ i) in Eq. (5) . These updated estimates are reused in the next allocation step by the optimistic ranking score U + 
+
+> i
+
+in Eq. (10) and the conservative reliability estimate R− 
+
+> i
+
+in Eq. (11) .HACO also refreshes running statistics, e.g., call frequency, failure rate, latency, and token usage. 
+
+Network-link profiles. HACO logs inter-agent transmissions and updates link-level statistics, including average bandwidth, bandwidth jitter, and packet-loss rate. These statistics are reused to estimate physical reliability ρi in Eq. (6) and effective latency Ti in Eq. (7) . The resulting latency cost and delay discount in Eqs. (8)–(9) then affect the next-round utility score and hedge-set construction. This harvesting mechanism turns redundant execution into both immediate robustness and future allocation evidence. Each hedge set provides observations over agent capability and physical execution conditions, allowing HACO to refine agent selection and network-aware cost estimation over time. Algorithm 1 in Appendix D.1 summarizes the full procedure of HACO. 
+
+4 Experiments 
+
+4.1 Experimental Setting Role types. HACO can be applied to any MAS that exposes role invocations and allows execution over multiple candidate agent instances. Here, we instantiate HACO on a multi-agent data-analysis system derived from DATAWISE. The underlying MAS is organized around four role types: planner, coder, debugger, and filter. These roles form a structured workflow in which the planner decomposes and updates task steps, the coder generates and executes code, the debugger repairs execution failures, and the filter cleans debugging outputs before execution resumes. This setting provides a representative long-horizon agent controller with state transitions and self-debugging behavior, while leaving HACO independent of the specific controller implementation. The full MAS-DATAWISE workflow is described in Appendix C.1. 
+
+Execution environment. To evaluate runtime uncertainty, we build a heterogeneous execution envi-ronment that captures both network fluctuation and probabilistic candidate failures. Candidate agent instances are deployed across three execution zones, i.e., Global, Regional, and Local. Each zone contains LLM candidates instantiated through different model APIs. We configure candidate-level invocation failures and inter-zone network conditions, including latency, jitter, bandwidth, and loss rate, through a controllable interface that emulates realistic deployment conditions. The motivation for using execution zones follows the cross-region inference patterns discussed in Appendix A; 6concrete candidate-pool configurations are reported in Appendix C.2.2, and the network simulator is detailed in Appendix C.2.1. We also validate HACO in a real-world Azure deployment with regional endpoints, measured endpoint latency, and candidate failures, as detailed in Appendix C.3. 
+
+Benchmarks. We evaluate HACO on three representative benchmarks. DSBench [ 28 ] evaluates data science agents on end-to-end workflows involving data preprocessing, feature engineering, and predictive modeling. InfiAgent-Bench [ 25 ] focuses on multi-step data analysis over structured CSV files in a code execution environment. MatplotBench [ 53 ] evaluates scientific visualization agents that generate plots from natural language specifications and structured data inputs. These benchmarks cover data-analysis reasoning, executable workflows, and visualization-oriented code generation. 
+
+Baselines. We compare HACO with representative baselines. Following recent LLM-routing benchmark practice [ 26 ], Random uniformly samples one candidate for execution, serving as an environment-agnostic single-route reference. Inspired by recent feedback-based LLM routing methods [ 36 , 47 ], BestOne selects the best one candidate according to historical performance records. 
+
+MoA-style Best-of-N [48 ] executes all candidate agents in parallel and uses an evaluator language model to score the candidate outputs, returning the highest-scoring response. Detailed descriptions and pseudocode are provided in Appendix D.3; hyperparameters are reported in Appendix D.1. 
+
+4.2 Experimental Results Reliability under Runtime Uncertainty. Fig. 3 evaluates HACO under runtime degradation injected after task index 50 and under an Azure-backed bad-agent deployment. Across network degradation, candidate degradation, and real bad-agent deployment, BestOne shows the largest reliability collapse, with all-failed-rate increases of 72 .8, 67 .4, and 90 .4 percentage points. The reason is that BestOne repeatedly favors the historically strongest candidate or zone, which becomes brittle once that execution path is degraded. Random is less concentrated, but it still lacks an explicit mechanism to identify and avoid degraded runtime conditions. HACO remains stable because redundant executions provide online evidence for reallocating future invocations. The selected-zone shifts in Fig. 3(d) show that HACO moves away from degraded regions, reducing Global selections by 80 and 40 percentage points under network and candidate degradation, respectively. In the real deployment, HACO shifts away from the failing US-labeled deployment and increases the use of JP and SE, while BestOne shifts further toward the failing region. Evaluator degradation has a minor effect, indicating that HACO does not strongly depend on the judge and can operate effectively with a weak LLM-as-judge evaluator. Overall, HACO approaches MoA-style robustness without full-pool execution, supporting the value of experience-guided adaptive redundancy under runtime uncertainty. 
+
+Overall Benchmark Performance. Fig. 4 compares HACO with single-route, fixed-zone, and full-redundancy baselines under the heterogeneous execution environment. All axes are normalized so that larger values indicate better performance, including effectiveness, strict success, token efficiency, latency efficiency, and all-failed-step reliability. Formal definitions of these radar metrics are provided in Appendix E.1. Across all benchmarks, HACO forms one of the largest and most balanced radar profiles, indicating consistent gains in task effectiveness, execution reliability, and practical efficiency. Single-route baselines expose the limitation of committing to one candidate before execution: Random is inexpensive but unstable, while BestOne can exploit historical performance but remains sensitive to unreliable candidates or execution zones. Fixed-zone baselines further show that no single execution zone dominates across all benchmarks and metrics. MoA-style Best-of-N provides strong reliability through full-pool execution, but this comes with substantially higher token and latency cost. In contrast, HACO uses an adaptive hedge subset, achieving reliability close to MoA while avoiding exhaustive execution. Detailed numerical results and an external-reference estimate are reported in Appendix E. Overall, these results support the main claim that adaptive redundancy provides a better effectiveness–efficiency–reliability trade-off than either single routing or full parallel execution. 
+
+Behavioral Analysis. Fig. 5 examines HACO’s adaptive redundancy and routing behavior. Unlike Random, BestOne, and fixed-zone baselines, which execute one candidate per invocation, and unlike MoA-style baseline, which executes the full candidate pool, HACO selects a hedge set whose size varies adaptively to adjust redundancy according to task difficulty and runtime uncertainty, as shown in Fig. 5 (a). The per-task traces in Fig. 5 (b) show role- and dataset-dependent allocation patterns, with harder workflows such as DSBench generally requiring larger hedge sets than simpler analysis 70 20 40 60 80 100 
+
+> 0
+> 25
+> 50
+> 75
+> Network degrad.
+> Average score  (a1)
+
+(a) Score Trend      
+
+> haco
+> bestone
+> moa
+> random
+> 020 40 60 80 100
+> 0
+> 50
+> All-failed
+> rate (%)
+> (b1)
+
+(b) Failure Trend    
+
+> haco
+> bestone
+> moa
+> random
+> haco bestone moa random
+> 0
+> 50
+> 100
+> Fail Rate (%)
+> +4.1
+> +72.8
+> +0.0
+> +36.4
+> (c1)
+
+(c) Failure Rate (first50 vs last50) 
+
+> first50
+> last50
+> HACO
+> (L/R/G)
+> =-0/+81/-80
+> BestOne
+> (L/R/G)
+> =-6/-19/+25
+> (d1)
+
+(d) Routing Zone Shift                                           
+
+> F50
+> L50
+> F50
+> L50
+> Local
+> Regional
+> Global
+> Inner: first50
+> Outer: last50
+> 020 40 60 80 100
+> 0
+> 20
+> 40
+> 60
+> Agent degrad.
+> Average score  (a2)
+> 020 40 60 80 100
+> 0
+> 50
+> 100
+> All-failed
+> rate (%)
+> (b2)
+> haco bestone moa random
+> 0
+> 50
+> 100
+> Fail Rate (%)
+> +0.0
+> +67.4
+> +0.0
+> +14.3
+> (c2)
+> HACO
+> (L/R/G)
+> =-2/+42/-40
+> BestOne
+> (L/R/G)
+> =-8/-23/+31
+> (d2)
+> F50
+> L50
+> F50
+> L50
+> Local
+> Regional
+> Global
+> Inner: first50
+> Outer: last50
+> 020 40 60 80 100
+> 20
+> 40
+> 60
+> Evaluator degrad.
+> Average score  (a3)
+> 020 40 60 80 100
+> 0
+> 20
+> 40
+> All-failed
+> rate (%)
+> (b3)
+> haco bestone moa random
+> 0
+> 50
+> 100
+> Fail Rate (%)
+> -0.1 +2.9 +0.2
+> +4.3
+> (c3)
+> HACO
+> (L/R/G)
+> =+0/-7/+7
+> BestOne
+> (L/R/G)
+> =-6/-9/+15
+> (d3)
+> F50
+> L50
+> F50
+> L50
+> Local
+> Regional
+> Global
+> Inner: first50
+> Outer: last50
+> 020 40 60 80 100
+> Task index (1..100)
+> 0
+> 25
+> 50
+> 75
+> Real agent degrad.
+> Average score  (a4)
+> 020 40 60 80 100
+> Task index (1..100)
+> 0
+> 50
+> 100
+> All-failed
+> rate (%)
+> (b4)
+> haco bestone moa random
+> 0
+> 50
+> 100
+> Fail Rate (%)
+> +0.6
+> +90.4
+> +0.2 +3.5
+> (c4)
+> HACO
+> (JP/SEA/SE/US)
+> =+34/-4/+41/-72
+> BestOne
+> (JP/SEA/SE/US)
+> =-9/-9/-6/+24
+> (d4)
+> F50
+> L50
+> F50
+> L50
+> JP
+> SEA
+> SE
+> US
+> Inner: first50
+> Outer: last50
+
+Figure 3: Reliability evaluation under runtime degradation and real deployment failures. Rows correspond to network degradation, candidate degradation, evaluator degradation, and a real-world Azure-backed deployment with injected candidate failures. 21.1 
+
+> 61.7
+> 9.0
+> 38.0
+> -6.9
+> 329
+> 14.4
+> 221
+> -0.7
+> 10.1
+
+Avg. Score 
+
+Strict Succ. 
+
+(%) 
+
+Token Eff. Latency Eff. 
+
+Reliability 
+
+MatplotBench 
+
+> -2.4
+> 94.5
+> -2.1
+> 90.8
+> -0.9
+> 219
+> 3.7
+> 142
+> -1.1
+> 15.1
+
+Accuracy (%) 
+
+Strict Succ. 
+
+(%) 
+
+Token Eff. Latency Eff. 
+
+Reliability 
+
+InfiAgent-Bench 
+
+> 1.9
+> 45.4
+> 5.7
+> 82.0
+> 8.2
+> 764
+> 37.5
+> 585
+> -0.9
+> 12.0
+
+Avg. Score 
+
+Strict Succ. 
+
+(%) 
+
+Token Eff. Latency Eff. 
+
+Reliability 
+
+DSBench 
+
+Random BestOne MoA Local Regional Global HACO 
+
+Figure 4: Performance comparison under the heterogeneous execution environment. Results are reported on MatplotBench, InfiAgent-Bench, and DSBench for Random, BestOne, MoA-style Best-of-N, fixed-zone Local, fixed-zone Regional, fixed-zone Global, and HACO. tasks such as InfiAgent-Bench. The selected-zone distribution in Fig. 5 (c) shows that HACO uses multiple execution zones instead of committing to a single fixed zone. These results support HACO’s design goal of treating redundancy and execution environment as runtime decision variables. 
+
+Reliability–Cost Trade-off. Fig. 6 (a)–(c) show that the reliability target τ provides a controllable knob for balancing task quality, execution reliability, and token cost. As τ increases from 0.70 to 
+
+0.95 , the step failure rate decreases from 1.87% to 0.17% , while the average score increases from 
+
+53 .77 to 58 .86 . This improvement comes at the cost of more redundant execution, as reflected by the increasing token mean in Fig. 6 (c). The score-token curve changes smoothly, indicating that HACO can move gradually between low-cost and high-reliability operating points. Single-route methods operate in a low-cost but less reliable regime, while MoA improves reliability through full-pool execution. HACO occupies an intermediate region, approaching high reliability without always paying the full cost of exhaustive parallelism. These results support the claim that adaptive redundancy improves robustness and exposes a tunable performance-efficiency frontier. 
+
+Component Ablation Fig. 6 (d) evaluates the contribution of three key components in HACO on MatplotBench. Removing any component decreases the average score, indicating that HACO’s gain does not come from a single heuristic. Without environment-aware modeling, the score drops from 58 .86 to 53 .00 , showing that effective candidate selection requires communication reliability, latency, and output quality to be modeled jointly. Removing the uncertainty bonus gives the lowest score, 51 .61 , suggesting that optimistic exploration is important for discovering under-observed 80.0 
+
+> 2.5
+> 5.0
+> Mean hedge size
+
+MatplotBench InfiAgent-Bench DSBench                          
+
+> (a) Hedge size summary
+> Random BestOne Local Regional Global HACO MoA
+> 118 35 52 69 86
+> Task ID
+> 0
+> 2
+> 4
+> HACO redundancy  MatplotBench
+> 144 87 130 173 216
+> Task ID
+> 0
+> 2
+> 4
+> InfiAgent-Bench
+> 115 28 41 54 67
+> Task ID
+> 0
+> 2
+> 4
+> DSBench
+> (b) HACO redundancy by task of each role
+> Planner Coder Debugger Filter
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 25
+> 50
+> 75
+> 100
+> Selected frequency (%)
+
+MatplotBench  
+
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+
+InfiAgent-Bench  
+
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+
+DSBench   
+
+> (c) Selected-zone frequency
+> Local Regional Global
+
+Figure 5: HACO behavior. (a) Mean hedge size of baselines and HACO, (b) per-task role redundancy, and (c) selected-zone frequency across three benchmarks. 0.70 0.80 0.90 0.95              
+
+> Reliability τ
+> 0.00
+> 0.01
+> 0.02
+> Rate
+> 11/587
+> 4/614
+> 2/560 1/596
+> (a)
+> Step Failure Rate
+> 0.70 0.80 0.90 0.95
+> Reliability τ
+> 0
+> 20
+> 40
+> 60
+> Score
+> 53.77 53.90 57.02 58.86
+> (b)
+> Average Score
+> 60k 90k 120k
+> Token Mean
+> 52
+> 54
+> 56
+> 58
+> 60
+> Score Mean
+> τ=0.70 τ=0.80
+> τ=0.90
+> τ=0.95
+> (c)
+> Quality vs Token Cost
+> 0.7
+> 0.8
+> 0.9
+> Reliability τ w/o Env
+> w/o UCB
+> w/o LCB
+> HACO
+> 0
+> 20
+> 40
+> 60
+> Score
+> 53.00 51.61 53.90 58.86
+> (d)
+> Average Score
+
+Figure 6: Reliability-target sweep and component ablation in MatplotBench. Panels (a)–(c) sweep the system reliability target τ ∈ { 0.70 , 0.80 , 0.90 , 0.95 } and report step failure rate, average score, and the score-token relationship. Panel (d) compares HACO with ablated variants that remove environment-aware modeling (Env), the uncertainty bonus (UCB), or conservative stopping (LCB). but useful candidates. Replacing conservative stopping also reduces the score to 53 .90 , which suggests that pessimistic reliability estimation helps avoid premature termination of the hedge set. Overall, the ablation confirms that HACO benefits from the joint design of environment-aware routing, uncertainty-aware ranking, and conservative reliability accumulation. 
+
+5 Conclusion 
+
+We presented HACO, a hedged agent computing approach for LLM-based agent systems. HACO views each role invocation as a runtime decision that jointly depends on role type, LLM choice, and execution environment, instead of treating it as a fixed call determined only by a role–agent instance pair. It combines query-adaptive redundant execution with experience harvesting, so that redundant invocations improve current robustness while also providing feedback for future allocation. Across agent benchmarks and stress settings, HACO improves execution reliability and output quality under heterogeneous runtime conditions, including network degradation, candidate degradation, evaluator degradation, and an Azure-backed deployment with injected candidate failures. HACO reduces the fragility of single-route execution and approaches the robustness of full parallel execution without always incurring its full token and latency cost. These results suggest that execution-aware redundancy allocation is a practical mechanism for building reliable LLM-based agent systems in dynamic real-world deployment environments. 9References 
+
+[1] Amazon Web Services. Increase throughput with cross-region inference. https://docs.aws. amazon.com/bedrock/latest/userguide/cross-region-inference.html , 2026. Ac-cessed: 2026-03-13. [2] Amazon Web Services. Geographic cross-region inference. https://docs.aws.amazon. com/bedrock/latest/userguide/geographic-cross-region-inference.html ,2026. Accessed: 2026-03-13. [3] Amazon Web Services. Regional availability - amazon bedrock. https://docs.aws.amazon. com/bedrock/latest/userguide/models-region-compatibility.html , 2026. Ac-cessed: 2026-03-13. [4] Anthropic. Effective harnesses for long-running agents. Anthropic Engi-neering Blog, 2025. URL https://www.anthropic.com/engineering/ effective-harnesses-for-long-running-agents . Published Nov. 26, 2025. [5] Yuda Bi, Ying Zhu, and Vince D. Calhoun. Redundancy as a structural information principle for learning and generalization. arXiv preprint arXiv:2510.10938 , 2025. URL https://arxiv. org/abs/2510.10938 .[6] Mark Carson and Darrin Santay. Nist net: A linux-based network emulation tool. Computer Communication Review , 33(3):111–126, 2003. [7] Mingju Chen, Guibin Zhang, Heng Chang, Yuchen Guo, and Shiji Zhou. A-mapreduce: Executing wide search via agentic mapreduce. arXiv preprint arXiv:2602.01331 , 2026. [8] China Academy of Information and Communications Technology and Alibaba Cloud Com-puting Co., Ltd. Guiding principles for excellent generative ai architecture design, Septem-ber 2025. URL https://pdf.dfcfw.com/pdf/H3_AP202509181745854315_1.pdf . Ac-cessed: 2026-04-07. [9] Cloudflare. Cloudflare global network | data center locations. https://www.cloudflare. com/network/ , 2026. Accessed: 2026-03-13. [10] Cloudflare. Cloudflare workers ai overview. https://developers.cloudflare.com/ workers-ai/ , 2026. Accessed: 2026-03-13. [11] CNBC. Microsoft says azure cloud computing service disrupted by fiber cuts in the red sea. https://www.cnbc.com/2025/09/06/ microsoft-azure-cloud-computing-service-disrupted-red-sea-fiber-cuts. html , 2025. Accessed: 2026-05-02. [12] CNN Business. Red sea cables have been damaged, disrupting internet traffic. https: //www.cnn.com/2024/03/04/business/red-sea-cables-cut-internet , 2024. Ac-cessed: 2026-05-02. [13] Dujian Ding, Ankur Mallick, Chi Wang, Robert Sim, Subhabrata Mukherjee, Victor Ruhle, Laks VS Lakshmanan, and Ahmed Hassan Awadallah. Hybrid LLM: Cost-efficient and quality-aware query routing. arXiv preprint arXiv:2404.14618 , 2024. [14] Zhaopeng Feng, Liangcai Su, Zhen Zhang, Xinyu Wang, Xiaotian Zhang, Xiaobin Wang, Runnan Fang, Qi Zhang, Baixuan Li, Shihao Cai, et al. Agentswing: Adaptive parallel context management routing for long-horizon web agents. arXiv preprint arXiv:2603.27490 , 2026. [15] Silvia Ferrari and Francisco Cribari-Neto. Beta regression for modelling rates and proportions. 
+
+Journal of applied statistics , 31(7):799–815, 2004. [16] Fireworks AI. Regions - fireworks ai docs. https://docs.fireworks.ai/deployments/ regions , 2026. Accessed: 2026-03-13. 10 [17] Adam Fourney, Gagan Bansal, Hussein Mozannar, Cheng Tan, Eduardo Salinas, Erkang Zhu, Friederike Niedtner, Grace Proebsting, Griffin Bassman, Jack Gerrits, Jacob Alber, Peter Chang, Ricky Loynd, Robert West, Victor Dibia, Ahmed Awadallah, Ece Kamar, Rafah Hosn, and Saleema Amershi. Magentic-one: A generalist multi-agent system for solving complex tasks. 
+
+arXiv preprint arXiv:2411.04468 , 2024. URL https://arxiv.org/abs/2411.04468 .[18] Google Cloud. Deployments and endpoints. https://docs.cloud.google.com/ vertex-ai/generative-ai/docs/learn/locations , 2026. Accessed: 2026-03-13. [19] Google Cloud. Standard paygo. https://docs.cloud.google.com/vertex-ai/ generative-ai/docs/standard-paygo , 2026. Accessed: 2026-03-13. [20] Paulo Gouveia, João Neves, Carlos Segarra, Luca Liechti, Shady Issa, Valerio Schiavoni, and Miguel Matos. Kollaps: Decentralized and dynamic topology emulation. arXiv preprint arXiv:2004.02253 , 2020. [21] Neha Gupta, Harikrishna Narasimhan, Wittawat Jitkrittum, Ankit Singh Rawat, Aditya Krishna Menon, and Sanjiv Kumar. Language model cascades: Token-level uncertainty and beyond. 
+
+arXiv preprint arXiv:2404.10136 , 2024. [22] Junda He, Christoph Treude, and David Lo. LLM-based multi-agent systems for software engineering: Literature review, vision, and the road ahead. ACM Transactions on Software Engineering and Methodology , 34(5):1–30, 2025. [23] Stephen Hemminger. tc-netem(8) Linux Manual Page , 2005. Linux Network Emulator (NetEm). [24] Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang, Jinlin Wang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. Metagpt: Meta programming for a multi-agent collaborative framework. arXiv preprint arXiv:2308.00352 , 2023. URL https://arxiv.org/ abs/2308.00352 .[25] Xueyu Hu, Ziyu Zhao, Shuang Wei, et al. Infiagent-dabench: Evaluating agents on data analysis tasks. In International Conference on Machine Learning , 2024. [26] Zhongzhan Huang, Guoming Ling, Yupei Lin, Yandong Chen, Shanshan Zhong, Hefeng Wu, and Liang Lin. RouterEval: A comprehensive benchmark for routing LLMs to explore model-level scaling up in LLMs. arXiv preprint arXiv:2503.10657 , 2025. [27] Dongfu Jiang, Xiang Ren, and Bill Yuchen Lin. LLM-blender: Ensembling large language models with pairwise ranking and generative fusion. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 14165–14178, 2023. [28] Liqiang Jing, Zhehui Huang, Xiaoyang Wang, Wenlin Yao, Wenhao Yu, Kaixin Ma, Hongming Zhang, Xinya Du, and Dong Yu. Dsbench: How far are data science agents from becoming data science experts? In International Conference on Learning Representations , 2025. [29] Meelis Kull, Telmo Silva Filho, and Peter Flach. Beta calibration: a well-founded and easily implemented improvement on logistic calibration for binary classifiers. In Artificial intelligence and statistics , pages 623–631. PMLR, 2017. [30] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with PagedAttention. In Proceedings of the 29th symposium on operating systems principles , pages 611–626, 2023. [31] LiteLLM. Auto routing - litellm. https://docs.litellm.ai/docs/proxy/auto_ routing , 2026. Accessed: 2026-03-13. [32] Yizhuo Ma, Ke Qin, and Shuang Liang. Beta-lr: Interpretable logical reasoning based on beta distribution. In Findings of the Association for Computational Linguistics: NAACL 2024 , pages 1945–1955, 2024. 11 [33] Lingrui Mei, Jiayu Yao, Yuyao Ge, Yiwei Wang, Baolong Bi, Yujun Cai, Jiazhi Liu, Mingyu Li, Zhong-Zhi Li, Duzhen Zhang, et al. A survey of context engineering for large language models. 
+
+arXiv preprint arXiv:2507.13334 , 2025. [34] Microsoft. Understanding deployment types in microsoft foundry models. https: //learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/ deployment-types , 2026. Accessed: 2026-03-13. [35] Microsoft Azure. Post incident review: Thermal event impacting multiple services – west europe. https://azure.status.microsoft/en-us/status/history/?force_ isolation=true , 2025. Tracking ID: 2LGD-9VG. Accessed: 2026-05-02. [36] Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E Gonzalez, M Waleed Kadous, and Ion Stoica. Routellm: Learning to route llms with preference data. 
+
+arXiv preprint arXiv:2406.18665 , 2024. [37] OpenAI. Data controls in the openai platform. https://developers.openai.com/api/ docs/guides/your-data/ , 2026. Accessed: 2026-03-13. [38] OpenRouter. Intelligent multi-provider request routing. https://openrouter.ai/docs/ guides/routing/provider-selection , 2026. Accessed: 2026-03-13. [39] OpenRouter. Openrouter quickstart guide. https://openrouter.ai/docs/quickstart ,2026. Accessed: 2026-03-13. [40] Portkey. Fallbacks - portkey docs. https://portkey.ai/docs/product/ai-gateway/ fallbacks , 2026. Accessed: 2026-03-13. [41] Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang, Weize Chen, Yusheng Su, Xin Cong, Juyuan Xu, Dahai Li, Zhiyuan Liu, and Maosong Sun. Chatdev: Communicative agents for software development. ACL , 2024. URL https://arxiv.org/ abs/2307.07924 .[42] Changle Qu, Sunhao Dai, Xiaochi Wei, Hengyi Cai, Shuaiqiang Wang, Dawei Yin, Jun Xu, and Ji-Rong Wen. Tool learning with large language models: A survey. Frontiers of Computer Science , 19(8):198343, 2025. [43] Shaina Raza, Ranjan Sapkota, Manoj Karkee, and Christos Emmanouilidis. Trism for agentic Trism: A review of trust, risk, and security management in LLM-based agentic multi-agent systems. AI Open , 2026. [44] Peter Reichl, Sebastian Egger, Raimund Schatz, and Alessandro D’Alconzo. The logarith-mic nature of qoe and the role of the weber-fechner law in qoe assessment. In 2010 IEEE international conference on communications , pages 1–5. IEEE, 2010. [45] Philipp Schmid. The importance of agent harness in 2026. Blog post, 2026. URL https: //www.philschmid.de/agent-harness-2026 .[46] Ying Sheng, Shiyi Cao, Dacheng Li, Coleman Hooper, Nicholas Lee, Shuo Yang, Christopher Chou, Banghua Zhu, Lianmin Zheng, Kurt Keutzer, et al. SLoRA: Scalable serving of thousands of LoRA adapters. Proceedings of Machine Learning and Systems , 6:296–311, 2024. [47] Asterios Tsiourvas, Wei Sun, and Georgia Perakis. Causal LLMs routing: End-to-end regret minimization from observational data. arXiv preprint arXiv:2505.16037 , 2025. [48] Junlin Wang, Jue Wang, Ben Athiwaratkun, Ce Zhang, and James Y. Zou. Mixture-of-agents enhances large language model capabilities. In International Conference on Learning Represen-tations , 2025. [49] Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. Self-consistency improves chain of thought reasoning in language models. arXiv preprint arXiv:2203.11171 , 2022. 12 [50] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, et al. Autogen: Enabling next-gen llm applications via multi-agent conversations. In First conference on language modeling , 2024. [51] Bingyu Yan, Zhibo Zhou, Litian Zhang, Lian Zhang, Ziyi Zhou, Dezhuang Miao, Zhoujun Li, Chaozhuo Li, and Xiaoming Zhang. Beyond self-talk: A communication-centric survey of LLM-based multi-agent systems. arXiv preprint arXiv:2502.14321 , 2025. [52] Yingxuan Yang, Chengrui Qu, Muning Wen, Laixi Shi, Ying Wen, Weinan Zhang, Adam Wierman, and Shangding Gu. Understanding agent scaling in llm-based multi-agent systems via diversity. arXiv preprint arXiv:2602.03794 , 2026. URL https://arxiv.org/abs/2602. 03794 .[53] Zhiyu Yang, Zihan Zhou, Shuo Wang, et al. Matplotagent: Method and evaluation for llm-based agentic scientific data visualization. In Findings of ACL , 2024. [54] Ziming You, Yumiao Zhang, Dexuan Xu, Yiwei Lou, Yandong Yan, Wei Wang, Huaming Zhang, and Yu Huang. Datawiseagent: A notebook-centric llm agent framework for automated data science. arXiv preprint arXiv:2503.07044 , 2025. [55] Murong Yue, Jie Zhao, Min Zhang, Liang Du, and Ziyu Yao. Large language model cas-cades with mixture of thoughts representations for cost-efficient reasoning. arXiv preprint arXiv:2310.03094 , 2023. [56] Xuechen Zhang, Zijian Huang, Ege Onur Taga, Carlee Joe-Wong, Samet Oymak, and Jiasi Chen. Efficient contextual LLM cascades through budget-constrained policy learning. Advances in Neural Information Processing Systems , 37:91691–91722, 2024. [57] Zeyu Zhang, Quanyu Dai, Xiaohe Bo, Chen Ma, Rui Li, Xu Chen, Jieming Zhu, Zhenhua Dong, and Ji-Rong Wen. A survey on the memory mechanism of large language model-based agents. 
+
+ACM Transactions on Information Systems , 43(6):1–47, 2025. [58] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu, Xin Jin, and Hao Zhang. {DistServe }: Disaggregating prefill and decoding for goodput-optimized large language model serving. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) , pages 193–210, 2024. 
+
+A Cross-Region Inference in Practice 
+
+This section documents publicly available evidence that cross-region inference is already a practical deployment pattern in modern LLM serving systems. Modern platforms expose several distinct abstractions that decouple API ingress from the physical location of inference execution. Although their implementations differ, these systems consistently allow the execution region to vary with deployment configuration, routing policy, capacity conditions, or compliance constraints. From a systems perspective, existing platforms can be grouped into three representative categories. 
+
+(1) Cloud-region routing platforms Some LLM serving systems expose global endpoints that dynamically route requests across multiple cloud regions. In these systems, the developer interacts with a stable API endpoint while the provider determines the actual inference location according to internal routing policies such as capacity availability or load balancing. Azure Foundry provides three deployment types: Global , Data Zone , and Regional . Under Global deployment, requests may be processed in any Azure region where the model is available. Data Zone deployments restrict processing within a specified geography such as the US or EU, while Regional deployments keep execution within a specific region [34]. Vertex AI exposes a similar abstraction through regional endpoints and a global endpoint . The global endpoint draws from a larger multi-region capacity pool and therefore offers higher availability and burst tolerance than a single region. However, the platform does not expose the actual processing region of a request to the developer [18, 19]. 13 Table 1: Publicly documented cross-region inference mechanisms in representative LLM serving plat-forms. Existing systems already treat execution location as an operational variable at the infrastructure layer. 
+
+Platform Public cross-region support Developer control / visibility Primary platform objective 
+
+Azure Foundry Global, Data Zone, and Regional deployments. Global and Data Zone deployments may route requests across eligible datacenters. Developers choose the deployment type. Global deployments may process prompts and responses in any eligible Azure region, while Regional deployments keep processing in the deployment region. Increase quota, throughput, model availability, and geography-level compliance. Vertex AI Regional endpoints and a global endpoint. The global endpoint routes traffic over a larger multi-region capacity pool. Developers choose regional versus global endpoints, but the actual processing region of the global endpoint is not exposed to the user. Improve availability, reduce 429 errors, and absorb bursty demand through capacity-aware routing. Amazon Bedrock Geographic and Global cross-region inference profiles route requests across multiple AWS Regions. Developers choose an inference profile. The actual inference region can be observed through CloudTrail. Increase throughput, absorb traffic bursts, and satisfy geography-level compliance constraints. OpenAI API Regional processing and data residency at the project level. Developers explicitly choose a project region and, where supported, use the corresponding regional endpoint. Support compliance, regional processing, and in some cases lower latency. Cloudflare Workers AI Inference runs on Cloudflare’s global network with distributed GPU deployment. Developers use a global network abstraction, while the concrete inference region is left unspecified. Serve requests closer to users and improve responsiveness and resilience. Fireworks AI Default multi-region deployments over GLOBAL , US ,
+
+EUROPE , and APAC . Deployments may run in any region within the selected scope. Developers can use a multi-region deployment or pin the deployment to a single region. Elastic scaling, availability, regional compliance, and deployment near users. 
+
+Amazon Bedrock provides cross-region execution through inference profiles . These profiles support both geographic cross-region inference , which restricts execution within a specific geography, and 
+
+global cross-region inference , which allows requests to be routed across commercial AWS regions worldwide [ 1– 3 ]. Bedrock also documents that the final inference region can be observed through service telemetry such as CloudTrail. In all of these systems, region selection is determined by the infrastructure layer. 
+
+(2) Region pinning and data residency A second design treats region as an explicit configuration parameter. In this setting, developers choose the processing region during deployment, and inference is performed within that region. OpenAI provides regional processing and data residency features at the project level. Developers select a project region and, where supported, access the corresponding regional endpoint [ 37 ]. While this model does not expose dynamic cross-region routing in the same way as Azure, Vertex AI, or Bedrock, it confirms that physical processing location is treated as an operational concern in production LLM APIs. 
+
+(3) Distributed inference infrastructure A third design emerges in systems that provide inference over geographically distributed GPU infrastructure. Cloudflare Workers AI runs inference on GPUs deployed across Cloudflare’s global edge network, allowing models to execute close to user locations [ 10 , 9 ]. Fireworks provides multi-region deploy-ments with scopes such as GLOBAL , US , EUROPE , and APAC . Deployments may run in any region within the selected multi-region scope [ 16 ]. In both cases, physical location is treated as part of the serving substrate, not as a fixed endpoint. 14 Across these designs, the physical execution region of an LLM request is therefore not fixed a priori .Instead, it may vary with deployment configuration, routing policy, capacity conditions, or compliance constraints. This observation directly supports our formulation in which the execution environment of a role invocation represents a runtime context with potentially different latency, execution reliability, and downstream connectivity characteristics. Table 1 shows that cross-region inference is already supported by major model serving platforms. As we can see, current cloud inference platforms already consider region, but they do so mainly for infrastructure-level goals such as throughput, burst absorption, availability, and compliance [34 , 18 , 19 , 1, 2, 37 , 10 , 16 ]. By contrast, third-party gateways and model access layers usually expose LLM choice or provider choice as the main control surface, emphasizing fallback, load balancing, and provider-level routing, with less direct attention to the execution region itself [ 39 , 38 , 40 , 31 ]. What remains weakly addressed is request-aware, region-aware execution for agent workloads. Task-level performance depends not only on LLM choice, but also on where inference runs. HACO introduces an application-level coordination layer for agent execution. It operates above existing provider routing mechanisms and makes task-level decisions about whether to launch redundant executions, which candidates to include, and how to balance latency, system reliability, and output quality. This design incorporates query characteristics and execution region conditions into the coordination process, enabling agent systems to utilize regional diversity during inference. 
+
+B Comparison with Related Runtime and Inference-Time Paradigms 
+
+Table 2: HACO compared with related runtime and inference-time paradigms.                  
+
+> Paradigm Control point Execution pattern Relation to HACO
+> LLM routing [ 13 ,36] Single-executor selec-tion One model or end-point per request Routing chooses one executor for a request, usu-ally to balance quality and cost. HACO operates at the role-invocation allocation point and selects an adaptive hedge set when a single execution is not sufficient for the target reliability level. Fallback or cas-cade [55, 21, 56] Post-hoc escalation or recovery Sequential backup calls Fallback and cascade methods invoke a stronger or backup executor after failure, low confidence, or insufficient consistency. HACO allocates re-dundancy before execution using estimated capa-bility, failure, latency, and link conditions. Batch infer-ence [30, 58, 46] Serving-batch con-struction Many requests pro-cessed together Batch inference improves serving throughput or hardware utilization across requests. HACO con-trols reliability for each role invocation before the launched calls are served. Multi-output ag-gregation [ 27 ,48 ,49] Output selection or synthesis Multiple samples, agents, or models Best-of-N, self-consistency, MoA, and ensem-ble methods mainly improve final answer quality through selection, voting, ranking, or synthesis. HACO decides which executions to launch under runtime uncertainty; aggregation can be applied after the hedge set produces outputs as a potential future research direction.
+> HACO Role-invocation allo-cation Adaptive parallel ex-ecution HACO selects a reliability-constrained hedge set over candidate agent instances and stops allocation when the target reliability level is reached.
+
+Table 2 clarifies the control point addressed by HACO. Existing paradigms typically operate at single-route selection, post-failure recovery, serving-batch construction, or output aggregation. HACO instead addresses the preceding allocation problem for each role invocation. Specifically, before execution, it decides which candidate agent instances should be activated and when the selected hedge set has reached the required reliability level. This formulation makes output aggregation a possible downstream policy. 
+
+Role of Redundancy in HACO. Figure 7 further clarifies the role of redundancy in HACO. In contrast to methods that use parallelism mainly for post-hoc output selection, synthesis, or serving 15 efficiency, HACO uses redundancy as a runtime control mechanism at the role-invocation level. For the current invocation, hedged execution improves reliability by tolerating candidate failures, high latency, and unstable service or network conditions. For future invocations, the executed hedge set provides additional traces for experience harvesting, including quality, success or failure, latency, and network statistics. These observations update candidate and link profiles, allowing HACO to improve later routing and hedge-set allocation. Thus, redundancy in HACO serves both as an immediate protection mechanism and as a data-collection mechanism for adaptive future decisions. Two Roles of Redundancy in Agent Systems 
+
+> Immediate robustness + future learning
+> Role Invocation
+> Redundant / Hedged Execution
+> Agent A
+> Region 1
+> Agent B
+> Region 2
+> Agent C
+> Region 3
+
+⋯ Agent D         
+
+> Region 4
+> Slow / unstable
+> Executed in Parallel
+> 1. Enhance Agent Runtime Reliability
+> Immediate effect
+> Success
+> (Fast)
+> Success
+> (Normal)
+> Failed
+> (Error)
+> Slow
+> (High Latency)
+> Reliable Response
+> Survives
+> failures
+> Reduces
+> outage risk
+> Improves success
+> under unstable
+> network / service
+> conditions
+> 2. Enable Experience Harvesting
+> Long-term effect
+> Execution Traces
+> quality success/failure latency network stats
+> Profile Update / Learning
+> Better Future Allocation
+> Learns
+> candidate
+> quality
+> Updates
+> reliability &
+> link profiles
+> Improves future
+> routing / hedge
+> selection
+> Redundancy is not only a protection mechanism for the current invocation,
+> but also a data-collection mechanism for better future decisions.
+
+Figure 7: Role of redundancy in HACO. Redundant or hedged execution improves reliability for the current role invocation while also collecting execution traces for future allocation. HACO records quality, success/failure, latency, and network statistics from executed candidates, updates candidate and link profiles, and uses these profiles to improve later routing and hedge-set selection. 
+
+C Experimental Setup Details 
+
+C.1 MAS-DATAWISE settings 
+
+Our multi-agent system is implemented as an extension of DATAWISE. In particular, we build on the original DATAWISE [ 54 ] framework and adapt it from a single-system workflow into a collaborative multi-agent setting, while preserving its controller logic and execution structure. We use this system as the primary testbed in our experiments because it provides a representative controller with explicit state transitions, iterative code execution, and built-in self-debugging behaviors. At the same time, HACO is not tied to this specific controller design. Its routing and redundancy allocation mechanisms are agnostic to the internal orchestration policy of the underlying MAS, and can therefore be applied not only to complex finite-state-machine (FSM) controllers such as DATAWISE, but also to simpler workflow-style controllers such as M ETA GPT [24], as well as other controller paradigms. Fig. 8 illustrates the DATAWISE concurrent FSM workflow from a role-oriented perspective. The un-derlying controller is a six-state finite-state machine with states INITIATE_PLAN, APPEND_CODE, DEBUG, FILTER, UPDATE_PLAN, and TERMINATE. Functionally, however, the workflow is organized around four role types. The planner initializes and updates task steps, the coder performs iterative code generation and execution, the debugger repairs failures arising during execution or verification, and the filter cleans debugging outputs before execution resumes. The coding stage is controlled by explicit action signals: AWAIT_TAG prolongs the current execution stage, whereas com-pletion signals return control to the planner. At the workflow level, the planner determines whether to iterate on the current step, advance to the next step, or terminate the process through the signals ITERATE_ON_LAST_STEP, ADVANCE_TO_NEXT_STEP, and FULFILL_INSTRUCTION. To-gether, these mechanisms form a structured self-debugging workflow in which recovery follows the path DEBUG → FILTER → APPEND_CODE. 16 Role-Oriented View of the Datawise Concurrent Planning Workflow 
+
+> Four functional roles execute a six-state FSM; this figure emphasizes collaboration rather than exhaustive transition conditions.
+
+Planner Coder Debugger Filter INITIATE_PLAN 
+
+> create / verify current step
+
+UPDATE_PLAN 
+
+> revise step, advance, or finish
+
+APPEND_CODE 
+
+> execute / append code actions
+
+DEBUG 
+
+> repair failed node or execution
+
+FILTER 
+
+> screen debugger output
+
+TERMINATE     
+
+> return final result start step passes step completes or execution budget reached FULFILL_INSTRUCTION ADVANCE_TO_NEXT_STEP or ITERATE_ON_LAST_STEP missing step node or verification failure (self-debug enabled) missing exec node or verification failure debugger step completes filtered repair is reintegrated return to coding after self-debug recovery AWAIT_TAG
+> Implementation notes
+> • Active only when planning mode is enabled. • The loop may also stop at planning_max_number. • If configured, max_step_number can terminate early. Self-debug recovery path: DEBUG →FILTER →APPEND_CODE Only UPDATE_PLAN explicitly jumps to TERMINATE.
+
+Figure 8: Role-oriented view of the DATAWISE concurrent FSM workflow. The underlying controller is a six-state finite-state machine, while the execution dynamics can be organized into four role types: planner, coder, debugger, and filter. The figure highlights role collaboration and the self-debug recovery path. 
+
+C.2 Simulating Environment 
+
+Fig. 9 provides an overview of the simulated experimental setup. It combines the zone-aware network topology over Local, Regional, and Global execution zones with the role-specific candidate pool used by the MAS. The network side specifies latency, jitter, bandwidth, and loss for each logical inter-zone link, while the candidate side shows the LLM backbone, replica count, failure rates, and temperature settings for each role. The following two sections detail these two components: the topology-based network simulator and the candidate-pool configuration. NETWORK TOPOLOGY 
+
+Regional 
+
+Regional ↔ Regional :
+
+base 40 ms, jitter 10 
+
+ms, bandwidth 100 
+
+tok/ms, loss 0.5% 
+
+Local 
+
+Local ↔ Local :
+
+base 2 ms, jitter 1 
+
+ms, bandwidth 500 
+
+tok/ms, loss 0.01% 
+
+Global 
+
+Global ↔ Globa l: 
+
+base 60 ms, jitter 15 
+
+ms, bandwidth 200 
+
+tok/ms, loss 0.1% 
+
+Local ↔ Regional :
+
+150 ± 30 ms, 
+
+50 tok/ms, 
+
+loss 1.5% 
+
+Regional ↔ Global :
+
+350 ± 60 ms, 
+
+20 tok/ms, 
+
+loss 0.8% 
+
+Local ↔ Global :
+
+500 ± 150 ms, 
+
+10 tok/ms, 
+
+loss 3.0% 
+
+Labels show base latency ± jitter, bandwidth, and packet loss. 
+
+Decide Place: Local, GPT-4o 
+
+Global Regional Local 
+
+Planner 
+
+Coder 
+
+Debugger 
+
+Filter 
+
+2× GPT-4o 
+
+fail: 5%, 15% 
+
+T=0.0 
+
+2× GPT-4o-mini 
+
+fail: 2%, 9% 
+
+T=0.0 
+
+2× Llama-3.1-8B-
+
+Instruct 
+
+fail: 0.1%, 3% 
+
+T=0.0 
+
+2× GPT-4o 
+
+fail: 6%, 16% 
+
+T=0.2 
+
+2× GPT-4o-mini 
+
+fail: 5%, 10% 
+
+T=0.2 
+
+2× Llama-3.1-8B-
+
+Instruct 
+
+fail: 0.1%, 5% 
+
+T=0.2 
+
+2× GPT-4o 
+
+fail: 5%, 12% 
+
+T=0.0 
+
+2× GPT-4o-mini 
+
+fail: 2%, 10% 
+
+T=0.0 
+
+2× Llama-3.1-8B-
+
+Instruct 
+
+fail: 0.1%, 4% 
+
+T=0.0 
+
+2× GPT-4o 
+
+fail: 4%, 12% 
+
+T=0.0 
+
+2× GPT-4o-mini 
+
+fail: 2%, 8% 
+
+T=0.0 
+
+2× Llama-3.1-8B-
+
+Instruct 
+
+fail: 0.1%, 3% 
+
+T=0.0 
+
+All agents use top-p = 1 and frequency penalty = 0.0. 
+
+Total role-specific agents: 24 (4 roles × 3 zones × 2 replicas). 
+
+Figure 9: Simulating environment overview. C.2.1 Network Simulation Details 
+
+We simulate inter-candidate communication using a message-level network model . Specifically, we directly approximate the end-to-end latency and failure behavior of transmitting a complete message (e.g., a list of notebook cells) between candidates. This design follows the parameterized network-emulation paradigm used in prior systems such as NIST Net and Linux NetEm, which models the network behavior using delay, jitter, bandwidth constraints, and loss parameters [ 6 , 23 ]. It is also consistent with the view that, for distributed applications, the most important network 17 properties are emergent end-to-end characteristics such as latency, bandwidth, packet loss, and jitter, while the full internal state of routers and switches is less directly relevant [20]. The topology in Fig. 9 and Table 5 is reported in simulator configuration units: latency in milliseconds and bandwidth in tokens/ms. The simulator computes message-level communication delay using these units. Before the resulting observations are used by HACO’s effective-latency model in Eq. (7) ,payload size is represented in bytes, bandwidth statistics are converted to bytes/s, and latency values are converted to seconds. 
+
+Network topology. We define a set of execution zones 
+
+Z = {Global , Regional , Local }.
+
+Each execution-zone pair is associated with a logical link whose properties are specified in a topology matrix. Each link is parameterized by: (i) base latency μ in milliseconds, (ii) jitter standard deviation 
+
+σ in milliseconds, (iii) bandwidth B in tokens/ms, and (iv) loss rate p ∈ [0 , 1] .
+
+Message size. Given a message at step i consisting of a list of notebook cells, we estimate its payload size M (i) (in bytes) by serializing the cells into JSON. 
+
+Transmission delay. For a successful transmission at step i, the serialization/transmission delay is 
+
+T (i)tx = M (i)
+
+4B , (17) where B is the configured bandwidth in tokens/ms and we assume 1 token ≈ 4 bytes. 
+
+Path delay with jitter. The path delay is modeled as a base latency perturbed by zero-mean Gaussian noise: 
+
+T (i)path = max 
+
+
+
+Tmin (μ), μ + ξ(i)
+
+, ξ(i) ∼ N (0 , σ 2), (18) where Tmin (μ) is a latency floor that prevents unrealistic near-zero delays under negative jitter realizations. In particular, we use a base-relative lower bound: 
+
+Tmin (μ) = max( ϵfloor , ζμ ), (19) where ϵfloor is a small absolute lower bound and ζ ∈ (0 , 1) is a fixed ratio. In our implementation, we use ϵfloor = 1 ms and ζ = 0 .2. This design preserves the scale differences between short-range and long-range links: for example, local links may have lower absolute floors than cross-region links, while all links remain protected against invalid near-zero latency samples. 
+
+Communication failure and timeout. We model failures at the message level . For each trans-mission at step i, a failure occurs independently with probability p. We abstract away lower-layer retransmission and transport protocol dynamics, and approximate the end effect of unsuccessful communication at the application level: a failed transmission incurs a fixed timeout penalty, 
+
+t(i)net = Ttimeout , (20) where Ttimeout = 10 seconds in our implementation. This corresponds to application-level request timeout behavior, such as an RPC timeout, and does not model packet-level network timeout. 
+
+Total communication latency. Otherwise (i.e., if the transmission succeeds), the communication latency is computed as 
+
+t(i)net = T (i)tx + T (i)path . (21) Equivalently, the complete model can be written as 
+
+t(i)net =
+
+(Ttimeout , with probability p, T (i)tx + T (i)path , with probability 1 − p, ξ(i) ∼ N (0 , σ 2). (22) 18 Discussion. Our simulator is intentionally lightweight. It does not model packet-level mechanisms such as retransmissions, congestion control, reordering, or queueing disciplines. Instead, these effects are abstracted through stochastic delay and application-level timeout penalties. The use of a base-relative latency floor further ensures that jitter perturbs links realistically without collapsing long-range links into implausibly small delays. This abstraction is sufficient for our setting, which focuses on how heterogeneous inter-zone communication affects multi-agent coordination, while leaving exact transport-protocol behavior outside the scope of the simulator. 
+
+C.2.2 Candidate Pool Details 
+
+This section details the candidate-pool configurations used in the experiments. The implementation loads role-specific candidates from the experiment configuration and uses the active network-topology block for the topology-based network simulator. The descriptions below focus on the resulting runtime settings and omit configuration-file layout details. 
+
+Configurations for reliability under runtime uncertainty. The reliability-under-runtime-uncertainty experiments in Fig. 3 evaluate the degradation settings discussed in Sec. 4.2: network degradation, candidate degradation, and evaluator degradation. Each simulated setting changes one runtime dimension after task index 50 while preserving the same role-invocation interface and MAS workflow. Table 3 summarizes how each stress setting differs from the overall benchmark performance configuration. Table 3: Configuration changes used for reliability evaluation under runtime uncertainty. Each stress setting changes one axis of the runtime system: candidate availability, network connectivity, or evaluator capability.         
+
+> Stress setting Runtime setup Change relative to the overall benchmark performance configuration
+> Candidate degradation Global candidate outage Keeps the default network topology, but forces selected high-capability Global candidates to fail. In particular, both Global planner replicas and one Global coder replica are assigned failure rate 1.0. All other candidate definitions and failure rates remain the same as in the overall benchmark performance pool. Network degradation Global-link outage Keeps the same 24 candidate definitions and candidate failure rates, but changes the active network topology. All links involving the Global zone are made unavailable with loss rate 1.0: Local–Global, Regional–Global, and Global–Global. Local–Regional and Regional–Regional remain reachable with 60 ms / 10 ms / 150 tokens per ms / 0.003 loss and 15 ms / 4 ms / 220 tokens per ms / 0.0008 loss, respectively. Evaluator degradation Weak router/evaluator Keeps the overall benchmark performance candidate pool and default network topology, but replaces the router/evaluator model with a Local meta-llama/llama-3.1-8b-instruct instance. This setting stresses methods whose final selection depends on evaluator quality, especially full parallel generation followed by post-hoc scoring.
+
+Configuration for overall benchmark performance. The overall benchmark performance results in Fig. 4 compare HACO with single-route, fixed-zone, and full-redundancy baselines under the het-erogeneous execution environment described in the main text. This setting uses the full heterogeneous candidate pool. The pool contains four role types: planner, coder, debugger, and filter. Each role has six candidate agent instances: two Global candidates using gpt-4o , two Regional candidates using 
+
+gpt-4o-mini , and two Local candidates using meta-llama/llama-3.1-8b-instruct . Thus, each execution zone contributes two candidates per role and eight candidates in total across the four roles, yielding 24 role candidates in the full pool. The router/evaluator agent is placed in the Local zone and uses gpt-4o ; it supports routing and Best-of-N output scoring, but is not counted as a role candidate in the pool size. All candidates use top_p =1 and frequency penalty 0. The planner, debugger, and filter roles use temperature 0.0, while the coder role uses temperature 0.2. Table 4 summarizes the simulated candidate pool used for the overall benchmark performance setting. 19 Table 4: Simulated candidate pool for overall benchmark performance. Each failure rate corresponds to one replica in the same role-zone-model group.                   
+
+> Role Global candidates
+> gpt-4o
+> Regional candidates
+> gpt-4o-mini
+> Local candidates
+> Llama-3.1-8B Temp.
+> Planner Failure rates 0.05, 0.15 Failure rates 0.02, 0.09 Failure rates 0.001, 0.03 0.0 Coder Failure rates 0.06, 0.16 Failure rates 0.05, 0.10 Failure rates 0.001, 0.05 0.2 Debugger Failure rates 0.05, 0.12 Failure rates 0.02, 0.10 Failure rates 0.001, 0.04 0.0 Filter Failure rates 0.04, 0.12 Failure rates 0.02, 0.08 Failure rates 0.001, 0.03 0.0
+
+Table 5: Default simulated network topology. The simulator interprets each entry as a logical inter-zone link with stochastic delay, bandwidth, and message-level loss.                             
+
+> Link Base latency (ms) Latency Jitter (ms) Bandwidth (tokens/ms) Loss rate
+> Local–Local 21500 0.0001 Local–Regional 150 30 50 0.015 Local–Global 500 150 10 0.03 Regional–Regional 40 10 100 0.005 Regional–Global 350 60 20 0.008 Global–Global 60 15 200 0.001
+
+For the main comparison, Random and BestOne select a single candidate from this pool, MoA executes the full pool for the invoked role, and HACO selects a hedge subset according to its reliability target. The fixed-zone baselines use restricted variants of the same role structure. The Local baseline keeps one Local Llama candidate per role with failure rate 0.001. The Regional baseline keeps one Regional gpt-4o-mini candidate per role with failure rate 0.02. The Global baseline keeps one Global gpt-4o candidate per role with failure rate 0.05. Therefore, each fixed-zone baseline uses four role candidates in total, all from a single execution zone. These fixed-zone configurations use the same default simulated network topology as Table 5. 
+
+C.3 Real-World Azure Setting Details. 
+
+This section describes the real-world deployment used for the Azure-based HACO experiments. Unlike the simulated experiments in Appendix C.2.1, this setting does not sample latency from a hand-specified topology. Instead, each candidate agent is backed by an Azure OpenAI deployment in a concrete cloud region, and the runtime measures endpoint round-trip time during execution. 
+
+Azure candidate pool. The deployment uses the same four MAS roles as the main experiments: planner, coder, debugger, and filter. For each role, we instantiate one candidate in each of four Azure regions, yielding 16 role candidates in total. The router/evaluator is a separate Japan East deployment of gpt-4.1-mini and is not counted as a role candidate. In real mode, the config-uration loader canonicalizes the Azure connection fields and dispatches these entries through the 
+
+azure-openai-real-chat backend. Table 6 summarizes the active model and region assignments; API keys and endpoint credentials are omitted from the paper. All deployments use Azure API version 2024-12-01-preview , top_p =1, and frequency penalty 0. The planner, debugger, filter, and router/evaluator are run with temperature 0.0, while the coder role uses temperature 0.2. The bad-agent configuration injects failures only through real_failure_rate 
+
+in real mode; candidates with value 1.0 fail before the model request is issued and are logged as agent failures, while candidates with value 0 remain available unless the actual Azure request fails. 
+
+Real network-latency measurement. For each real candidate invocation, the directly observed API latency is an end-to-end latency: it includes client serialization, Internet and cloud routing, Azure front-end handling, service queueing, model inference, response transfer, and client-side response processing. Azure does not expose a per-request decomposition that cleanly separates pure network delay from model-side processing time. We therefore log this observed full-call latency as the real candidate execution latency, while collecting an additional RTT signal to build the network profile used by HACO. 20 Table 6: Azure-backed candidate pool used in the real-world bad-agent setting. The Lo-cal/Regional/Global labels are experimental execution labels; the actual network path is measured against the concrete Azure endpoint for each candidate.                 
+
+> Execution label Azure region Model Roles instantiated Forced outage in stress config
+> Global East US gpt-5.1-chat Planner, coder, debugger, filter Planner, coder, and filter use
+> real_failure_rate =1.0 Global Sweden Central gpt-4o Planner, coder, debugger, filter Debugger uses
+> real_failure_rate =1.0 Regional Southeast Asia gpt-4.1-nano Planner, coder, debugger, filter None Local Japan East gpt-4.1-mini Planner, coder, debugger, filter; router/evaluator None
+
+Concretely, the runtime performs a lightweight sidecar probe to the target candidate’s Azure endpoint by issuing HTTP requests to the Azure deployment-listing endpoint for that resource. For each probe, it measures wall-clock round-trip time with a monotonic timer. The default probe configuration uses three samples, a 5 second per-request timeout, a 30 second cache TTL per endpoint and API version, and a 0.8 second fallback latency if every probe attempt fails. Any HTTP response is sufficient for measuring RTT, because the probe is used only to characterize transport reachability and endpoint responsiveness, not generation quality. The median successful probe time is recorded as the endpoint RTT observation for that candidate’s network profile. The runtime also serializes the transmitted notebook cells to JSON and records the UTF-8 byte size as the payload size. In real-probe mode, the source and target execution-zone labels are retained for reporting, but the network profile is endpoint-based: it measures the orchestrator-to-Azure round-trip time to the target candidate’s region, rather than a synthetic zone-to-zone delay. The experience log aggregates these RTT observations into average RTT, RTT jitter, and probe failure rate for each observed agent pair. During HACO selection, the router uses the average RTT when available, or performs a fresh endpoint probe for cold-start candidates. This RTT profile serves as the real-deployment analogue of the communication-latency term in the simulated setting: it is combined with the candidate’s historical execution latency and then passed through the same bounded logarithmic latency discount used in the main HACO objective. 
+
+C.4 Compute Resources. 
+
+All experiments were executed in Dockerized environments (Docker 29.1.3) on a Linux server with AMD EPYC 9J14 CPUs (2 sockets, 96 cores per socket, 384 logical CPUs), 755 GiB system memory, and NVMe storage (6.9 TB total). Our method does not require local GPU training/inference; all model inference is performed via external LLM APIs, and the same API/deployment settings are used across compared methods for fairness. Although the host machine has GPUs available, they were not used in the reported experiments. Detailed runtime/token/cost statistics are already reported in Appendix Table 7. 
+
+D Algorithms and Baselines 
+
+D.1 HACO Algorithm 
+
+Algorithm 1 summarizes HACO. Here, τ specifies the target system reliability, λ controls the exploration bonus in optimistic ranking, and γ controls the conservative margin used in hedge-set stopping. The controller mapping Φ takes the current query-context pair (q, Ct) and returns a role invocation event (rt, x t). The initial task context C0 is initialized from the original query q, input data, and an empty execution history. 
+
+Hyperparameters. Unless otherwise specified, all HACO results use τ = 0 .9, λ = 1 .1, γ = 0 .7,
+
+κ = 2 .0, η = 0 .5, ϵB = 10 −6, and ϵR = 0 .1. Here, τ is the target system reliability, λ is the optimistic-ranking coefficient, γ is the conservative-margin coefficient, κ is the bandwidth-jitter 21 Algorithm 1: HACO: Hedged Agent Computing 
+
+Input :Query q, target system reliability τ , exploration λ, risk γ
+
+Output : Final response  
+
+> 1
+
+Initialize task context C0; // Initialize context  
+
+> 2
+
+while task not completed do  
+
+> 3
+
+Phase 1: Role Abstraction  
+
+> 4
+
+(rt, x t) ← Φ( q, Ct); // Infer role invocation event  
+
+> 5
+
+At ← candidate agent instances for rt; // Retrieve candidates by role type  
+
+> 6
+
+Phase 2: Redundancy Allocation  
+
+> 7
+
+foreach ai ∈ A t do  
+
+> 8
+
+(μi, σ i) ← PosteriorStats (αi, β i); // Posterior stats  
+
+> 9
+
+ρi ← (1 − f (i)int )(1 − ℓ(i)net ); // Execution success probability  
+
+> 10
+
+Ci ← ln 
+
+
+
+1 + Ti
+
+> T0
+
+
+
+; // latency-aware resource cost  
+
+> 11
+
+Di ← 1 + ηC i; // Stable delay discount  
+
+> 12
+
+U + 
+
+> i
+
+← min(1 ,μ i+λσ i)ρi 
+
+> Di
+
+; // Optimistic ranking  
+
+> 13
+
+Sort At by U + 
+
+> i
+
+descending; // Rank by optimistic utility  
+
+> 14
+
+St ← ∅ , Pfail ← 1; // Initialize hedge  
+
+> 15
+
+foreach ai in sorted At do  
+
+> 16
+
+R− 
+
+> i
+
+← min(0 .98 , max( ϵR, μ i − γσ i) · ρi); // Conservative execution reliability  
+
+> 17
+
+St ← S t ∪ { ai}; // Add to hedge  
+
+> 18
+
+Pfail ← Pfail (1 − R− 
+
+> i
+
+); // Update failure  
+
+> 19
+
+if 1 − Pfail ≥ τ then  
+
+> 20
+
+break; // Meet target system reliability  
+
+> 21
+
+Phase 3: Hedged Execution  
+
+> 22
+
+Launch St on payload xt in parallel; // Parallel launch  
+
+> 23
+
+Monitor completions until awinner is determined or all candidates fail; // Decision-time latency  
+
+> 24
+
+S+ 
+
+> t
+
+← { ai ∈ S t | si = 1 }; // Successful candidates  
+
+> 25
+
+if S+ 
+
+> t
+
+= ∅ then  
+
+> 26
+
+Ct+1 ← IntegrateFailure( St); // Trigger recovery  
+
+> 27
+
+continue  
+
+> 28
+
+awinner ← arg max ai∈S +
+
+> t
+
+U + 
+
+> i
+
+; // Winner selection  
+
+> 29
+
+Ct+1 ← Integrate( awinner ); // Context update  
+
+> 30
+
+Collect remaining traces asynchronously; // Experience harvesting  
+
+> 31
+
+Phase 4: Experience Harvesting  
+
+> 32
+
+foreach ai ∈ S t do  
+
+> 33
+
+Record execution trace; // (qi, s i, t i) + telemetry  
+
+> 34
+
+Update candidate profile; // Candidate statistics  
+
+> 35
+
+Update link profile; // Link statistics  
+
+> 36
+
+return final response 
+
+penalty, η is the latency-discount strength, ϵB is the bandwidth denominator floor, and ϵR is the conservative reliability lower bound. Only τ is varied in the reliability-target sweep. For the BestOne baseline, we use cold-start threshold nmin = 2 and epsilon-greedy exploration probability pexp = 0 .1.
+
+D.2 Properties of HACO’s Redundancy Allocation Scope of the guarantee. The results in this section should be interpreted as conditional properties of the HACO allocation rule, with their validity depending on explicit modeling assumptions. In particular, the conservative success statement relies on two conditions: the candidate qualified-success estimates R− 
+
+> i
+
+are calibrated lower bounds on the corresponding true probabilities, and selected candidates are conditionally independent given the observed runtime state. Under these assumptions, HACO’s accumulation rule provides a conservative certificate for the selected hedge set. When the assumptions are violated, the certificate should be viewed as an approximate reliability estimate, and empirical monitoring or recalibration is required. 22 We provide several basic properties of HACO’s Phase-2 redundancy allocation rule. Recall that candidates are sorted by descending optimism-adjusted utility U + 
+
+> i
+
+, and then added sequentially using the conservative execution reliability estimate R− 
+
+> i
+
+∈ [0 , 0.98] , with cumulative failure probability updated as Pfail ← Pfail (1 − R− 
+
+> i
+
+). The algorithm stops once 1 − Pfail ≥ τ .
+
+Notation. Let the sorted candidate list be a(1) , a (2) , . . . , a (m), where U +(1) ≥ U +(2) ≥ · · · ≥ U +(m).For the first k candidates in this order, define 
+
+P (k)fail := 
+
+> k
+
+Y
+
+> j=1
+
+(1 − R−
+
+> (j)
+
+), P (k)succ := 1 − P (k)fail .
+
+By convention, P (0) fail = 1 and P (0) succ = 0 .
+
+Reachability assumption. Unless otherwise stated, the following guarantees are stated for the feasible case in which the target reliability is conservatively reachable by the available candidate pool: 
+
+P (m)succ = 1 −
+
+> m
+
+Y
+
+> j=1
+
+(1 − R−
+
+> (j)
+
+) ≥ τ. 
+
+If this condition does not hold, HACO returns the full candidate pool under the given ordering. In that case, the conservative success estimate is P (m)succ , and no method restricted to the same candidate pool and conservative estimates can certify the target τ .
+
+Lemma D.1 (Monotonicity of conservative accumulation) . Assume R− 
+
+> (j)
+
+∈ [0 , 1] for all j. Then P (k)fail 
+
+is nonincreasing in k, and P (k)succ is nondecreasing in k.Proof. Since R− 
+
+> (k+1)
+
+∈ [0 , 1] , we have 1 − R− 
+
+> (k+1)
+
+∈ [0 , 1] . Therefore 
+
+P (k+1) fail = P (k)fail (1 − R−
+
+> (k+1)
+
+) ≤ P (k)fail .
+
+Hence P (k)fail is nonincreasing, and thus P (k)succ = 1 − P (k)fail is nondecreasing. 
+
+Proposition D.2 (Conditional conservative qualified-success certificate) . Assume conditional inde-pendence across selected candidates, suppose that R− 
+
+> i
+
+is a lower bound on the true qualified-success probability of candidate ai, and assume that the target reliability is conservatively reachable, i.e., 
+
+P (m)succ ≥ τ . If HACO terminates with hedge set S, then 
+
+P (qualified success | S) ≥ τ. 
+
+Proof. Under conditional independence, the true probability that no selected candidate achieves qualified success is Y
+
+> ai∈S
+
+(1 − pi),
+
+where pi denotes the true qualified-success probability of candidate ai. Since R− 
+
+> i
+
+≤ pi, we have 
+
+1 − pi ≤ 1 − R− 
+
+> i
+
+,
+
+and therefore Y
+
+> ai∈S
+
+(1 − pi) ≤ Y
+
+> ai∈S
+
+(1 − R− 
+
+> i
+
+) = Pfail .
+
+Thus, 
+
+P(qualified success | S ) = 1 − Y
+
+> ai∈S
+
+(1 − pi) ≥ 1 − Pfail .
+
+By the reachability assumption and the stopping rule, HACO stops at some k⋆ ≤ m satisfying 
+
+1 − Pfail ≥ τ . Therefore the result follows. 23 Algorithm 2: RANDOM 
+
+Input: Query x, candidate set A
+
+Output: Final response y 
+
+> 1
+
+Uniformly sample one candidate a from A; 
+
+> 2
+
+Execute candidate a on query x and obtain response y; 
+
+> 3
+
+return y;
+
+Proposition D.3 (Minimal feasible prefix under HACO ordering) . Fix the ordering induced by descending U + 
+
+> i
+
+, and assume P (m)succ ≥ τ . Suppose HACO stops after selecting the first k⋆ candidates. Then the returned hedge set is exactly the shortest prefix of this ordered list whose conservative success estimate reaches the target: 
+
+P (k⋆)succ ≥ τ, P (k)succ < τ for all k < k ⋆.
+
+Proof. By construction, HACO scans the ordered list sequentially and stops at the first index k⋆ such that P (k⋆)succ ≥ τ . Therefore all earlier prefixes fail to meet the threshold, i.e., P (k)succ < τ for k < k ⋆.Hence the selected set is the shortest feasible prefix under the HACO ordering. 
+
+Proposition D.4 (Monotonicity with respect to the system reliability target) . Fix the ordered candidate list and the conservative execution reliability estimates {R−
+
+> (j)
+
+}mj=1 , and assume P (m)succ ≥ τ2. Let k⋆(τ )
+
+denote the stopping index of HACO under target system reliability τ . Then k⋆(τ ) is nondecreasing in 
+
+τ : if τ1 ≤ τ2, then 
+
+k⋆(τ1) ≤ k⋆(τ2).
+
+Proof. From Lemma D.1, P (k)succ is nondecreasing in k. For a lower threshold τ1, HACO stops at the smallest prefix whose system reliability estimate reaches τ1. For a higher threshold τ2 ≥ τ1, any prefix feasible for τ2 is also feasible for τ1, but not necessarily conversely. Therefore the minimal feasible prefix for τ2 cannot be shorter than that for τ1.
+
+Proposition D.5 (Single-step overshoot bound) . Assume P (m)succ ≥ τ , and let k⋆ be the stopping index. Then HACO’s conservative success estimate satisfies 
+
+0 ≤ P (k⋆)succ − τ ≤ P (k⋆−1) fail R−
+
+> (k⋆)
+
+.
+
+Proof. We have 
+
+P (k⋆)succ − P (k⋆−1) succ = P (k⋆−1) fail R−
+
+> (k⋆)
+
+.
+
+Since k⋆ is the first index reaching the threshold, 
+
+P (k⋆−1) succ < τ ≤ P (k⋆)succ .
+
+Hence 
+
+0 ≤ P (k⋆)succ − τ ≤ P (k⋆)succ − P (k⋆−1) succ = P (k⋆−1) fail R−
+
+> (k⋆)
+
+.
+
+D.3 Baselines 
+
+We compare our method with three routing baselines, denoted as R ANDOM , B EST ONE , and M OA- 
+
+> STYLE
+
+BEST -OF -N in the main text. 
+
+RANDOM . This baseline uniformly samples one candidate from the candidate pool and executes only that candidate. Its output is returned directly without any further reranking or model-based evaluation. 
+
+BEST ONE . This baseline performs single-candidate selection based on historical performance. It uses the same LLM-judge quality signal as HACO for executed candidates, with failed or invalid executions assigned zero utility. It prefers the candidate with the best past average utility, while retaining a small probability of selecting other candidates for exploration. Only the selected candidate is executed and updated, and its response is returned as the final output. 24 Algorithm 3: BEST ONE 
+
+Input: Query x, candidate set A, exploration probability pexp 
+
+Output: Final response y 
+
+> 1
+
+foreach candidate a ∈ A do  
+
+> 2
+
+Estimate its historical average utility u(a); 
+
+> 3
+
+if candidate a has no history then  
+
+> 4
+
+Assign an optimistic default utility;  
+
+> 5
+
+Let a⋆ be the candidate with the highest estimated utility;  
+
+> 6
+
+Draw a random number r from [0 , 1] ; 
+
+> 7
+
+if r > p exp then  
+
+> 8
+
+Select a⋆; 
+
+> 9
+
+else  
+
+> 10
+
+Randomly select one candidate from A \ { a⋆}; 
+
+> 11
+
+Execute the selected candidate on query x and obtain response y; 
+
+> 12
+
+return y;
+
+Algorithm 4: ALGORITHM 4: M OA-STYLE BEST -OF -N R OUTER 
+
+Input: Query x, candidate set A
+
+Output: Final response y 
+
+> 1
+
+Execute all candidates in A on query x in parallel;  
+
+> 2
+
+Collect all candidate responses {ya | a ∈ A} ; 
+
+> 3
+
+Use an evaluator language model to assign an output-quality score to each candidate response;  
+
+> 4
+
+Select the highest-scoring response as y; 
+
+> 5
+
+return y;
+
+MoA-style Best-of-N. This baseline executes all candidates in parallel and collects all generated responses. A separate evaluator language model then assigns output-quality scores to the candidate outputs, and the highest-scoring response is selected as the final answer. We use “MoA” as a compact figure and table label for this MoA-style full-pool evaluator-based baseline. 
+
+Discussion. These baselines represent three distinct routing paradigms: random single-candidate routing, experience-guided single-candidate routing with limited exploration, and parallel candidate generation followed by model-based selection. They provide simple reference points for evaluating the effectiveness-efficiency trade-off of routing strategies. 
+
+E More Experimental Details 
+
+E.1 Radar Axis Definitions 
+
+For each benchmark b and method a, the radar in Fig. 4 is built from five raw metrics and then mapped to a common higher-is-better radial scale. 
+
+Effectiveness and strict success. Let Ta,b be tasks of method a on benchmark b. The first axis (“Avg. Score” or “Accuracy”) is the benchmark-specific mean effectiveness in percentage: 
+
+M eff  
+
+> a,b
+
+=
+
+( 1
+
+> |T a,b |
+
+P 
+
+> t∈T a,b
+
+score t, b ∈ { MatplotBench , DSBench },
+
+> 1
+> |T a,b |
+
+P 
+
+> t∈T a,b
+
+acc t, b = InfiAgent-Bench .
+
+The strict-success axis is: 
+
+M strict  
+
+> a,b
+
+=
+
+
+
+100 · 1
+
+> |T a,b |
+
+P 
+
+> t
+
+1[score t ≥ 80] , b = MatplotBench ,
+
+100 · question-level accuracy , b = InfiAgent-Bench ,
+
+100 · #{t:score t>0}|T a,b | , b = DSBench .
+
+25 Raw cost and failure metrics. From end-of-run traces, we compute mean token usage and latency; LLM-judge tokens for qi are counted in cost metrics, while asynchronous judging does not add to blocking latency: 
+
+M tok  
+
+> a,b
+
+= 11000 · 1
+
+|T a,b |
+
+X
+
+> t
+
+token_count t, M lat  
+
+> a,b
+
+= 1
+
+|T a,b |
+
+X
+
+> t
+
+latency t.
+
+For reliability, let Ea,b be all observed task steps and let Bt,s be executed concurrent branches at step 
+
+s of task t. With branch success indicator zt,s,k ∈ { 0, 1}, the all-failed-step rate is 
+
+M fail  
+
+> a,b
+
+= 100 · 1
+
+|E a,b |
+
+X
+
+> (t,s )∈T a,b
+
+1
+
+ X
+
+> k∈B t,s
+
+zt,s,k = 0 
+
+ .
+
+Lower M fail  
+
+> a,b
+
+means higher reliability. 
+
+“Token Eff.”, “Latency Eff.”, and “Reliability” in the radar. For each benchmark and each axis j, let xa,b,j be the raw value above, and define method-wise extrema xmin  
+
+> b,j
+
+= min a xa,b,j ,
+
+xmax  
+
+> b,j
+
+= max a xa,b,j . We then apply the same monotonic mapping as in plotting: 
+
+ˆxa,b,j =
+
+
+
+xa,b,j − xmin 
+
+> b,j
+
+xmax  
+
+> b,j
+
+− xmin 
+
+> b,j
+
+, higher-is-better axes ,xmax  
+
+> b,j
+
+− xa,b,j 
+
+xmax  
+
+> b,j
+
+− xmin 
+
+> b,j
+
+, lower-is-better axes .
+
+Thus, “Token Eff.” and “Latency Eff.” are reversed versions of mean tokens and mean latency, and “Reliability” is the reversed all-failed-step rate. The implementation adds a small per-axis padding before radius projection for visual spacing, but this does not change the ordering of methods. 
+
+Raw overall benchmark results. Table 7 reports the raw numerical results used to construct the radar comparison in Fig. 4. We report two effectiveness metrics for each benchmark: Avg. Score / Acc. and Strict Succ. (%). Because the benchmarks use different evaluation protocols, the exact definitions are benchmark-specific. For MatplotBench, Avg. Score / Acc. is the mean evaluator score over the plotting tasks. Strict Succ. (%) is SR@80, which counts a task as successful if its evaluator score is at least 80. For InfiAgent-Bench, Avg. Score / Acc. is the proportional sub-question accuracy using all benchmark questions as the denominator. Each question receives partial credit according to the fraction of its sub-questions answered correctly, while unevaluated questions are counted as zero. Strict Succ. (%) is the question-level success rate using all benchmark questions as the denominator; a question is counted as successful only when all of its sub-questions are answered correctly. For DSBench, Avg. Score / Acc. is the average normalized task score over all tasks, where task performance is normalized relative to the baseline and ground-truth performance. Tasks with missing or invalid outputs are counted as zero. Strict Succ. (%) is the percentage of tasks with a positive normalized score, meaning the method improves over the baseline on that task. These benchmark-specific definitions also explain why the relative magnitude of Avg. Score / Acc. and Strict Succ. (%) differs across benchmarks. On InfiAgent-Bench, partial sub-question credit can make Avg. Score / Acc. higher than Strict Succ. On DSBench, many tasks may obtain positive but small normalized scores, so Strict Succ. can be higher than Avg. Score / Acc. On MatplotBench, the relation depends on the distribution of evaluator scores around the SR@80 threshold. Therefore, the two columns should be interpreted according to each benchmark’s metric definition rather than compared using a universal ordering. 
+
+E.2 Note on MoA-style Baseline. 
+
+MoA-style baseline’s final score depends on post-hoc evaluator selection over heterogeneous candi-date outputs. On InfiAgent-Bench, tasks are relatively easy and candidate outputs are often close, so full-pool execution brings limited marginal gain. On DSBench, tasks are more difficult and the 26 Table 7: Detailed information about overall benchmark performance results. Effectiveness metrics are dataset-specific. “Strict Succ.” denotes SR@80 on MatplotBench and question-level accuracy on InfiAgent-Bench. “All-Failed Step Rate” is computed as the proportion of observed task steps for which all executed concurrent branches fail. 
+
+Dataset Method Effectiveness Efficiency Reliability 
+
+Avg. Score / Acc. Strict Succ. (%) Tokens (k) Latency (s) All-Failed Step Rate (%) MatplotBench random 46.45 27.00 46.51 82.69 8.78 bestone 47.75 25.00 32.22 52.50 9.35 moa 42.75 23.00 305.67 206.41 0.00 fix-local 23.90 11.00 43.55 54.42 0.28 fix-regional 47.68 25.00 64.91 50.74 3.01 fix-global 52.61 36.00 16.29 28.62 8.25 haco 58.86 36.00 65.32 23.50 0.17 InfiAgent-Bench random 86.06 83.27 25.82 34.87 8.65 bestone 77.82 75.49 25.33 22.69 13.94 moa 84.79 80.93 204.02 99.82 0.00 fix-local 69.42 64.98 52.37 132.47 0.13 fix-regional 87.86 84.44 35.81 25.82 3.56 fix-global 4.28 4.28 14.27 13.23 8.59 haco 89.01 84.44 91.04 31.31 0.37 DSBench random 31.83 58.90 89.54 254.04 6.95 bestone 41.84 73.61 98.90 107.41 11.14 moa 41.09 71.23 711.73 423.41 0.11 fix-local 4.90 10.96 103.52 546.77 0.00 fix-regional 39.79 67.12 88.39 143.46 3.53 fix-global 33.02 61.64 60.28 75.21 7.64 haco 42.40 76.71 393.72 125.91 0.40 
+
+pool may not contain a clearly superior output. On MatplotBench, diverse visualization programs and layouts further increase evaluator-selection noise, so MoA improves step-level availability but does not necessarily achieve the best task-level score. Fig. 10 further analyzes these raw results by comparing the distribution of latency and token usage, together with task effectiveness and step-level failure rate, across all baselines and HACO. 0.0 
+
+> 2.5
+> 5.0
+> Mean hedge size
+
+MatplotBench      
+
+> 118 35 52 69 86
+> Task ID
+> 0
+> 2
+> 4
+> HACO redundancy
+> Planner
+> Coder
+> Debugger
+> Filter
+> 0
+> 250
+> Latency (s)
+
+MatplotBench     
+
+> 0
+> 500
+> Tokens (K)
+> 100 200 300
+> Token Mean (K)
+> 25
+> 50
+> Avg score
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 10
+> Step Failure Rate (%)
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 50
+> 100
+> Selected frequency (%)
+
+MatplotBench 
+
+> 0.0
+> 2.5
+> 5.0
+
+InfiAgent-Bench       
+
+> 144 87 130 173 216
+> Task ID
+> 0
+> 2
+> 4Planner
+> Coder
+> Debugger
+> Filter
+> 0
+> 200
+
+InfiAgent-Bench       
+
+> 0
+> 250
+> 50 100 150 200
+> Token Mean (K)
+> 0
+> 50
+> Acc.
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 10
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 50
+> 100
+
+InfiAgent-Bench 
+
+> 0.0
+> 2.5
+> 5.0
+
+DSBench       
+
+> 115 28 41 54 67
+> Task ID
+> 0
+> 2
+> 4Planner
+> Coder
+> Debugger
+> Filter
+> 0
+> 500
+
+DSBench      
+
+> 0
+> 1000
+> 200 400 600
+> Token Mean (K)
+> 0
+> 25
+> Avg score
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 10
+> Random
+> BestOne Local
+> Regional
+> Global
+> HACO MoA
+> 0
+> 50
+> 100
+
+DSBench 
+
+(a) Hedge size summary + HACO role redundancy vs task id 
+
+(b) Latency, token, avg. score/acc, and failure rate 
+
+(c) Selected-zone frequency         
+
+> Random BestOne Local Regional Global HACO MoA
+> Local Regional Global
+
+Figure 10: More analysis of raw benchmark results. The figure compares latency, token usage, task effectiveness, and step-level failure rate for baselines and HACO across MatplotBench, InfiAgent-Bench, and DSBench. 
+
+E.3 Note on fixed-global in InfiAgent-Bench. 
+
+The low InfiAgent-Bench score of the fixed-global baseline mainly reflects its low valid-output completion rate, while completed outputs remain of reasonable quality. When fixed-global produces a valid final output, the judge usually assigns a full score, but many runs fail to produce a valid evaluable answer and are counted as zero in the aggregate accuracy. The reported all-failed-step rate is a step-level execution-availability metric and does not directly measure task-level valid-output 27 Table 8: External reference on MatPlotBench under idealized execution environment-free and execution environment-adjusted settings. The idealized scores are taken from DATA-WISE/DatawiseAgent [ 54 ]; the adjusted scores are estimated from those reported results under our heterogeneous execution-environment setting. For DATAWISE, we also report the result after adding HACO under the same adjusted setting.             
+
+> Method / Reference Idealized execution environment-free setting Execution environment-adjusted setting DATAWISE w/ visual tool [54] 64.33 52.61 58.86
+> (w/o HACO) (w/ HACO) AutoGen w/ visual tool [50] 63.60 52.0 DATAWISE [54] 61.22 50.1 MatplotAgent [53] 57.86 47.3 Direct Decoding [54] 45.28 37.0
+
+completion. Thus, the anomalously low average score reflects completion failures under the fixed global route, not a systematic quality drop of the underlying GPT-4o model. 
+
+E.4 Execution Environment-Adjusted Reference to External Baselines on MatplotBench 
+
+To provide an external reference, we compare HACO with strong results reported in the original DATAWISE paper [ 54 ] based on MatplotBench. Those results were obtained under the original benchmark setting, which does not model the practical heterogeneous runtime conditions considered in this work. We therefore report them as idealized execution environment-free scores and provide an 
+
+execution environment-adjusted reference under our execution setting. The adjustment is calibrated using two measured anchor points. The first anchor is the DATAWISE w/ visual tool score reported in [ 54 ]. The second anchor is the best fixed-zone MatplotBench score measured in our heterogeneous execution setting, where the same type of agent workflow is affected by the runtime conditions used in our experiments. We apply this calibration to the external methods to approximate the performance decrease caused by our network-aware execution setting. The HACO row is directly observed in our experiments. Thus, Table 8 provides a contextual comparison that approximates how real-world execution environment factors may affect results originally reported under idealized execution environment-free benchmark settings. 
+
+F Limitations 
+
+Task scope. Our validation instantiates HACO on a data-analysis-oriented agent workflow and evaluates it on benchmarks covering data science, structured data analysis, and scientific visualization. These workflows provide controlled long-horizon testbeds with code execution, failure recovery, and measurable quality signals. However, HACO is a general runtime allocation layer that can be applied to any agent-based system exposing role invocation events and candidate agent instances. Future work should validate HACO on broader workflows, such as web automation, retrieval-intensive agents, and distributed intelligent systems, where the execution-environment factors may become more pronounced because communication links among edge devices can fluctuate more strongly. 
+
+Reliability-target tuning. HACO treats the target reliability τ as an explicit operating parameter for the reliability–cost trade-off. In practice, τ should be tuned according to application requirements, budget, and latency constraints. Future work can further study automatic target selection and adaptive reliability scheduling across tasks with different risk levels. 
+
+Feedback signals for experience harvesting. The current experience harvesting module uses operational feedback such as quality, success, latency, token usage, and network statistics. Future work can incorporate richer semantic feedback, including error types, reasoning traces, code-level failure patterns, and evaluator rationales. In addition, we plan to introduce temporal adaptation mechanisms, such as forgetting factors, temporal discounting, sliding-window updates, or drift detection, so that the Beta-based capability profiles can respond more quickly to recent observations and better track non-stationary candidate behavior. 28 G Broader Impacts 
+
+This work studies reliability control for LLM-based agent systems under heterogeneous runtime conditions. Positive impacts are that more reliable role invocation can reduce failures in long-horizon workflows, improve service continuity under regional or network degradation, and lower unnecessary token and latency costs compared with exhaustive parallel execution. These properties can benefit practical agent deployments in domains such as data analysis, engineering assistance, and scientific workflows, where unstable execution can otherwise waste resources or interrupt user-facing services. Potential negative impacts should also be considered. Improving execution reliability may make agent systems easier to deploy at scale, which can amplify harms already associated with LLM systems, such as broader resource consumption from increased inference activity. In addition, system-level robustness does not guarantee factual correctness, fairness, privacy preservation, or resistance to malicious use, so more reliable execution could still propagate harmful outputs if underlying models or tools fail in these dimensions. We therefore view HACO as a systems mechanism. It could be deployed with application-level safeguards such as human oversight in high-stakes settings, usage restrictions consistent with provider policies, and monitoring of cost, latency, and misuse patterns. 29
