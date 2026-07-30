@@ -1,0 +1,902 @@
+Title: SERPO: Self-Evolving Rubric Policy Optimization for Open-Ended Test-Time Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2607.26873v1
+
+Published Time: Thu, 30 Jul 2026 00:54:50 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# SERPO: Self-Evolving Rubric Policy Optimization for Open-Ended Test-Time Reinforcement Learning 
+
+## Jianze Wang 1,3,*, ‡, Kunwang Zheng 2,3,*, ‡, Ying Liu 3, Yu Cao 3,Qilong Zhang 3, Jinlong Chen 3, Hua Yang 3, Qianglong Chen 3, †
+
+> 1
+
+School of Artificial Intelligence and Automation, Huazhong University of Science and Technology 
+
+> 2
+
+University of Science and Technology of China 
+
+> 3
+
+Alibaba Group 
+
+swordwang@hust.edu.cn , kunwang392@gmail.com ,
+
+qianglong.cql@alibaba-inc.com 
+
+Abstract 
+
+Test-time reinforcement learning (TTRL) enables language models to self-evolve at inference time without labeled feed-back. Existing methods rely on answer voting and therefore do not extend naturally to open-ended generation, where valid responses cannot be mapped to a shared canonical answer. Without external reward models or stronger judges, adapta-tion must instead construct reliable rewards from the model’s own outputs. We introduce SERPO (Self-Evolving Rubric Policy Optimization), which replaces answer voting with a closed loop that co-evolves response evidence, query-specific rubrics, and policy parameters. Good–Normal–Bad (G-N-B) response evolution organizes maximally separated rollouts into ordered archives; rubric evolution retains criteria that dis-criminate these archives; probabilistic criterion scoring con-verts verdict-token likelihoods into reward signals; and policy evolution optimizes the actor with the resulting signals. New actor rollouts then refresh both the archives and rubrics, clos-ing the three-way evolution loop. Across two model config-urations, two in-domain benchmarks, and four OOD bench-marks, SERPO improves HealthBench and ResearchQA by up to 20.63 and 20.31 points over the corresponding base models, raises the six-benchmark macro-average by up to 8.06 points, and supports OOD transfer and continued cross-benchmark evolution. 
+
+## 1 Introduction 
+
+Test-time reinforcement learning (TTRL) enables a deployed language model to self-evolve on the test distribution through rewards constructed at inference time. We study open-ended generation under a transductive setting: the model may use the original test prompts and its own sampled responses, but receives no reference answers, human feedback, external reward models, or stronger judges. It repeatedly samples re-sponses, constructs rewards, and updates its parameters on the same prompt set. TTRL therefore depends on a reward signal that remains informative as the policy evolves. Existing TTRL methods construct this reward by sampling several solutions, selecting a pseudo-label through majority voting or self-consistency-style aggregation, and rewarding 
+
+> ∗
+
+Equal contribution. 
+
+> †
+
+Corresponding author. 
+
+> ‡
+
+Work done during research internship at Alibaba Group. 
+
+responses that agree with it (Wang et al. 2023; Zuo et al. 2025). Subsequent work improves pseudo-label reliability through self-reflection, entropy-based confidence, or explicit mitigation of majority-vote failures (Wu et al. 2026; Agar-wal et al. 2025; Lin et al. 2026). These methods still assume that responses can be reduced to comparable answers. The assumption holds for multiple-choice, symbolic, and canoni-cally normalized tasks, but it fails for open-ended generation. Two medical responses may recommend the same action yet differ in contraindications, uncertainty, and escalation guid-ance; equally safe answers may also use different wording or levels of detail. Answer voting can therefore reward shared omissions and reject valid alternatives. Current TTRL ob-jectives remain centered on tasks with extractable answers and do not provide a reliable voting target for open-ended responses. Rubric rewards offer a natural alternative for open-ended tasks because they score separate requirements such as factu-ality, completeness, instruction compliance, and safety (Liu et al. 2023; Kim et al. 2024; Ye et al. 2024; Liu et al. 2024; Gunjal et al. 2025). Existing methods use benchmark rubrics, condition frozen models on rubric feedback, or co-train poli-cies with rubric generators or evaluators through outcome supervision, adversarial updates, temporal contrasts, meta-verification, or response-set conditioning (Rezaei et al. 2026; Shao et al. 2025; Sheng et al. 2026; Ding et al. 2026; Li et al. 2026b; Guan et al. 2026; Wang et al. 2026). Other self-evolution methods generate tasks, hints, or curriculum variants from pre-training text and source documents (Huang et al. 2026a; Kwan et al. 2026; Huang et al. 2026b; Yang et al. 2026). These methods operate under broader post-training budgets. Fixed-set TTRL must instead build rewards from the original prompts and self-generated responses, without external data, official rubrics, stronger judges, or task gener-ation. This requires a judge that preserves graded confidence and a query-specific rubric that evolves as the policy changes. We address this problem with SERPO, which co-evolves query-local G-N-B response archives, query-specific rubrics, and shared actor parameters. Figure 1 contrasts this criterion-verification loop with answer voting. For each prompt, SERPO stores an ordered G-N-B response archive and de-rives atomic criteria from contrasts among these responses. To our knowledge, SERPO is the first to combine post-arXiv:2607.26873v1 [cs.CL] 29 Jul 2026 (a) TTRL ：Response -level voting 
+
+I‘m in my third trimester and i keep having these headaches they won ’t go away i ‘m not sure if it ’s
+
+just normal tension headaches or something more serious ?
+
+(b) SERPO ：Criterion -level self -evolution                        
+
+> O1: Prompt OB assessment;
+> check blood pressure and
+> urine protein.
+> O2: Rest, hydrate, and
+> contact your OB if it
+> persists.
+> O3: Probably a common
+> pregnancy headache;
+> monitor at home.
+> Extract
+> &
+> Majority
+> vote
+> C1:Prompt OB assessment
+> C2:Check BP +urine protein
+> C3:Preeclampsia red flags
+> C4:Avoid false reassurance
+> Rubric pool
+> O1 O2 O3
+> Good Normal Bad
+> O3
+> Rubric
+> Response
+> Policy
+> No canonical
+> pseudo -label
+> Consensus
+> Pseudo -label
+> No reference
+> answer required
+> HealthBench ·Open -ended task
+> Evolving
+> Rollout responses
+> Probabilistic score
+
+Figure 1: Criterion-level evidence for open-ended TTRL. Claim consensus can retain frequent but incomplete advice, whereas SERPO forms G-N-B evidence using evolving query-specific criteria without reference answers. reasoning Boolean verdict probabilities with evolving, query-specific rubrics for policy optimization; concurrent LLM-as-a-Verifier independently studies a related fixed-criterion interface (Kwok et al. 2026). SERPO retains criteria with response-level variance and ordered G-N-B separation, con-solidates duplicates, and removes persistently weak criteria. The resulting rubric supplies group-relative rewards for actor updates. New actor responses then refresh the archives and rubric, closing the response–rubric–policy loop. Across two model configurations, two in-domain bench-marks, and four OOD benchmarks, SERPO improves Health-Bench and ResearchQA by up to 20.63 and 20.31 points and raises the six-benchmark macro-average by up to 8.06 points. The evolved policies also transfer to unseen benchmarks and continue improving under sequential cross-benchmark evo-lution. 
+
+Contributions. 
+
+• We formulate TTRL for open-ended generation under a fixed, label-free information budget and introduce judge-based response voting and a stronger claim-consensus objective. 
+
+• We introduce SERPO, a closed-loop framework that co-evolves rolling G-N-B response archives, query-specific rubrics, and shared actor parameters. 
+
+• We introduce a probabilistic reward interface for evolv-ing rubrics, aggregating criterion-satisfaction probabili-ties derived from post-reasoning Pass/Fail distributions. 
+
+• Experiments across two model configurations and six benchmarks establish strong in-domain gains, OOD trans-fer, and continued cross-benchmark evolution. 
+
+## 2 Related Work 
+
+Test-Time Reinforcement Learning. TTRL turns unla-beled test prompts into online reinforcement-learning data by sampling solutions and using the majority answer as a pseudo-label, following self-consistency aggregation (Wang et al. 2023; Zuo et al. 2025). Self-reflection, entropy minimization, and extinction-window mitigation improve pseudo-label selection or confidence (Wu et al. 2026; Agar-wal et al. 2025; Lin et al. 2026), but still require answer ex-traction and task-specific equivalence. SERPO instead con-structs rewards through query-specific criterion verification, which applies when open-ended responses have no canonical answer. 
+
+Rubric Rewards and Policy–Rubric Co-Evolution. 
+
+Rubrics turn open-ended criteria into rewards for self-distillation or policy training (Gunjal et al. 2025; Li et al. 2026a; Whitehouse et al. 2025; Chen et al. 2025; Xie et al. 2026; Rezaei et al. 2026; Fang et al. 2026). RLCER evolves CoT rubrics around outcome-centric RLVR; EvoRubrics adversarially trains a rubric generator; EvoLM alternates rubric and policy training using temporal checkpoint con-trasts; EvoRubric shares one policy across roles with meta-verification and rubric memory; and DynamicRubric co-trains a response-set-conditioned evaluator (Sheng et al. 2026; Ding et al. 2026; Li et al. 2026b; Guan et al. 2026; Wang et al. 2026). These frameworks operate under broader post-training budgets that can include outcome supervision, curated rubrics, stronger judges, or trainable rubric and eval-uator modules; related systems further use external corpora or generated tasks (Huang et al. 2026a; Kwan et al. 2026; Huang et al. 2026b). SERPO instead keeps both evaluator roles frozen and learns only from the fixed prompts and self-generated responses. Token distributions provide continuous evaluation or verification signals (Liu et al. 2023; Kwok et al. 2026); SERPO couples them to rolling G-N-B evidence that evolves query-local criteria as the policy improves. Contextual Self-Evolution. Other methods improve afrozen model through test-time sampling or search (Wang et al. 2023; Yao et al. 2023; Bay and Yearick 2026), iterative self-feedback (Madaan et al. 2023; Shinn et al. 2023), or ac-cumulated external state. ACE stores reusable context, RGSD supplies teacher rubrics, ARBOR maintains a rubric buffer, TTCS creates curriculum variants, and recursive agents se-lect improved configurations across rounds (Zhang et al. 2025b; Rezaei et al. 2026; Liu et al. 2026; Yang et al. 2026; Nguyen, Nguyen, and Vuong 2026). Their progress resides mainly in context, memory, or external rubric pools and may depend on auxiliary task construction. SERPO retains evolv-ing response and rubric states but converts their feedback into persistent actor updates on the fixed test set. 
+
+## 3 Preliminaries 
+
+Test-Time Reinforcement Learning 
+
+We consider fixed-set transductive TTRL. Let Dadapt =
+
+{xn}Nn=1 denote the unlabeled test prompts observed be-fore adaptation. During adaptation, a method may use only these prompts, its sampled responses, and derived statistics; it receives no references, external task rewards, human or ex-ternal evaluator feedback, auxiliary corpus, or grader-guided prompt selection. Auxiliary models may be queried only in a frozen, evaluation-blind manner: they are not updated during adaptation and cannot access evaluation resources. After adaptation, a hidden grader evaluates fresh responses on Dadapt for reporting only, while a disjoint Deval measures held-out transfer. At global adaptation step t, the policy processes a mini-batch Xt ⊂ D adapt . For each prompt x ∈ X t, the current policy πθt samples a group of G responses, 
+
+Ot(x) = {ot,i }Gi=1 , ot,i ∼ πθt (· | x).
+
+Here Ot(x) is the sampled rollout group, and ot,i is its i-th response. Because the true quality r⋆(x, o ) is unavailable, the method optimizes a pseudo-reward ˆrt(x, o ) constructed from permitted information: 
+
+max  
+
+> θ
+
+Ex∼D adapt , o ∼πθ (·| x) [ˆ rt(x, o )] . (1) The reward rule may be refreshed between updates using accumulated test-time evidence, but is fixed within each actor update. Answer-level TTRL instantiates ˆrt by mapping each re-sponse to a comparable answer. Let Ext be an answer ex-tractor and Sel a pseudo-label selector, such as majority vot-ing over extracted answers (Wang et al. 2023; Zuo et al. 2025; Wu et al. 2026). Given ai = Ext( ot,i ), it selects 
+
+ˆa = Sel( {ai}Gi=1 ) and induces 
+
+ˆrans (x, o t,i ) := I[Ext( ot,i ) ≡ ˆa] , (2) where ≡ is task-specific equivalence. This is well defined for categorical or normalized answers, but open-ended responses can share a coarse answer while differing in factuality, com-pleteness, or safety. We retain Eq. (1) while replacing answer agreement with criterion verification. 
+
+Rubric Criteria for Open-Ended Responses 
+
+A rubric decomposes open-ended quality into atomic natural-language criteria. We write R = {(cm, ρ m, w m)}Mm=1 ,where cm is a criterion, ρm ∈ { +1 , −1} is its polarity, and wm ≥ 0 is its weight. A judge provides a criterion-satisfaction probability qJ (x, o, c m) ∈ [0 , 1] for response o
+
+and criterion cm; positive criteria reward desirable proper-ties, while negative criteria mark failures. Section 4 shows how SERPO orients and calibrates these probabilities, then aggregates the resulting scores into the scalar reward used by GRPO. 
+
+Group-Relative Policy Optimization 
+
+SERPO uses GRPO (Shao et al. 2024), a PPO-style group-relative optimizer (Schulman et al. 2017), as the actor opti-mizer; only the reward source changes. For a rollout group on prompt x, GRPO converts scalar rewards {ri}Gi=1 into critic-free advantages, ˆAi = ( ri − ¯r)/(σr + εA), and up-dates the actor with the standard clipped objective and KL penalty. Verifiable tasks may use Eq. (2); SERPO supplies ri
+
+from the evolving rubric reward in Section 4. 
+
+## 4 Method: SERPO 
+
+SERPO is a closed-loop TTRL framework for open-ended prompts. For each prompt, SERPO maintains three pieces of test-time state: rolling G-N-B re-sponse archives, a query-specific rubric pool, and ashared actor updated across prompts. At encounter t,let Et(x) = (AGt (x), ANt (x), ABt (x)) and Rt(x) =
+
+{(cm, ρ m, w m,t )}m∈M t(x), where Mt(x) indexes the cur-rently active criteria for prompt x; we omit x from prompt-local archive and criterion-index sets when unambiguous. The actor, rubric generator, and judge all start from the de-ployed model; only the actor is adapted, while fixed initial-weight copies generate criteria and judge criterion satisfac-tion. Each encounter samples responses, computes provi-sional archive scores, updates G-N-B archives, proposes and merges criteria when scheduled, refreshes criterion utilities and the active rubric, and updates the actor with final re-wards. Figure 2 summarizes the loop; the appendix provides complete pseudocode and implementation details. 
+
+Criterion Scoring and Reward Interface 
+
+Under the fixed-set budget, each judge call must preserve re-ward resolution. Hard verdicts create ties and shrink GRPO advantages, so SERPO converts post-reasoning Boolean verdict-token probabilities into criterion-satisfaction prob-abilities. If ℓ(m)T and ℓ(m)F are the log probabilities assigned to the positive and negative verdicts, define 
+
+qJ (x, o, c m) := exp ℓ(m)T
+
+exp ℓ(m)T + exp ℓ(m)F
+
+. (3) Here qJ (x, o, c m) is the criterion-satisfaction probability for response o on criterion cm. This [0 , 1] probability distin-guishes confident from borderline satisfaction. SERPO con-verts positive and negative criteria into an oriented criterion q LLM                                                     
+
+> 𝑜 8
+> 𝑜 9
+> 𝑜 :
+> Policy rollouts
+> Probabilistic Judge
+> FAIL →PASS
+> 01
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> Rubric Pool
+> Rubric
+> Generator Judge
+> 𝐺 9𝐺 ;𝐺 <
+> 𝑁 9𝑁 ;𝑁 <
+> 𝐵 9𝐵 ;𝐵 <
+> Good Archive
+> Normal Archive
+> Bad Archive
+> Maximally
+> Separated
+> G-N-BTriple
+> Judge
+> Rubric
+> Generator
+> 𝑟 !
+> 𝑟 "
+> ①G-N-BEvolution ：𝑬 𝒕 →𝑬 𝒕 >𝟏
+> Response -score
+> variance
+> G>N>B separation
+> score
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> Criterion
+> ————
+> ————
+> 𝑆𝑐𝑜𝑟𝑒
+> 𝒗 𝒎 𝒂 𝒎
+> Criterion
+> ————
+> ————
+> 𝑜 !𝑜 "
+> GNB
+> .
+> .
+> .
+> ...
+> 𝜟 𝑹 𝑹 𝒔𝒕𝒂𝒕𝒊𝒄
+> Judge
+> Eliminate by turn
+> 𝑹 𝒕 $𝟏
+> 𝑹 𝒕 $𝟏
+> 𝑹 𝒕 &𝟏
+> ②Rubric Evolution ：𝑹 𝒕 →𝑹 𝒕 >𝟏
+> ③Policy Evolution ：𝜽 𝒕 →𝜽 𝒕 >𝟏
+> slide
+> G-N-BTriples
+> GNB
+> Co -Evolving
+> Criterion
+> ————
+> ———— 𝑟 8(𝑜 8,𝑅 @>9)
+> .
+> .
+> .......
+> GGNNBB
+> 𝑹 𝒕
+> 𝐑𝐞𝐰𝐚𝐫𝐝
+> 𝑟 9(𝑜 9,𝑅 @>9)
+> 𝑟 :(𝑜 :,𝑅 @>9)
+
+Figure 2: Overview of SERPO. Here q is the input query, while oi and ri are the i-th policy rollout and its scalar reward. Et,
+
+Rt, and θt denote the query-local G-N-B archive state, query-specific rubric state, and shared actor parameters at encounter t,respectively. Criterion utility combines response-score variance vm and G-N-B order agreement am; ∆R denotes the low-utility elimination region. Snowflakes mark fixed initial-weight copies used as the rubric generator and judge. score, 
+
+zm,t (o) = 
+
+qJ (x, o, c m), ρm = +1 ,
+
+1 − qJ (x, o, c m), ρm = −1. (4) Here zm,t (o) is the polarity-oriented criterion score at en-counter t. Larger zm,t (o) always indicates better behavior. SERPO caches each judged tuple and reuses it for archive ordering, utility estimation, calibration, and reward construc-tion; GRPO receives only the final scalar reward computed after the rubric update in Section 4. 
+
+G-N-B Response Evolution 
+
+For a new prompt, the fixed rubric generator first creates a nonempty initial set of query-specific criteria, from which SERPO initializes an equal-weight rubric. At each later en-counter, the actor samples a rollout group and the judge assigns provisional archive scores for ordering, 
+
+rarc 
+
+t,i = 1
+
+Zarc 
+
+t
+
+X
+
+m∈M t(x)
+
+wm,t zm,t (ot,i ),Zarc 
+
+t = X
+
+m∈M t(x)
+
+wm,t .
+
+(5) Here, the superscript arc marks this as an archive-ordering score rather than the GRPO reward, and Zarc 
+
+t normalizes the active rubric weights. SERPO stores the most con-trastive ordered triple rather than only the absolute best and worst samples. Let [G] = {1, . . . , G }, and let It col-lect distinct ordered triples of rollout indices whose archive scores decrease from candidate Good to Normal to Bad: 
+
+It = {(i, j, k ) ∈ [G]3 : i, j, k distinct , r arc 
+
+t,i ≥ rarc 
+
+t,j ≥ rarc 
+
+t,k }.SERPO selects 
+
+Dt(i, j, k ) := ( rarc 
+
+t,i − rarc 
+
+t,j )( rarc 
+
+t,j − rarc 
+
+t,k )( rarc 
+
+t,i − rarc 
+
+t,k ),
+
+(iGt , i Nt , i Bt ) = arg max 
+
+(i,j,k )∈I t
+
+Dt(i, j, k ).
+
+(6) Here Dt(i, j, k ) is the separation score of a candidate ordered triple, and (iGt , i Nt , i Bt ) are the selected Good, Normal, and Bad rollout indices. If the maximum Dt is zero, the archive is left unchanged. Otherwise, the selected responses are ap-pended to bounded FIFO Good , Normal , and Bad archives, producing Et+1 (x). This keeps query-local evidence both ordered and separated for rubric refresh. 
+
+Rubric Evolution 
+
+When a prompt reaches its refresh interval, the rubric gener-ator receives the prompt, current rubric Rt(x), and updated archives Et+1 (x), then proposes atomic criteria explaining stronger–weaker contrasts. SERPO merges candidates with the existing pool: duplicate requirements map to one canon-ical statement and stable identifier, related but distinct rules remain separate, retained criteria keep their counters, and new criteria start from zero. Let fMt+1 (x) denote the resulting criterion pool after carrying over existing criteria and applying any scheduled merge. A useful criterion should separate updated archives in the G-N-B direction. After each encounter and any scheduled merge, SERPO scores only unseen archive–criterion pairs and converts them to Eq. (4). Let Ht+1 (x) = AGt+1 (x) ∪ANt+1 (x) ∪ A Bt+1 (x) denote the updated archive entries for the current prompt. For each m ∈ fMt+1 (x), SERPO assigns a discrimination utility 
+
+dm,t +1 = vm,t +1 am,t +1 ,vm,t +1 = 4 Var o∈H t+1 (x) [zm,t +1 (o)] ,am,t +1 =
+
+ Cm,t +1 − Dm,t +1 
+
+Pm,t +1 
+
+
+
++
+
+.
+
+(7) Here vm,t +1 measures response-level score variance, am,t +1 
+
+measures G-N-B order agreement, and [·]+ = max( ·, 0) ;the factor 4 normalizes the maximum variance of a [0 , 1] 
+
+score to one. The terms Cm,t +1 and Dm,t +1 count concor-dant and discordant cross-bucket pairs over (G, N ), (G, B ),and (N, B ) under margin τ , and Pm,t +1 is the comparison count. A criterion receives high utility only when it varies over archives and assigns higher oriented scores to stronger buckets; constant, tied, or order-reversing criteria are ranked for possible removal. Recoverable elimination turns this ranking into a stable rubric update. If | fMt+1 (x)| ≥ 4, the bottom Kt+1 =max {1, ⌊ζ| fMt+1 (x)|⌋} criteria enter the elimination region 
+
+∆R in Figure 2, where ζ is the elimination fraction. If the pool has fewer than four criteria, the elimination region is empty. A criterion’s counter increments only while it remains in this region, resets once it leaves, and triggers deletion after three consecutive at-risk rounds. Survivors form Mt+1 (x).
+
+Policy Evolution 
+
+Unlike the provisional archive-ordering score in Eq. (5), the GRPO reward is computed after the rubric update, using the surviving criteria, utility-derived weights, and G-N-B-calibrated oriented scores: 
+
+rt,i (ot,i , Rt+1 ) = 1
+
+Zrew 
+
+> t+1
+
+X
+
+> m∈M t+1
+
+wrew  
+
+> m,t +1
+
+˜zm,t +1 (ot,i ),ηm,t +1 (o) = zm,t +1 (o) − μBm,t +1 
+
+∆μm,t +1 
+
+,
+
+˜zm,t +1 (o) = 
+
+clip [0 ,1] (ηm,t +1 (o)) , ∆μm,t +1 ≥ δ, zm,t +1 (o), otherwise .
+
+(8) Here wrew  
+
+> m,t +1
+
+= max( ϵu, d m,t +1 ), and Zrew  
+
+> t+1
+
+normalizes these weights over Mt+1 . The calibration maps the Bad-archive mean toward 0 and the Good-archive mean toward 1
+
+using ∆μm,t +1 = μGm,t +1 − μBm,t +1 ; when this range is too small, SERPO falls back to the static oriented score zm,t +1 .GRPO normalizes rewards within each rollout group. The ac-tor update changes future rollouts, archives, proposals, util-ities, calibration ranges, and rewards, closing the response– rubric–policy loop while keeping the rubric generator and judge fixed. 
+
+## 5 Experiments 
+
+Our experiments answer five questions. RQ1 : how much does SERPO improve in-domain open-ended performance across benchmarks and model configurations? RQ2 : do the gains from evolution transfer to held-out OOD benchmarks? RQ3 :how do rubric evolution and policy evolution complement each other? RQ4 : which components and evaluator design choices drive SERPO’s gains? RQ5 : can SERPO sustain improvement over longer horizons and after switching to a new benchmark? 
+
+Experimental Setup 
+
+Benchmarks and evaluation. We evaluate two Qwen-family models, Qwen3-4B-Instruct-2507 (Qwen Team 2025) and Qwen3.5-9B (Qwen Team 2026a), in non-thinking mode. For HealthBench (Arora et al. 2025), we use the official HealthBench-500 subset and refer to it simply as HealthBench. Unless otherwise noted, we use the offi-cial evaluation or validation split of each dataset. Each actor evolves independently on HealthBench or ResearchQA (Li S. Yifei et al. 2026). Without further adaptation, we evalu-ate the HealthBench-evolved policy on MedQA (Jin et al. 2021) and LLMEval-Med (Zhang et al. 2025a), and the ResearchQA-evolved policy on GPQA-Diamond (Rein et al. 2023) and RaR-Science (Gunjal et al. 2025). MedQA and GPQA-Diamond are multiple-choice benchmarks scored by direct answer extraction; GPT-5.1 (OpenAI 2025) evalu-ates HealthBench, ResearchQA, LLMEval-Med, and RaR-Science using their official rubrics. Except for this privileged reference, no external judge or official rubric is available dur-ing adaptation. In Table 1, subscripts denote changes from Base, light-blue rows extend the method above, bold marks the best label-free result, and Avg. is the macro-average over all six benchmark columns. 
+
+Evolution protocol. All adapted methods in Table 1 use a common 30-epoch budget, and reported scores are averaged over three evaluation runs. The sequential experiment evolves the same actor for 30 epochs on HealthBench and then 30 epochs on ResearchQA, evaluating both benchmarks during the second stage. Figure 3 alone extends SERPO to 45 epochs to examine long-horizon evolution. The appendix reports full decoding, optimization, compute, and reproducibility details, plus mean ±standard deviation for all main-table entries. 
+
+Baselines. Base performs no adaptation. To extend voting-based TTRL to open-ended generation, both voting baselines use a frozen copy of the initial actor as a self-judge and re-build their pseudo-labels from the current rollout group at every adaptation step. We strengthen both baselines with 
+
+G = 16 rollouts per prompt, twice the group size used by SERPO. Response vote compresses each response into its principal recommendation and rewards membership in the largest word-set Jaccard cluster. Our stronger claim consen-sus baseline extracts atomic claims, constructs a response– claim support matrix A, and rewards coverage of claims supported by at least a fraction κ of the group: 
+
+pj = 1
+
+G
+
+> G
+
+X
+
+> ℓ=1
+
+Aℓj , Tκ = {j : pj ≥ κ},rclaim  
+
+> i
+
+=
+
+P 
+
+> j∈T κ
+
+Aij 
+
+|T κ| , κ = 0 .5.
+
+(9) This claim-level objective follows the atomic decomposi-tion used in long-form factual evaluation (Min et al. 2023) and preserves partial agreement without requiring complete-response equivalence. The appendix gives the response-vote equation, prompts, thresholds, canonicalization, and fallback rules. To our knowledge, these are the first voting-based TTRL objectives designed for open-ended generation. We instantiate RGSD (TTS) (Rezaei et al. 2026), orig-inally a rubric-guided self-distillation method, as rubric-guided test-time scaling, where the rubric acts as privileged guidance and the actor remains frozen. We then add our rubric-evolution mechanism while still freezing the actor, isolating gains without parameter evolution. SERPO addi-tionally updates the actor with GRPO. The privileged ref-erence uses Qwen/Qwen3.6-27B (Qwen Team 2026b) as Evolve on HealthBench Evolve on ResearchQA Model Method HealthBench (ID) MedQA (OOD) LLMEval-Med (OOD) ResearchQA (ID) GPQA-Diamond (OOD) RaR-Science (OOD) Avg. Qwen3-4B Base 32.30 53.81 59.82 57.29 53.03 67.29 53.92 TTRL (response vote) 34 .27 +1 .97 53 .74 −0.07 59 .92 +0 .10 57 .91 +0 .62 54 .54 +1 .51 66 .46 −0.83 54 .47 +0 .55 
+
++ claim consensus ∗ 43 .71 +11 .41 53 .65 −0.16 55 .92 −3.90 69 .39 +12 .10 57 .07 +4 .04 68 .15 +0 .86 57 .98 +4 .06 
+
+RGSD (TTS; static rubric) 27 .13 −5.17 50 .96 −2.85 54 .32 −5.50 58 .20 +0 .91 52 .18 −0.85 65 .13 −2.16 51 .32 −2.60 
+
++ rubric self-evolution 32 .06 −0.24 52 .36 −1.45 60 .36 +0 .54 65 .51 +8 .22 54 .92 +1 .89 67 .36 +0 .07 55 .43 +1 .51 
+
+SERPO (ours) 49 .83 +17 .53 54 .73 +0 .92 62 .50 +2 .68 77 .60 +20 .31 59 .09 +6 .06 68 .12 +0 .83 61 .98 +8 .06 
+
+Ext. judge + official rubric † 56 .14 +23 .84 53 .62 −0.19 60 .18 +0 .36 82 .73 +25 .44 57 .32 +4 .29 67 .32 +0 .03 62 .89 +8 .96 
+
+Qwen3.5-9B Base 44.68 69.84 69.27 68.62 70.20 77.87 66.75 TTRL (response vote) 53 .75 +9 .07 68 .03 −1.81 69 .75 +0 .48 67 .43 −1.19 68 .69 −1.51 78 .13 +0 .26 67 .63 +0 .88 
+
++ claim consensus ∗ 60 .88 +16 .20 69 .60 −0.24 70 .32 +1 .05 79 .45 +10 .83 68 .54 −1.66 77 .47 −0.40 71 .04 +4 .30 
+
+RGSD (TTS; static rubric) 39 .42 −5.26 64 .60 −5.24 65 .73 −3.54 63 .77 −4.85 69 .61 −0.59 71 .22 −6.65 62 .39 −4.36 
+
++ rubric self-evolution 44 .18 −0.50 70 .24 +0 .40 69 .24 −0.03 70 .77 +2 .15 71 .03 +0 .83 76 .94 −0.93 67 .07 +0 .32 
+
+SERPO (ours) 65 .31 +20 .63 71 .32 +1 .48 74 .18 +4 .91 83 .18 +14 .56 72 .22 +2 .02 79 .93 +2 .06 74 .36 +7 .61 
+
+Ext. judge + official rubric † 68 .41 +23 .73 70 .38 +0 .54 72 .86 +3 .59 90 .21 +21 .59 69 .65 −0.55 78 .43 +0 .56 74 .99 +8 .24 
+
+Table 1: Main 30-epoch ID/OOD results. ∗Claim-consensus TTRL; †external judge and official rubric (not label-free). a strong fixed external judge with the official rubric during adaptation. 
+
+Main Results 
+
+Open-Ended Test-Time Evolution (RQ1). Table 1 shows that claim consensus improves response voting by 13–28%, as claim decomposition recovers semantic agreement missed by whole-response voting. This finer pseudo-label is still frequency-based: highly supported claims can remain in-complete when the rollout group shares the same omission. SERPO is the strongest label-free method in every in-domain setting, improving Base by 21–54% and claim consensus by 5–14%. The remaining gap isolates the benefit of evolving quality criteria over agreement alone. Without external su-pervision, Qwen3-4B recovers roughly three quarters of the in-domain improvement achieved by the external-judge and official-rubric reference. 
+
+OOD Transfer (RQ2). All eight SERPO OOD results im-prove over Base, by up to 11.4%. Across both model con-figurations, HealthBench evolution transfers to the medical OOD benchmarks, and ResearchQA evolution transfers to the science OOD benchmarks. SERPO also outperforms the external-judge and official-rubric reference in all eight OOD settings, although that reference remains strongest in-domain. This ID–OOD reversal shows broader transfer from self-evolved criteria, while privileged supervision favors the benchmark used for evolution. Voting baselines show mixed OOD changes, confirming that stronger in-domain consensus alone does not ensure transfer. 
+
+Complementary Roles of Rubric and Policy Evolution (RQ3). Static rubric-guided TTS lowers the six-benchmark average below Base, showing that fixed rubric guidance alone does not create a reliable improvement path. Rubric self-evolution recovers the loss without policy updates, while policy evolution improves the rubric-only variant by up to 55%. The two stages are complementary: rubric evolution sharpens the reward signal, and policy evolution converts it into cumulative gains. 
+
+Evolution Components and Dynamics 
+
+Ablation Studies (RQ4) Table 2 evaluates individual com-ponents and evaluator design choices through controlled ab-lations. Rel. Len. averages response length over the three reported benchmarks and normalizes it by Base. Removing rubric evolution, freezing the G-N-B archives, or training ei-ther evaluator role reduces HealthBench by roughly 12–13%. Hard verdicts lower HealthBench by 6% because binary deci-sions collapse borderline responses into reward ties, whereas verdict probabilities retain the ordering needed by GRPO. Freezing the actor causes the largest loss, about 36%. The comparable losses from disabling rubric evolution and freez-ing the G-N-B archives show that criterion quality depends on both evolving rubric definitions and up-to-date response evidence. Training either evaluator also hurts, supporting fixed eval-uator roles as a stable scoring reference. The full method attains the best average while producing 4–40% shorter re-sponses than the actor-updating ablations; without rubric evolution, length reaches 2.29 × Base with a lower score. Appendix response-length results confirm that the complete response–rubric–policy loop, rather than verbosity, drives the gains. 
+
+Long-Horizon and Cross-Benchmark Evolution (RQ5) 
+
+Figure 3 tracks evolution beyond the standard budget. Re-sponse voting returns toward the base policy, rubric-only evolution plateaus, and claim consensus improves but re-mains below SERPO. As rollouts become more homoge-neous, frequency-based rewards lose resolution; refreshed Figure 3: Qwen3-4B evolution on HealthBench (HB). The dashed line extrapolates the mean epoch-40–45 slope toward the privileged ID reference. 
+
+Figure 4: Qwen3-4B evolution from HealthBench (HB) to ResearchQA (RQA); labels mark stage maxima.                                           
+
+> Variant HB MedQA LLMEval-Med Avg. Rel. Len. Base 32.30 53.81 59.82 48.64 1.00 ×
+> w/o actor evolution 32.06 52.36 60.36 48.26 1.31 ×
+> w/o rubric evolution 43.54 53.47 63.56 53.52 2.29 ×
+> w/o G-N-B evolution 43.98 53.88 61.31 53.06 1.55 ×
+> w/o probabilistic judge 46.73 53.21 62.43 54.12 1.44 ×
+> w/ trained judge 43.22 53.65 62.21 53.03 1.76 ×
+> w/ trained rubric gen. 43.82 53.80 62.96 53.53 1.94 ×
+> SERPO (full) 49.83 54.73 62.50 55.69 1.38 ×
+
+Table 2: Qwen3-4B ablations on HealthBench (HB); response length is normalized by Base.                                
+
+> Method Report Epoch(s) HealthBench ResearchQA Base checkpoint 032.30 57.29
+> Matched checkpoints
+> TTRL-claim checkpoint 30 42.18 62.60 checkpoint 60 41.64 63.75 SERPO checkpoint 30 48.51 63.99
+> checkpoint 60 51.35 75.80
+> Per-benchmark stage best
+> TTRL-claim stage best 0–30 43.71 62.60 stage best 30–60 47.82 69.92
+> SERPO stage best 0–30 49.85 63.99 stage best 30–60 51.68 75.86
+
+Table 3: Matched checkpoints and stage bests; bold marks the better method at matched epochs and the better stage within each method. criteria continue to expose quality differences among re-sponses. The complete response–rubric–policy loop there-fore shows the strongest sustained upward trend. Extending SERPO to 45 epochs adds a further 3.6% rela-tive gain, showing that the standard budget does not exhaust the available signal. The continued rise indicates that the re-sponse archives and rubrics still discover useful distinctions after epoch 30. A descriptive linear projection of the epoch-40–45 trend reaches the privileged ID reference near epoch 99. Figure 4 and Table 3 test continuation on ResearchQA. At matched checkpoints, SERPO exceeds TTRL-claim on HealthBench and ResearchQA by 15% and 2% at epoch 30, widening to 23% and 19% at epoch 60. Its stage-best Re-searchQA and HealthBench scores also rise by 19% and 4% after the switch. TTRL-claim improves only its tran-sient HealthBench best and ends below its epoch-30 score. The agreement between matched checkpoints and stage bests rules out checkpoint selection as the source of the gain. SERPO learns the new benchmark while further improv-ing HealthBench, extending the OOD result from held-out transfer to sequential evolution. 
+
+## 6 Limitations and Future Work 
+
+Limitations. Our experiments cover two model configu-rations, one 45-epoch single-benchmark run, and one 60-epoch HealthBench-to-ResearchQA sequence. Rubric gen-eration and judging may inherit biases from the deployed model and increase test-time computation. 
+
+Future work. The long-horizon and sequential results show that test-time evolution can continue beyond one bench-mark and one adaptation stage. The next step is to extend SERPO to longer, cyclic benchmark streams, where the pol-icy acquires new capabilities while revisiting earlier domains. Replay, adaptive stopping, and rollback provide mechanisms for managing saturation, evaluator drift, and forgetting, mov-ing TTRL toward continual, label-free improvement on open-ended tasks. 
+
+## References 
+
+Agarwal, S.; Zhang, Z.; Yuan, L.; Han, J.; and Peng, H. 2025. The Unreasonable Effectiveness of Entropy Minimization in LLM Reasoning. arXiv:2505.15134. Arora, R. K.; Wei, J.; Hicks, R. S.; Bowman, P.; Quiñonero-Candela, J.; Tsimpourlas, F.; Sharman, M.; Shah, M.; Val-lone, A.; Beutel, A.; Heidecke, J.; and Singhal, K. 2025. HealthBench: Evaluating Large Language Models Towards Improved Human Health. arXiv:2505.08775. Bay, Y. Y.; and Yearick, K. A. 2026. When More Sampling Hurts: The Modal Ceiling and Correlation Ceiling of Test-Time Scaling. arXiv:2606.28661. Chen, X.; Li, G.; Wang, Z.; Jin, B.; Qian, C.; Wang, Y.; Wang, H.; Zhang, Y.; Zhang, D.; Zhang, T.; Tong, H.; and Ji, H. 2025. RM-R1: Reward Modeling as Reasoning. arXiv:2505.02387. Ding, H.; Huang, B.; Fang, Y.; Liao, W.; Li, Z.; Zhang, J.; Wu, Z.; Zhao, J.; and Wang, Y. 2026. EvoRubrics: Dynamic Rubrics as Rewards via Adversarial Co-Evolution for LLM Reinforcement Learning. arXiv:2606.23038. Fang, J.; Hong, Z.; Zheng, M.; Song, M.; Li, G.; Jiang, H.; Zhang, D.; Guo, H.; Wang, X.; and Chua, T.-S. 2026. Rubric-based On-policy Distillation. arXiv:2605.07396. Guan, X.; Hu, X.; Huang, S.; Wang, Z.; Zhang, B.; Li, Z.; Xie, P.; Liu, B.; and Cao, J. 2026. EvoRubric: Self-Evolving Rubric-Driven RL for Open-Ended Generation. arXiv:2605.29847. Gunjal, A.; Wang, A.; Lau, E.; Nath, V.; He, Y.; Liu, B.; and Hendryx, S. 2025. Rubrics as Rewards: Reinforcement Learning Beyond Verifiable Domains. arXiv:2507.17746. Huang, C.; Chou, S.-Y.; Zhang, Z.; and Cardie, C. 2026a. Bootstrapping Post-training Signals for Open-ended Tasks via Rubric-based Self-play on Pre-training Text. arXiv:2604.20051. Huang, C.; Liu, H.; Zheng, T.; Dai, R.; Huang, L.; Li, J.; Li, Z.; Wei, Z.; Meng, Y.; and Huang, J. 2026b. G-Zero: Self-Play for Open-Ended Generation from Zero Data. arXiv:2605.09959. Jin, D.; Pan, E.; Oufattole, N.; Weng, W.-H.; Fang, H.; and Szolovits, P. 2021. What Disease Does This Patient Have? A Large-Scale Open Domain Question Answering Dataset from Medical Exams. Applied Sciences , 11(14): 6421. Kim, S.; Suk, J.; Longpre, S.; Lin, B. Y.; Shin, J.; Welleck, S.; Neubig, G.; Lee, M.; Lee, K.; and Seo, M. 2024. Prometheus 2: An Open Source Language Model Specialized in Evalu-ating Other Language Models. arXiv:2405.01535. Kwan, W.-C.; Gema, A. P.; Leang, J. O. J.; and Minervini, P. 2026. SCOPE: Self-Play via Co-Evolving Policies for Open-Ended Tasks. arXiv:2605.31433. Kwok, J.; Li, S.; Atreya, P.; Liu, Y.; Jiang, Y.; Finn, C.; Pavone, M.; Stoica, I.; and Mirhoseini, A. 2026. LLM-as-a-Verifier: A General-Purpose Verification Framework. arXiv:2607.05391. Li, S.; Zhao, J.; Wei, M.; Ren, H.; Zhou, Y.; Yang, J.; Liu, S.; Zhang, K.; and Chen, W. 2026a. RubricHub: A Com-prehensive and Highly Discriminative Rubric Dataset via Automated Coarse-to-Fine Generation. arXiv:2601.08430. Li, S. S.; Xin, R.; Xiao, T.; Wang, Y.; Shao, R.; Hao, Z.; Sclar, M.; Oh, S.; Brahman, F.; Koh, P. W.; and Tsvetkov, Y. 2026b. EvoLM: Self-Evolving Language Models through Co-Evolved Discriminative Rubrics. arXiv:2605.03871. Li S. Yifei; Chang, A.; Malaviya, C.; and Yatskar, M. 2026. ResearchQA: Evaluating Scholarly Question Answering at Scale Across 75 Fields with Survey-Mined Questions and Rubrics. Transactions of the Association for Computational Linguistics , 14: 1344–1368. Lin, H.; Kuai, Z.; Xue, E.; and Wang, L. 2026. Detecting and Mitigating the Correct-Answer Extinction Window in Test-Time Reinforcement Learning with Majority Voting. arXiv:2605.19444. Liu, M.; Shen, Y.; Xu, Z.; Cao, Y.; Cho, E.; Kumar, V.; Ghanadan, R.; and Huang, L. 2024. X-Eval: Gen-eralizable Multi-aspect Text Evaluation via Augmented Instruction Tuning with Auxiliary Evaluation Aspects. arXiv:2311.08788. Liu, Y.; Iter, D.; Xu, Y.; Wang, S.; Xu, R.; and Zhu, C. 2023. G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment. arXiv:2303.16634. Liu, Z.; Zhang, L.; Wang, X.; Xu, Z.; Zhan, S.; Shan, X.; Huang, W.; Dai, T.; Xia, S.-T.; Huo, C.; and Ding, L. 2026. ARBOR: Online Process Rewards via a Reusable Rubric Buffer for Search Agents. arXiv:2606.03239. Madaan, A.; Tandon, N.; Gupta, P.; Hallinan, S.; Gao, L.; Wiegreffe, S.; Alon, U.; Dziri, N.; Prabhumoye, S.; Yang, Y.; Gupta, S.; Majumder, B. P.; Hermann, K.; Welleck, S.; Yazdanbakhsh, A.; and Clark, P. 2023. Self-Refine: Iterative Refinement with Self-Feedback. arXiv:2303.17651. Min, S.; Krishna, K.; Lyu, X.; Lewis, M.; Yih, W.-t.; Koh, P. W.; Iyyer, M.; Zettlemoyer, L.; and Hajishirzi, H. 2023. FActScore: Fine-grained Atomic Evaluation of Factual Pre-cision in Long Form Text Generation. arXiv:2305.14251. Nguyen, M.; Nguyen, Q.; and Vuong, P. 2026. Re-cursive Self-Evolving Agents via Held-Out Selection. arXiv:2606.28374. OpenAI. 2025. GPT-5.1 Instant and GPT-5.1 Thinking System Card Addendum. https://openai.com/index/gpt-5-system-card-addendum-gpt-5-1/. Accessed: 2026-07-29. Qwen Team. 2025. Qwen3-4B-Instruct-2507 Model Card. https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507. Accessed: 2026-07-29. Qwen Team. 2026a. Qwen3.5-9B Model Card. https: //huggingface.co/Qwen/Qwen3.5-9B. Accessed: 2026-07-29. Qwen Team. 2026b. Qwen3.6-27B Model Card. https:// huggingface.co/Qwen/Qwen3.6-27B. Accessed: 2026-07-29. Rein, D.; Hou, B. L.; Stickland, A. C.; Petty, J.; Pang, R. Y.; Dirani, J.; Michael, J.; and Bowman, S. R. 2023. GPQA: A Graduate-Level Google-Proof Q&A Benchmark. arXiv:2311.12022. Rezaei, M.; Mahmoud, A.; Wang, Z.; Tyagi, U.; Gosai, A.; Dumitru, R.-G.; Sabharwal, A.; Liu, B.; and He, Y. 2026. Rubric-Guided Self-Distillation: Post-Training With-out Rubric Verifiers. arXiv:2606.12507. Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017. Proximal Policy Optimization Algorithms. arXiv:1707.06347. Shao, R.; Asai, A.; Shen, S. Z.; Ivison, H.; Kishore, V.; Zhuo, J.; Zhao, X.; Park, M.; Finlayson, S. G.; Sontag, D.; Murray, T.; Min, S.; Dasigi, P.; Soldaini, L.; Brahman, F.; Yih, W.-t.; Wu, T.; Zettlemoyer, L.; Kim, Y.; Hajishirzi, H.; and Koh, P. W. 2025. DR Tulu: Reinforcement Learning with Evolving Rubrics for Deep Research. arXiv:2511.19399. Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y. K.; Wu, Y.; and Guo, D. 2024. DeepSeekMath: Pushing the Limits of Mathematical Rea-soning in Open Language Models. arXiv:2402.03300. Sheng, L.; Ma, W.; Hong, R.; Wang, X.; Zhang, A.; and Chua, T.-S. 2026. Reinforcing Chain-of-Thought Reasoning with Self-Evolving Rubrics. arXiv:2602.10885. Shinn, N.; Cassano, F.; Berman, E.; Gopinath, A.; Narasimhan, K.; and Yao, S. 2023. Reflexion: Lan-guage Agents with Verbal Reinforcement Learning. arXiv:2303.11366. Wang, B.; Su, W.; Tian, H.; Kong, H.; Yang, T.; Yao, T.; Pan, Q.; Wu, Y.; Ai, Q.; Zhang, M.; and Liu, Y. 2026. Co-Evolving LLM Evaluators and Policies via DynamicRubric. arXiv:2607.20083. Wang, X.; Wei, J.; Schuurmans, D.; Le, Q.; Chi, E.; Narang, S.; Chowdhery, A.; and Zhou, D. 2023. Self-Consistency Improves Chain of Thought Reasoning in Language Models. arXiv:2203.11171. Whitehouse, C.; Wang, T.; Yu, P.; Li, X.; Weston, J.; Kulikov, I.; and Saha, S. 2025. J1: Incentivizing Thinking in LLM-as-a-Judge via Reinforcement Learning. arXiv:2505.10320. Wu, S.; Tan, H.; Zhang, X.; Xia, B.; Zhang, S.; Qi, X.; Yu, B.; and Jia, J. 2026. Beyond Majority Voting: Self-Reflective Test-Time Reinforcement Learning for LLM Rea-soning. In Proceedings of the 43rd International Conference on Machine Learning , volume 306 of Proceedings of Ma-chine Learning Research . To appear. Xie, W.; Zhao, H.; Liu, W.; Zhu, Y.; Chen, L.; Ye, M.; Chen, Z.; Xu, Y.; Dong, S.; Wang, Z.; Xu, X.; Shi, K.; Wu, R.; Zhang, X.; Shao, W.; Chang, B.; Duan, N.; and Wang, J. 2026. Step-wise Rubric Rewards for LLM Reasoning. arXiv:2605.17291. Yang, C.; Xiang, Z.; Tang, Y.; Teng, Z.; Huang, C.; Long, F.; Liu, Y.; and Su, J. 2026. TTCS: Test-Time Curriculum Synthesis for Self-Evolving. arXiv:2601.22628. Yao, S.; Yu, D.; Zhao, J.; Shafran, I.; Griffiths, T. L.; Cao, Y.; and Narasimhan, K. 2023. Tree of Thoughts: Deliberate Problem Solving with Large Language Models. arXiv:2305.10601. Ye, S.; Kim, D.; Kim, S.; Hwang, H.; Kim, S.; Jo, Y.; Thorne, J.; Kim, J.; and Seo, M. 2024. FLASK: Fine-grained Lan-guage Model Evaluation based on Alignment Skill Sets. arXiv:2307.10928. Zhang, M.; Shen, Y.; Li, Z.; Sha, H.; Hu, B.; Wang, Y.; Huang, C.; Liu, S.; Tong, J.; Jiang, C.; Chai, M.; Xi, Z.; Dou, S.; Gui, T.; Zhang, Q.; and Huang, X. 2025a. LLMEval-Med: A Real-world Clinical Benchmark for Medical LLMs with Physician Validation. In Findings of the Association for Computational Linguistics: EMNLP 2025 , 4888–4914. Association for Computational Linguistics. Zhang, Q.; Hu, C.; Upasani, S.; Ma, B.; Hong, F.; Kama-nuru, V.; Rainton, J.; Wu, C.; Ji, M.; Li, H.; Thakker, U.; Zou, J.; and Olukotun, K. 2025b. Agentic Context Engineer-ing: Evolving Contexts for Self-Improving Language Mod-els. arXiv:2510.04618. Zuo, Y.; Zhang, K.; Sheng, L.; Qu, S.; Cui, G.; Zhu, X.; Li, H.; Zhang, Y.; Long, X.; Hua, E.; Qi, B.; Sun, Y.; Ma, Z.; Yuan, L.; Ding, N.; and Zhou, B. 2025. TTRL: Test-Time Reinforcement Learning. arXiv:2504.16084. A Experimental Details 
+
+This section records the information budget, optimization settings, and method hyperparameters omitted from the main paper. 
+
+A.1 Information Access and Budgets 
+
+SERPO follows the fixed-set transductive TTRL setting in the main paper. During adaptation, the method may use only the prompts in Dadapt , actor rollouts on these prompts, self-generated rubrics, and statistics derived from those objects. It receives no references, official rubric scores, hidden evalua-tor feedback, human feedback, external reward-model scores, auxiliary documents, or generated new tasks. GPT-5.1 and dataset-official evaluation rubrics are used only for final re-porting. The marked privileged policy-evolution reference instead exposes the evolution benchmark’s official rubric to 
+
+Qwen/Qwen3.6-27B during adaptation. The actor backbones are Qwen3-4B-Instruct-2507 and Qwen3.5-9B, both run in non-thinking mode. The actor is updated by GRPO, while the rubric generator and proba-bilistic judge are frozen initial-weight copies; SERPO main-tains Good–Normal–Bad (G-N-B) response archives. Unless stated otherwise, adapted methods use 30 evolution epochs. The sequential experiment runs 30 epochs on HealthBench followed by 30 epochs on ResearchQA; the long-horizon run extends only Qwen3-4B on HealthBench to 45 epochs. Table 4 gives the shared rollout and optimization settings. 
+
+Reproducibility. Each run uses one Ubuntu 22.04 Linux node with eight NVIDIA H100 GPUs (80 GB each). The implementation uses Python 3.10.13, verl 0.9.0.dev, Py-Torch 2.10.0, CUDA 12.8, vLLM 0.19.1, and Transform-ers 5.6.1. For methods with a frozen self-judge, six GPUs serve actor training and rollout generation and two serve the initial-weight judge; otherwise, all eight GPUs serve actor training and rollouts. A 30-epoch run takes about 10 hours for Qwen3-4B and 18 hours for Qwen3.5-9B, corresponding to approximately 80 and 144 H100 GPU-hours. Reported scores use evaluation seeds 40, 41, and 42; tables report their arithmetic mean, evolution curves show the corresponding unsmoothed means, and Table 6 additionally reports standard deviations. HealthBench uses the official HealthBench-500 subset rather than an author-selected sample, and the remain-ing experiments use official evaluation or validation splits. Upon publication, we will release the training, evaluation, configuration, and analysis code under a license permitting free research use. 
+
+A.2 Actor Optimization A.3 SERPO Hyperparameters 
+
+We set the optimization and reward parameters from the Qwen3 training recipe and standard GRPO practice, then keep the same configuration across benchmarks. 
+
+## B Complete SERPO Implementation 
+
+Algorithm 1 gives the complete adaptation loop. The subsec-tions that follow specify the query-local state, rubric main-tenance, utility estimation, and reward construction used in each prompt visit.                         
+
+> Parameter Value Rollout temperature / top-p/ top-k1.0/1.0/ disabled Max prompt / response length 2,048 /4,096 tokens SERPO rollout group size G8
+> Train batch / PPO mini-batch 48 /24 prompts Actor learning rate 10 −6
+> LR warmup / scheduler 0.1/ constant KL loss coefficient / type 0.001 / low-variance KL Entropy coefficient 0
+> KL in reward disabled Actor strategy FSDP2 with offload
+
+Table 4: Actor rollout and optimization configuration.                                              
+
+> Parameter Value Initial rubric cap 8
+> New candidates per refresh 5
+> Active criterion-pool cap 15
+> G-N-B archive width W3visits Rubric refresh interval F3visits Discovery responses 9archived G-N-B responses Elimination fraction ζ0.25
+> Deletion patience 3strikes Utility mode / tie margin pairwise / 0.05
+> Utility epsilon 10 −8
+> Utility weight floor ϵu0.01
+> Calibration minimum range δ0.05
+> Semantic deduplication enabled Dedup common grades / agreement 3/0.90
+> Full-pool challengers enabled, up to 5
+> Admission min utility / margin 0.05 /0.02
+> Replay bank size 12 responses Replay trigger-rate bounds [0 .03 ,0.97]
+> Replay max length correlation 0.75
+> Reward max missing-grade rate 0.20
+> Judge max tokens / temperature 512 /0
+> Judge top logprobs 20
+> Rubric generation tokens / temp. 2,048 /0
+
+Table 5: SERPO archive, rubric, judge, and reward hyperpa-rameters. 
+
+B.1 Query-Local State 
+
+For each prompt x, SERPO maintains an active rubric pool 
+
+Rt(x) and a rolling G-N-B archive Et(x). The initial rubric is generated once from the prompt and fixed task-format demonstrations, without candidate responses or external su-pervision, and is cached by prompt identity. At each later prompt visit, the actor samples G = 8 responses. The frozen judge scores each response against active criteria, producing a provisional score used only for archive ordering. Among valid rollout triples, SERPO selects Good, Nor-mal, and Bad responses that maximize 
+
+Dt = ( sG − sN )( sN − sB )( sG − sB ), (10) where sG ≥ sN ≥ sB . If no nondegenerate triple exists, the archive is left unchanged; any scheduled rubric refresh then uses the existing archive evidence. Algorithm 1 SERPO adaptation on a fixed unlabeled prompt set. 
+
+Input : adaptation prompts Dadapt , actor πθ , frozen rubric generator RubGen , frozen judge J, steps T , rollout group size G, archive width 
+
+W , refresh interval F , elimination fraction ζ, tie margin τ , calibration threshold δ, utility floor ϵu.
+
+State : for each prompt x, active criteria Rt(x) = {(cm, ρ m, w m,t )}m∈M t(x) and archives Et(x) = ( AGt , ANt , ABt ).
+
+Output : adapted actor πθ .1: for all x ∈ D adapt do 
+
+2: Initialize R0(x) = RubGen( x) with polarities ρm ∈ { +1 , −1} and empty bounded FIFO archives E0(x).3: end for 
+
+4: for t = 1 , . . . , T do 
+
+5: Draw minibatch Xt ⊂ D adapt .6: for all x ∈ X t do 
+
+7: Sample rollout group Ot(x) = {ot,i ∼ πθ (· | x)}Gi=1 .8: for all ot,i ∈ O t(x) and active criterion m ∈ M t(x) do 
+
+9: Recover criterion-satisfaction probability qm,i = exp ℓ(m,i )T   
+
+> exp ℓ(m,i )T+exp ℓ(m,i )F
+
+.10: Orient the criterion score as zm,i = qm,i if ρm = +1 , and zm,i = 1 − qm,i if ρm = −1.11: end for 
+
+12: Compute provisional archive score si = rarc  
+
+> t,i
+
+= 1
+
+> Zarc
+> t
+
+P 
+
+> m∈M t(x)
+
+wm,t zm,i .13: Let It = {(i, j, k ) : i, j, k distinct , s i ≥ sj ≥ sk }.14: Select (iGt , i Nt , i Bt ) = arg max (i,j,k )∈I t (si − sj )( sj − sk )( si − sk ).15: if the maximum separation is positive then 
+
+16: Append ot,i Gt , ot,i Nt , and ot,i Bt to the length-W Good, Normal, and Bad archives. 17: end if 
+
+18: if x reaches a refresh encounter then 
+
+19: Propose candidates Ct = RubGen( x, Rt(x), Et+1 (x)) and merge them with the current pool to form a temporary pool fMt+1 (x).20: else 
+
+21: Set fMt+1 (x) = Mt(x).22: end if 
+
+23: Score missing rollout–criterion and archive–criterion pairs needed for rewards and utility estimates. 24: for all criterion m ∈ fMt+1 (x) do 
+
+25: Let Ht+1 (x) = AGt+1 (x) ∪ A Nt+1 (x) ∪ A Bt+1 (x) and compute vm = 4Var o∈H t+1 (x)[zm(o)] .26: Compute am = max {0, (Cm − Dm)/(Cm + Dm + Tm)} from Good–Normal, Good–Bad, and Normal–Bad pair comparisons with margin τ .27: Set utility dm = vmam.28: end for 
+
+29: If the temporary pool has at least four criteria, mark the bottom max(1 , ⌊ζ| fMt+1 (x)|⌋ ) by dm as at-risk; delete only criteria with persistent strikes. If the temporary pool has fewer than four criteria, keep all criteria active. Survivors form Mt+1 (x).30: for all ot,i ∈ O t(x) and m ∈ M t+1 (x) do 
+
+31: If μGm − μBm ≥ δ, set ˜zm,i = clip  (zm,i − μBm)/(μGm − μBm), 0, 1; otherwise set ˜zm,i = zm,i .32: end for 
+
+33: Set wm,t +1 = wrew  
+
+> m
+
+= max {ϵu, d m} and Zrew  
+
+> t+1
+
+= P 
+
+> m∈M t+1 (x)
+
+wrew  
+
+> m
+
+.34: Compute rt,i = 1
+
+> Zrew
+> t+1
+
+P 
+
+> m∈M t+1 (x)
+
+wrew  
+
+> m
+
+˜zm,i .35: Normalize the group rewards into GRPO advantages ˆAt,i = ( rt,i − ¯rt)/(σr,t + εA).36: end for 
+
+37: Update the shared actor πθ with GRPO on all rollout groups from Xt.38: end for 
+
+39: return πθ .
+
+B.2 Rubric Proposal and Pool Maintenance 
+
+When the refresh interval is reached, the frozen rubric gener-ator receives the prompt, the current active rubric pool, and archived G-N-B responses. It proposes at most five atomic positive or negative criteria that explain quality differences not already covered by the active pool. Proposal and vali-dation are separated: archived contrasts suggest candidates, and the updated archive plus current judge matrix validate whether those candidates still discriminate. SERPO exact-deduplicates criteria by normalized text. If semantic deduplication is enabled, a conservative duplicate judge is called twice with opposite criterion orders. A pair is merged only when both calls identify it as duplicate, the two criteria have the same polarity, and their observed binary judgments agree on at least 90% of at least three common graded responses. This avoids collapsing broad/narrow or complementary criteria. 
+
+B.3 Utility and Elimination 
+
+Let qm(o) be the criterion-satisfaction probability for crite-rion m on response o. SERPO orients scores so that larger is always better: 
+
+zm(o) = 
+
+qm(o), ρm = +1 ,
+
+1 − qm(o), ρm = −1. (11) Let Ht(x) = AGt (x) ∪ A Nt (x) ∪ A Bt (x) denote the archived responses for the current prompt. Criterion utility combines archive variance with pairwise order agreement. The vari-ance factor is 
+
+vm = 4Var o∈H t(x)[zm(o)] . (12) Pairwise order agreement compares all Good–Normal, Good–Bad, and Normal–Bad archive pairs with tie margin τ .If Cm, D m, T m are concordant, discordant, and tied counts, then 
+
+am = max 
+
+
+
+0, Cm − Dm
+
+Cm + Dm + Tm
+
+
+
+, dm = vmam.
+
+(13) The factor 4 maps the largest possible variance of a [0 , 1] 
+
+score to one. The utility dm controls candidate admission, elimination ranking, and reward weighting. When the temporary pool has at least four criteria, the bottom max(1 , ⌊ζ| fMt+1 (x)|⌋ ) criteria by utility enter the elimination region. A criterion is deleted after three con-secutive strikes. If the pool is full, temporary challengers are admitted only when they pass replay vetoes and exceed 
+
+max {0.05 , u weak + 0 .02 }, where uweak is the weakest utility inside the elimination region. 
+
+B.4 Reward Construction 
+
+For each surviving criterion, SERPO first obtains its criterion-satisfaction probability from top-logprobs of the generated true and false tokens. If Good and Bad archive means are available and μGm − μBm ≥ δ, SERPO applies 
+
+˜zm(o) = clip 
+
+ zm(o) − μBm
+
+μGm − μBm
+
+, 0, 1
+
+
+
+; (14) otherwise ˜zm(o) = zm(o). For every surviving criterion, the next archive weight and current reward weight are identical: 
+
+wm,t +1 = wrew  
+
+> m
+
+= max {ϵu, d m}; only the initial rubric uses equal weights. The final rubric reward is the weighted average of the surviving calibrated criterion scores: 
+
+Zrew = X
+
+> m∈M
+
+wrew  
+
+> m
+
+,r(o) = 1
+
+Zrew 
+
+X
+
+> m∈M
+
+wrew  
+
+> m
+
+˜zm(o).
+
+(15) Missing criterion grades are excluded from both the numer-ator and Zrew . If the missing-grade rate exceeds 0.20 or no valid criterion remains, the response receives fallback reward 
+
+0. GRPO then normalizes rewards within each rollout group. 
+
+## C Baseline Details 
+
+C.1 Open-Ended TTRL Voting Baselines 
+
+Standard TTRL constructs a pseudo-label by voting over extracted answers. For open-ended responses, we implement two variants using a frozen, non-thinking copy of the initial actor. This self-judge receives no reference answer, official rubric, or evaluation score, and remains fixed while the actor evolves. To strengthen the comparison, both voting baselines use G = 16 rollouts per prompt, whereas SERPO uses G =8. For every prompt and adaptation step, the current actor samples O = {oi}Gi=1 and the voting signal is rebuilt from that group. 
+
+Response vote. The frozen copy independently summa-rizes each rollout into its single most important recommen-dation in at most 15 words, 
+
+ai = Sθ0 (x, o i). (16) We lowercase each summary, remove punctuation, and rep-resent it by its set of words Wi. Summaries are processed in rollout order and greedily assigned to the most similar existing cluster when 
+
+Jac( ai, a j ) = |Wi ∩ Wj ||Wi ∪ Wj | ≥ τresp , τresp = 0 .5. (17) Otherwise, the summary starts a new cluster. If Ck⋆ is the largest resulting cluster, the binary reward is 
+
+rresp  
+
+> i
+
+= I[ai ∈ C k⋆ ], k⋆ = arg max  
+
+> k
+
+|C k|. (18) Summary calls use temperature 0, at most 64 generated to-kens, non-thinking decoding, concurrency 32, and up to four attempts. If every summary call in a group fails or returns empty text, all responses receive the fallback reward 0.
+
+Claim consensus. The strengthened baseline asks the frozen copy to decompose each response into at most 12 short, self-contained, independently checkable claims, in-cluding facts, recommendations, warnings, and assertions. Compound statements are split, whereas pleasantries and un-supported hedging are omitted. Claims from all G responses are pooled, lowercased, stripped to alphanumeric tokens, and deduplicated by exact normalized form in their original or-der. This lexical canonicalization, capped at 40 claims, avoids introducing an additional semantic-clustering heuristic. Let C = {cj }Mj=1 be the canonical pool. A second frozen-model call for each response identifies the claims that the response clearly states or directly implies, producing 
+
+Aij = I[oi supports cj ], pj = 1
+
+G
+
+> G
+
+X
+
+> i=1
+
+Aij . (19) Omitted, contradicted, or only vaguely related claims are not counted. Define the consensus and low-support sets as 
+
+Tκ = {j : pj ≥ κ}, Llow = {j : pj ≤ τlow },κ = 0 .5, τlow = 0 .2. (20) Thus, with the voting baseline’s G = 16 , a claim enters the consensus set when at least eight rollouts support it. The implemented reward is 
+
+rclaim  
+
+> i
+
+= clip [0 ,1] 
+
+ P  
+
+> j∈T κ
+
+Aij − λ P 
+
+> j∈L low
+
+Aij 
+
+|T κ|
+
+
+
+,λ = 0 .
+
+(21) The configured λ = 0 reduces this expression to unweighted consensus-claim coverage. If no claim reaches κ, the highest-support tier becomes the consensus set; if no canonical claim or valid reward is available, the fallback reward is 0. Claim extraction and support checks use temperature 0, at most 512 generated tokens, non-thinking decoding, concurrency 32, and up to four attempts. The support matrix is reused directly for rewards, requiring approximately 2G frozen-model calls per group rather than an additional grading pass. 
+
+C.2 Rubric-Guided Test-Time Scaling 
+
+We instantiate RGSD as rubric-guided test-time scaling: the rubric guides generation while the actor remains frozen. The static variant keeps its initial rubric. The strengthened rubric-only variant uses SERPO’s rubric evolution, G-N-B archive update, utility estimation, and pool maintenance, but still performs no actor update. 
+
+Privileged Policy-Evolution Reference. This reference keeps SERPO’s actor, rollout procedure, GRPO optimizer, and 30-epoch budget, but uses Qwen/Qwen3.6-27B as a fixed adaptation-time judge and fixes the reward specification to the dataset-official HealthBench or ResearchQA rubric. It performs no rubric generation or evolution and constructs no G-N-B archives; only the actor parameters evolve. Criterion judging uses the same interface and decoding configuration as Table 5. GPT-5.1 remains the final reporting evaluator. Because an external judge and official rubrics are exposed during adaptation, this reference is not label-free. 
+
+## D Evaluation Protocol and Additional Analyses 
+
+D.1 Evaluation Protocol 
+
+We use the official HealthBench-500 subset and refer to it as HealthBench. HealthBench tests safety-sensitive medical ad-vice, while ResearchQA tests long-form, evidence-oriented scientific responses; the four held-out benchmarks measure whether the resulting policies transfer beyond the prompts used for evolution. Each actor evolves independently on HealthBench or ResearchQA using the official evaluation or validation splits. Without further adaptation, HealthBench-evolved policies are evaluated on MedQA and LLMEval-Med, while ResearchQA-evolved policies are evaluated on GPQA-Diamond and RaR-Science. MedQA and GPQA-Diamond use direct answer extraction and report accuracy on a 0–100 scale. The gpt-51-1113-global endpoint scores the other four benchmarks with their official rubrics or protocols, also reported on a 0–100 scale. The six-benchmark Avg. is their unweighted arithmetic mean. These reporting graders remain hidden during adaptation. For GPT-5.1 grading, each request uses max_completion_tokens = 4096 ,
+
+reasoning_effort =low , and one completion ( n = 1 ). Temperature and top-p are not sent, so the endpoint defaults are used. HealthBench and ResearchQA place the full official rubric of one example in a single judge request; LLMEval-Med and RaR-Science likewise use one judge completion per evaluated response. Judge outputs are parsed as structured JSON. HealthBench permits up to five attempts, while the other graders permit four; a length-truncated output is retried with an adaptively increased token budget capped at 16,384 tokens. Table 1 reports epoch 30, Figure 3 through epoch 45, and Table 3 matched epoch-30/60 checkpoints plus per-benchmark stage bests; the epoch-30 row uses the first joint evaluation at the switch. Reporting scores never affect re-wards, prompt selection, early stopping, or checkpoint selec-tion. Long-horizon projection. Figure 3 preserves each unsmoothed trajectory while aligning its epoch-30 checkpoint with Table 1. The dashed line extends SERPO’s mean epoch-40–45 slope toward the privileged ID reference, producing the descriptive epoch-99 prediction shown in the figure. 
+
+D.2 Evaluation Stability 
+
+Table 6 reports the mean and standard deviation over evaluation runs with seeds 40, 41, and 42. These runs affect reporting only and are not used for checkpoint selection or hyperparameter tuning.                                                                  
+
+> Evolve on HealthBench Evolve on ResearchQA Model Method HealthBench (ID) MedQA (OOD) LLMEval-Med (OOD) ResearchQA (ID) GPQA-Diamond (OOD) RaR-Science (OOD) Avg. Qwen3-4B Base 32 .30 ±0.70 53 .81 ±0.55 59 .82 ±0.72 57 .29 ±0.73 53 .03 ±0.68 67 .29 ±0.64 53.92 TTRL (response vote) 34 .27 ±1.07 53 .74 ±0.59 59 .92 ±0.76 57 .91 ±1.04 54 .54 ±0.79 66 .46 ±0.86 54.47 + claim consensus 43 .71 ±1.43 53 .65 ±0.72 55 .92 ±1.17 69 .39 ±1.40 57 .07 ±0.85 68 .15 ±0.78 57.98 RGSD (TTS; static rubric) 27 .13 ±1.23 50 .96 ±0.90 54 .32 ±0.95 58 .20 ±1.22 52 .18 ±0.86 65 .13 ±1.04 51.32 + rubric self-evolution 32 .06 ±1.31 52 .36 ±0.77 60 .36 ±1.11 65 .51 ±1.37 54 .92 ±0.84 67 .36 ±0.89 55.43
+> SERPO (ours) 49 .83 ±1.13 54 .73 ±0.70 62 .50 ±0.92 77 .60 ±1.28 59 .09 ±0.75 68 .12 ±0.75 61.98
+> Ext. judge + official rubric †56 .14 ±0.98 53 .62 ±0.54 60 .18 ±0.80 82 .73 ±1.07 57 .32 ±0.73 67 .32 ±0.66 62.89 Qwen3.5-9B Base 44 .68 ±0.71 69 .84 ±0.59 69 .27 ±0.66 68 .62 ±0.81 70 .20 ±0.67 77 .87 ±0.65 66.75 TTRL (response vote) 53 .75 ±1.28 68 .03 ±0.63 69 .75 ±0.82 67 .43 ±1.14 68 .69 ±0.73 78 .13 ±0.80 67.63 + claim consensus 60 .88 ±1.42 69 .60 ±0.64 70 .32 ±0.78 79 .45 ±1.25 68 .54 ±0.91 77 .47 ±0.76 71.04 RGSD (TTS; static rubric) 39 .42 ±1.32 64 .60 ±0.88 65 .73 ±0.95 63 .77 ±1.06 69 .61 ±0.81 71 .22 ±0.99 62.39 + rubric self-evolution 44 .18 ±1.17 70 .24 ±0.70 69 .24 ±0.73 70 .77 ±1.16 71 .03 ±0.81 76 .94 ±0.79 67.07
+> SERPO (ours) 65 .31 ±1.07 71 .32 ±0.65 74 .18 ±0.82 83 .18 ±0.98 72 .22 ±0.63 79 .93 ±0.64 74.36
+> Ext. judge + official rubric †68 .41 ±0.84 70 .38 ±0.60 72 .86 ±0.63 90 .21 ±0.99 69 .65 ±0.65 78 .43 ±0.68 74.99
+
+Table 6: Main results with evaluation variability. Benchmark columns report mean ±standard deviation; Avg. reports the macro-average mean. Bold marks the best label-free entry; †uses an external judge and official rubric during adaptation. Across repeated evaluations, SERPO remains the best label-free method on both in-domain benchmarks and on the six-benchmark macro-average for both actor backbones. Several OOD columns have smaller margins, so they support the transfer trend rather than a broad claim of uniform dominance. 
+
+D.3 Response-Length Analysis 
+
+Ablation-level length. Figure 5 separates aggregate response length from benchmark-specific endpoints. Among variants that update the actor, full SERPO is the most concise: its 1.38 × relative length is 4–40% below the other actor-updating ablations. The hard-verdict variant averages 1.44 × Base length, with 1.50 × on HealthBench and 1.34 × on LLMEval-Med, yet loses 6% on HealthBench. Removing rubric evolution produces the longest responses ( 2.29 × Base) while scoring below the full method. The ablation therefore separates effective evolution from unconstrained verbosity. 
+
+Cross-benchmark method comparison. The left panel of Figure 6 plots the six-benchmark macro-average against mean length over the five benchmarks with recorded response lengths; MedQA is excluded because it uses direct answer extraction. SERPO lies on the label-free Pareto frontier, using 27% fewer tokens than response voting and 29% fewer than claim consensus while achieving a higher score. Static RGSD is shorter but substantially less accurate. The privileged reference gains less than one macro-average point over SERPO while generating 32% more tokens. The quality gain therefore cannot be explained by longer responses. 
+
+Length dynamics during evolution. The right panel of Figure 6 reports the raw 30-epoch trajectories without smoothing. From the first five to the last five epochs, the two voting baselines increase their mean length by 79–120% and approach 2ktokens on both evolution benchmarks. Over the same windows, SERPO grows by about 36% and ends near 1.3k tokens while attaining the strongest label-free scores. Rubric-only evolution shows similarly moderate length growth but lower quality. The non-monotonic trajectories indicate that performance does not track response length directly. Figure 5: Response-length ablations on Qwen3-4B. Both panels share the same variant rows. Left: the three-benchmark mean normalized by Base. Right: endpoint lengths on HealthBench and LLMEval-Med; MedQA uses direct answer extraction. 
+
+Figure 6: Response-length behavior of Qwen3-4B. Left: six-benchmark macro-average versus mean length over the five bench-marks with recorded response lengths; ellipse axes reflect evaluation variability and are enlarged for visibility. Right: raw trajectories over 30 evolution epochs on HealthBench and ResearchQA, without smoothing. D.4 Qualitative Audit Protocol 
+
+For qualitative audits, we replay stored G-N-B visits, active and deleted criteria, criterion utilities, calibrated Good/Bad means, and final reward contributions. We inspect whether admitted criteria are task-relevant, separate Good from Bad responses, and agree with the hidden reporting rubric under post-hoc evaluation. We also inspect rejected criteria for redundancy, low variance, reversed G-N-B ordering, high missing-grade rate, near-constant trigger rate, or response-length correlation. For medical prompts, the audit additionally covers safety-critical escalation, contraindication handling, and negative criteria that merely restate missing content. 
+
+## E Qualitative Case Study of Rubric Evolution 
+
+This example shows how SERPO converts response-level differences into a query-local reward. We use the HealthBench prompt from Figure 1 of the main paper. The trace contains only the evolving rubric and G-N-B archive; no reference answer or official HealthBench rubric is available during adaptation. 
+
+Prompt and abbreviated G-N-B archive 
+
+Prompt. “I am in my third trimester and I keep having these headaches. They will not go away. I am not sure if it is just normal tension headaches or something more serious.” 
+
+Good. Recommends same-day obstetric assessment; checks blood pressure and urine protein; lists preeclampsia red flags; treats rest and hydration as in-terim care. 
+
+Normal. Recommends rest, hydration, and contacting an obstetric clinician if the headache persists, but gives no urgency or concrete workup. 
+
+Bad. Attributes the symptom to stress or hormones, recommends a pain reliever, and delays escalation until the next prenatal visit unless symptoms become severe. 
+
+Representative query-local rubric evolution 
+
+Initial pool. Broad criteria cover pregnancy-specific risk, clinician assess-ment, blood-pressure checking, red flags, interim self-care, and false reas-surance. 
+
+First refresh. Good and Normal both mention clinician contact, but only Good makes it same-day and pregnancy-specific. SERPO sharpens urgency and adds a negative criterion for routine self-care despite persistent third-trimester headache. 
+
+Second refresh. Good mentions blood pressure and urine protein; Nor-mal omits the workup; Bad substitutes symptom management for escalation. SERPO splits the broad evaluation criterion into judgeable checks and down-weights generic explanations that do not preserve the G-N-B order. 
+
+Later refresh. Once clinician contact becomes common, the remaining distinction is explicit escalation guidance. The pool refines red flags into observable symptoms such as visual disturbance, severe swelling, upper abdominal pain, confusion, breathing difficulty, and reduced consciousness. 
+
+Stable pool. The retained criteria reward same-day assessment, concrete preeclampsia checks, red-flag escalation, and safe interim care, while penal-izing false reassurance. 
+
+Answer consensus can preserve frequent but incomplete advice such as rest and hydration. SERPO instead retains criteria that separate the ordered archive. Here, self-care receives credit only when paired with pregnancy-specific assessment and escalation, shifting the reward from common wording toward discriminative safety content. 
+
+## F Prompt Templates 
+
+This section gives the prompt templates used in our implementation. Braced names such as {query} and {response} 
+
+denote runtime substitutions. The boxes preserve the message role used by each frozen generator or judge, with non-thinking decoding enabled. 
+
+F.1 Initial Rubric Generation 
+
+The initial rubric generator receives the target query and fixed task-format demonstrations. These examples specify only the output schema and criterion style; they contain no adaptation-set prompts, candidate responses, reference answers, official rubrics, or evaluation feedback. HealthBench uses the following system prompt. 
+
+Initial rubric generation: HealthBench system prompt 
+
+You are an expert evaluator who designs grading rubrics for responses to health and medical questions. Given ONLY a user query (you do NOT see any response), write a rubric containing both POSITIVE and NEGATIVE criteria. - POSITIVE criteria: what a high-quality response MUST do or include. - NEGATIVE criteria: critical mistakes, dangerous misinformation, or harmful advice that a response must NOT contain. These are serious failure modes that should result in penalty. Produce roughly 5 total criteria (between 3 and 8). Output ONLY a JSON object with two keys :- "positive_rubrics": [{"title": "...", "description": "..."}] - "negative_rubrics": [{"title": "...", "description": "..."}] Good criteria are specific to THIS query, independently verifiable, and cover correctness, safety, completeness, and communication. Focus on criteria with high discriminative power. Negative rubrics should target concrete, dangerous errors - not just absence of good qualities. Describe negative rubrics as observable undesirable behaviors. Put missing required content into positive rubrics; the negative_rubrics list may be empty. Avoid mirror rubrics: do not create a positive and negative version of the same criterion -choose only the more discriminative direction. 
+
+ResearchQA replaces the system role with the following task profile while keeping the same JSON schema. 
+
+Initial rubric generation: ResearchQA system prompt 
+
+You are an expert evaluator who designs grading rubrics for scholarly question answering. Given ONLY a research question, write specific, independently verifiable criteria that distinguish strong answers from weak ones. Positive criteria should cover factual correctness, requested comparisons, mechanisms, depth, and explicit citation of the named work or an equivalent key paper when the question requires citations. Negative criteria should target concrete factual errors, unsupported claims, and fabricated or misattributed citations. Put missing requested content into positive criteria rather than creating negative mirrors. Output ONLY a JSON object with keys positive_rubrics and negative_rubrics. Each value must be a list of objects with title and description fields. 
+
+F.2 Rubric Evolution 
+
+The rubric-evolution call proposes new criteria from the current G-N-B archive and active rubric pool. 
+
+Rubric evolution: system prompt 
+
+You are an expert evaluator generating adaptive rubrics to assess model responses. ## Task Identify the most discriminative criteria that distinguish high-quality from low-quality answers. Capture subtle quality differences that existing rubrics miss. ## Output Components - **Description**: Detailed, specific description of what makes a response excellent/ problematic - **Title**: Concise abstract label (general, not question-specific) ## Categories 1. **Positive Rubrics**: Excellence indicators distinguishing superior responses 2. **Negative Rubrics**: Critical flaws definitively degrading quality ## Core Guidelines ### 1. Discriminative Power - Focus ONLY on criteria meaningfully separating quality levels - Each rubric must distinguish between otherwise similar responses - Exclude generic criteria applying equally to all responses ### 2. Novelty & Non-Redundancy With existing rubrics: - Never duplicate overlapping rubrics in meaning/scope - Identify uncovered quality dimensions - Add granular criteria if existing ones are broad - Return empty lists if existing rubrics are comprehensive ### 3. Avoid Mirror Rubrics Never create positive/negative versions of same criterion: - "Provides clear explanations" + "Lacks clear explanations" - Choose only the more discriminative direction ### 4. Conservative Negative Rubrics - Identify clear failure modes, not absence of excellence - Response penalized if it exhibits ANY negative rubric behavior - Focus on active mistakes vs missing features ## Selection Strategy ### Quantity: 1-5 total rubrics (fewer high-quality > many generic) ### Distribution Based on Response Patterns: - **More positive**: Responses lack sophistication but avoid major errors - **More negative**: Systematic failure patterns present - **Balanced**: Both excellence gaps and failure modes exist - **Empty lists**: Existing rubrics already comprehensive 
+
+Rubric evolution: system prompt (continued) 
+
+## Analysis Process 1. Group responses by quality level 2. Find factors separating higher/lower clusters 3. Check if factors are covered by existing rubrics 4. Select criteria with highest discriminative value ## Output Format Return ONLY a JSON object, with no markdown fences and no extra text: {"question": "<original question verbatim>", "positive_rubrics": [{"description": "<detailed excellence description>", "title": "<abstract label>" }], "negative_rubrics": [{"description": "<detailed failure description>", "title": "<abstract label>" }]}## Examples Positive: {"description": "Anticipates and addresses potential edge cases or exceptions to the main solution, demonstrating thorough problem understanding", "title": "Edge Case Handling" }Negative: {"description": "Conflates correlation with causation when interpreting data or making recommendations", "title": "Causal Misattribution" }## Critical Reminders - Each rubric must distinguish between actual provided responses - Exclude rubrics applying equally to all responses - Prefer empty lists over redundancy when existing rubrics are comprehensive - Focus on observable, objective, actionable criteria - Quality over quantity: 2 excellent rubrics > 5 mediocre ones - Do not use response scores; none are provided - Generate only the most impactful, non-redundant rubrics revealing meaningful quality differences 
+
+The G-N-B archive user prompt is: 
+
+Rubric evolution: G-N-B archive user prompt 
+
+Question: {query} Historical Good / Normal / Bad responses from completed earlier query visits: Historical response 1: [GOOD | historical query visit {visit_id}] {good_response} Historical response 2: [NORMAL | historical query visit {visit_id}] {normal_response} Historical response 3: [BAD | historical query visit {visit_id}] {bad_response} ... Existing Rubrics: Current fully evolving rubric pool: 1. [{polarity}] {title}: {description} ... Generate only the most impactful, non-redundant rubrics revealing meaningful quality differences. Return JSON only: 
+
+F.3 Probabilistic Judge 
+
+The probabilistic judge evaluates one response against one criterion. SERPO asks the judge to identify the supporting evidence first and place the true or false verdict at the end, so the calibrated Boolean probability is recovered from a decision conditioned on the explanation. 
+
+Probabilistic judge: evidence-first prompt 
+
+You are a careful, balanced evaluator. Decide whether the LAST assistant turn meets ONE rubric item. Evaluate the response against the literal requirement, without trying to maximize either true or false. # Conversation user: {query} assistant: {response} # Rubric item {rubric_direction_prefix} {criterion_description} # How to grade - Mark criteria_met=true when the response explicitly supplies the substance required by the rubric, even if it uses equivalent wording. - Mark false when the required substance is absent, contradicted, merely hinted at, or too vague to establish. - Do not invent a missing detail or invent a reason to reject explicit evidence. - If the rubric describes an undesirable behavior, true means the response actually exhibits that behavior. - The explanation must quote or precisely identify the response evidence supporting the decision. # Output Return ONLY a json object in markdown. The fields MUST appear in this exact order: first " explanation" (string), then "criteria_met" (boolean). No other fields and no other text. 
+
+The direction prefix is inserted before the criterion text: 
+
+Probabilistic judge: criterion direction prefixes 
+
+Positive criterion: [DESIRED REQUIREMENT: criteria_met=true means the response satisfies this requirement.] Negative criterion: [NEGATIVE RUBRIC: criteria_met=true means the response actually exhibits the forbidden behavior. If the wording says must not, should not, avoid, or does not, judge whether the underlying prohibited behavior occurs; do not mark true merely because the response obeys the prohibition.] 
+
+If JSON parsing, final verdict-token lookup, or true/false logprob recovery fails, the cell is marked missing rather than converted to a hard score.
