@@ -1,0 +1,900 @@
+Title: Bridging Inference-Time Scaling and Episodic Memory with Action-Centric Graphs
+
+URL Source: https://arxiv.org/pdf/2607.27415v1
+
+Published Time: Fri, 31 Jul 2026 00:14:45 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Bridging Inference-Time Scaling and Episodic Memory with Action-Centric Graphs 
+
+Xu Zheng 1 Chaohao Lin 1 Zhuomin Chen 1 Weijieying Ren 2
+
+Haifeng Chen 3 Wei Cheng 3 Dongsheng Luo 4∗
+
+> 1
+
+Florida International University, Miami, FL, USA 
+
+> 2
+
+Stanford University, Stanford, CA, USA 
+
+> 3
+
+NEC Laboratories America, Princeton, NJ, USA 
+
+> 4
+
+Singapore Management University, Singapore 
+
+## Abstract 
+
+Recent advancements in inference-time scaling have significantly unlocked the complex reasoning capabilities of Large Language Models (LLMs). However, for agents, these approaches suffer from a critical inefficiency, operating in a stateless manner and engaging in redundant search processes. Existing memory mecha-nisms largely rely on the reasoning capabilities of LLMs, leading to prohibitive computational costs. In this paper, we propose a novel framework, GAMER (Graph-based Action-centric Memory with Episodic Reasoning), that bridges the gap between inference scaling and episodic memory. Our approach models histori-cal reasoning as a dynamic Action-Centric Graph . By decoupling the memory mechanism from LLMs, our method can save token/money usage by providing less memory context than memory mechanism baselines. To extract knowledge from the graph effectively, we use a dual-stream Temporal Difference learning mechanism to estimate the positive (suggestion) and negative (avoidance) value of action nodes based on past successes and failures. During the inference phase, this learned value function optimizes decision-making bi-directionally, so that positive values provide action suggestions, while negative values indicate high-risk actions. By performing efficient searches on the graph, our method significantly improves the efficiency of inference scaling. Experiments on multiple benchmarks demonstrate that GAMER achieves superior performance by 20.81%/6.17% for success/progress rate compared to vanilla baselines. 
+
+## 1 Introduction 
+
+As Large Language Models (LLMs), such as ChatGPT [ 20 ], Gemini [ 34 ], and Llama [ 36 ], continue to redefine the frontier of artificial intelligence, LLM-driven agents have exhibited unprecedented prowess in planning [ 7], reasoning [ 42 ], and action execution [ 11 ]. When tackling complex down-stream domains, ranging from code generation [ 55 ] to embodied artificial intelligence [ 17 ], these agents are required to generate long sequences of actions and reason through intricate dependen-cies. However, the capabilities of standard generation often fall short for such multi-step problems, necessitating a shift towards advanced reasoning strategies [29]. Recent research has demonstrated the effectiveness of Inference-time Scaling [ 46 ], where models utilize additional test-time compute to explore potential solutions. Techniques such as Chain-of-Thought (CoT) [ 45 ] and Tree-of-Thoughts (ToT) [ 52 ] explicitly construct reasoning paths, allowing models to decompose problems and verify intermediate steps. Despite their effectiveness, current inference scaling methods suffer from a fundamental limitation that they operate in a stateless manner. 
+
+> ∗Corresponding author. This work was primarily conducted while he was at Florida International University. Preprint. arXiv:2607.27415v1 [cs.AI] 29 Jul 2026
+
+Each time an agent encounters a problem, it initiates a search process from scratch [ 43 ], independent of its past experiences. This leads to significant inefficiency, particularly in persistent environments or recurring tasks. For instance, even when an agent encounters a problem structurally similar to a previously solved instance, standard methods lack the mechanism to leverage prior search trajectories. Consequently, agents redundantly re-explore the massive search space, consuming significant tokens to re-verify unproductive paths or rediscover effective heuristics. This amnesia results in prohibitive computational overhead and high latency [27]. To address the need for persistence, Agent Workflow Memory (AWM) [ 44 ] introduces agents to learn reusable task workflows from past experiences, and ReasoningBank [ 22 ] distills generalizable reasoning strategies from both successful and failed experiences and abstracts experiences into reusable reasoning units. Although effective, these methods heavily rely on the reasoning capabilities of LLMs and require a large amount of tokens for inference. Recent memory-augmented frameworks have been proposed, such as A-MEM [ 50 ] and G-MEM [ 54 ]. While these works substantially enhance long-term information retention, they are fundamentally designed for Context Augmentation rather than inference scaling. For example, A-MEM optimizes the retrieval of episodic events to overcome context window constraints, and G-MEM structures memory into knowledge graphs to capture entity relationships. These approaches treat memory purely as a retrieval module that fetches declarative facts and injects them into the input context, rather than providing information for computation optimization. Even when highly relevant facts are retrieved, the agent still requires reconstructing the reasoning tree, generating intermediate steps, and evaluating branches ab initio. Crucially, existing memory systems neither prune the search space nor guide the decision-making process, leaving the dominant cost of redundant reasoning unsolved. In this paper, we bridge this gap by proposing a novel framework, GAMER (Graph-based Action-centric Memory with Episodic Reasoning), that decouples the memory mechanism from the reasoning process of the LLMs. By transforming memory from a passive storage of logs into an active Action-Centric Graph , our method does not require LLM reasoning ability for knowledge extraction. Instead of storing independent linear sequences, we model the reasoning space as a graph where nodes represent discrete actions. To navigate this graph efficiently during inference scaling, we employ Temporal Difference (TD) learning to iteratively update the value of each action node based on reward signals. Compared with other memory mechanisms, our method has fine-grained knowledge for each task and a low-level token cost. This mechanism enables bi-directional learning from both success and failure trajectories. ❶ Positive Guidance: We identify effective actions that contribute to correct solutions and propagate high-value estimates via TD updates, guiding the search algorithm to prioritize these high-probability paths. ❷ Negative Pruning: Equally importantly, we learn from invalid or failure trajectories. By assigning low or negative values to actions that lead to dead ends, our memory acts as a “soft barrier”, effectively diminishing the search space before computational resources are wasted on known failure modes. Our contributions are summarized as follows: 
+
+★ We introduce a memory-augmented inference framework that constructs a task-specific Action-Centric Graph, shifting the paradigm from retrieving static text to querying dynamic action values. 
+
+★ We propose a bi-directional update mechanism based on TD learning. This allows the agent to simultaneously learn high-value heuristics from successful attempts and strict constraints from invalid actions, ensuring continuous refinement of the search policy. 
+
+★ We validate our framework through extensive experiments on multiple benchmarks. The results demonstrate that our method consistently outperforms strong baselines. Compared with the vanilla best-of-N method, GAMER improves the performance of success/progress rate by 15.4%/5.47% .
+
+## 2 Preliminaries 
+
+Problem Formulation: Long-Horizon Tasks as POMDPs. 
+
+Following prior work, we model the agent’s interaction in a long-horizon task as a Partially Observable Markov Decision Process (POMDP) [ 3 , 40 ]. A POMDP is defined by the tuple 
+
+M = ( S, A, T , R, O, Z, γ ), where S is the latent state space, A is the action space (e.g., text-based thoughts or tool calls), T : S × A → P (S) is the transition function, R : S × A → R is the reward function, O represents the observation space, and Z : S × A → P (O) is the observation model. In our context, the agent does not observe the true state st but receives an observation ot ∈ O 
+
+2Figure 1: The overall pipeline of our framework, which can be divided into three stages, including 1. trajectory pool collection, 2. trajectory graph building, and 3. online updating. In this pipeline, the top-3 actions are selected. (e.g., task description or code execution result) governed by Z. A solution is represented as a trajectory 
+
+τ = ( o0, a 0, r 0, . . . , o T ), where the goal is to maximize the cumulative reward R(τ ) = PTt=0 γtrt.
+
+Inference Scaling . Moving beyond standard LLM agent generation, which samples actions autore-gressively from a policy π(at | ht), inference-time scaling methods explicitly construct a search structure to explore the reasoning space at test time. Representative approaches such as ToT [ 52 ]formulate inference as a structured search problem rather than a single forward pass. Formally, at step t, a search tree Ψ is constructed, where each node n ∈ Ψ corresponds to a partial reasoning state (i.e., a thought prefix), and each edge represents a reasoning expansion. The objective is to identify an optimal reasoning trajectory τ ∗ that maximizes the cumulative reward. To achieve this, the algorithm utilizes a node-level value function V (n) to guide the search process, estimating the likelihood, leading to a correct final answer. Crucially, such thought-level inference scaling operates under a set of implicit assumptions: reasoning steps are reversible, can be arbitrarily resampled, and do not induce side effects on the underlying problem state. As a result, the search tree Ψ is typically constructed tabula rasa for each new task, with no notion of persistent state or historical reuse. In contrast, inference-time scaling for agent actions fundamentally differs from thought-level reason-ing. Standard thought-based inference scaling relies on the assumption that arbitrary intermediate states can be saved and reverted to for tree-based branching. However, interactive agent environments typically lack this mid-state reversibility, restricting agents to generating independent, end-to-end interaction trajectories while receiving delayed and sparse rewards. As a result, simply extending existing frameworks proves ineffective in dynamic, interactive settings. Motivated by this perspective, we revisit inference-time scaling from an agent-centric perspective. Rather than constructing a reasoning tree from scratch, we leverage historical interaction trajectories to initialize, constrain, and reuse a structured action-centric graph, enabling scalable inference under irreversible dynamics. 
+
+## 3 Methodology 
+
+We aim to overcome the inefficiency of stateless inference scaling by equipping agents with a persistent, evolving memory of reasoning procedures. We propose GAMER , a framework that constructs an Action-Centric Graph from historical trajectories and utilizes TD learning to estimate the value of reasoning steps. As illustrated in Figure 1, our framework operates in three stages: 3Graph Construction, Value Learning, and Memory-Guided Inference. We first aggregate historical interaction trajectories into a unified graph structure, where nodes represent unique actions and edges represent sequential dependencies. We then apply TD learning on this graph to estimate the action value from both positive and negative sides ( Q+, Q −), capturing the expected long-term success rate of each action based on historical rewards. During the inference phase of a new task, the agent queries this graph to retrieve high-value actions for in-context learning. Furthermore, it leverages identified low-value nodes to act as a soft barrier, dynamically penalizing the LLM’s action probability distribution to suppress historically poor choices during independent trajectory generation. 
+
+3.1 Graph Construction 
+
+Rather than relying on traditional memory systems that store raw text or state-observation pairs, we abstract reasoning into a structured Action-Centric Graph . This design is motivated by the observation that while task descriptions vary, the underlying reasoning steps often share structural similarities across tasks. Formally, given a dataset of historical trajectories D = {τ1, τ 2, . . . , τ N }, where each trajectory τi = ( o0, a 0, r 0, . . . , a T , r T ) consists of a sequence of observations, actions, and rewards. We define the Action-Centric Graph as a directed graph G = ( V, E).Each node v ∈ V represents a distinct action a taken by the agent, which refers to a specific operation executed by the agent. We treat unique action representations as distinct nodes, creating a direct mapping from the action space to the graph vertices: V = {a | a ∈ τ, ∀τ ∈ D} . A directed edge 
+
+eij = ( vi, v j ) ∈ E represents a temporal transition observed in the history. An edge exists from vi to 
+
+vj if, in any trajectory τ ∈ D , action aj was executed immediately following action ai. This edge encodes the procedural flow, which signifies that state vi has historically transitioned to state vj ,effectively capturing the sequential dependencies inherent in the task execution. By merging trajectories into this graph, G condenses discrete linear experiences into a global map of the reasoning space. Branching points in the graph represent decision states where the agent previously explored different strategies, and cycles represent recursive reasoning loops. 
+
+3.2 Value Estimation by Dual-Stream TD Learning 
+
+To navigate the Action-Centric Graph effectively, the agent requires a robust mechanism to evaluate the quality of each action node. Mere connectivity indicates reachability, but not utility. We formulate this as a value estimation problem, where the goal is to learn a value function Q(v) representing the expected long-term cumulative reward of executing the action at node v and following the policy thereafter. Since the graph topology evolves dynamically and reasoning trajectories can be lengthy, waiting for the final task completion to update all intermediate nodes is computationally inefficient and suffers from high variance. Instead, we employ TD Learning [ 33 ], a model-free reinforcement learning algorithm that updates current value estimates based on subsequent estimates. 
+
+TD Learning . Formally, consider a transition in the graph from node vt to a successor node vt+1 
+
+accompanied by an immediate reward rt. The value Q(vt) is updated iteratively to minimize the TD error δt, which measures the discrepancy between the current estimate and the target value derived from the next step: 
+
+δt = rt + γ · E[Q(vt+1 )] − Q(vt) (1) where α ∈ (0 , 1] is the learning rate and γ ∈ [0 , 1] is the discount factor controlling the horizon of the value propagation. By iteratively updating Q(vt) ← Q(vt) + αδ t, the value signal from successful outcomes propagates backward from terminal states to earlier reasoning steps, gradually shaping the graph into an accurate representation of the utility landscape for reasoning. 
+
+Dual-Stream TD Learning . While the standard TD formulation provides a single scalar utility, complex reasoning tasks necessitate a more nuanced evaluation. An action might be potentially high-reward but carry a catastrophic risk of failure. Averaging these signals into a single value tends to neutralize critical risk information. For instance, given an action arisky , suppose this action leads to a perfect solution 50% of the time (Reward +1 ) but causes a fatal runtime error 50% of the time (Reward −1). The expected value is E[Q] = 0 .5(1) + 0 .5( −1) = 0 . The agent would treat this high-risk action as equivalent to a completely mediocre action aidle that simply wastes a step (Reward 0). The critical risk signal is neutralized by the reward. However, this action should be avoided because of the high risk. 4To address this, we extend the standard framework into a Dual-Stream Value Estimation mechanism, maintaining two distinct value functions Q+(v) and Q−(v) to separately track positive potential and negative constraints. • Positive Value Q+(v): This function estimates the expected success rate of an action. It is updated using the standard environmental reward rt. Q+ effectively identifies and optimizes the most efficient trajectory toward the goal state. • Negative Value Q−(v): This function estimates the risk of failure. To compute this, we introduce a Thresholded Reward Redefinition . Let ϵr be a predefined acceptability threshold. We define a binary negative reward r− 
+
+> t
+
+as: 
+
+r− 
+
+> t
+
+=
+
+−1 if rt < ϵ r
+
+0 otherwise (2) 
+
+Q− explicitly tracks actions that historically led to sub-threshold performance. 
+
+TD Update Rules . Both value functions are updated by using TD learning. For a transition (vt, v t+1 ),the updates are performed independently: 
+
+Q+/−(vt) ← Q+/−(vt) + α
+
+"
+
+r+/− 
+
+> t
+
++ γ max / min 
+
+> v′∈Succ (vt)
+
+Q+/−(v′) − Q+/−(vt)
+
+#
+
+Where Succ (vt) is the set of successors of vt in the graph. Through this dual mechanism, the graph evolves into a nuanced map that guides the agent to maximize success probability while strictly avoiding historical pitfalls. 
+
+3.3 Graph-Memory Guided Inference Scaling 
+
+Unlike rigid search algorithms that explicitly manipulate tree nodes, we leverage the robust In-Context Learning (ICL) [ 48 ] capabilities of LLMs. We translate the learned value signals from our Action-Centric Graph into natural language prompts, guiding the inference process through both global references and local constraints. We assume the maintenance of a trajectory pool Dpool containing historical interaction logs. During the inference phase for a new task, our guidance mechanism operates on two levels: 
+
+Reference Trajectory Guidance . Before the reasoning process begins, we identify a blueprint to guide the overall planning. We retrieve the Historically Optimal Trajectory τ ∗ from the pool Dpool .
+
+τ ∗ = argmax  
+
+> τ∈Retrieve (Dpool )
+
+R(τ ) (3) This trajectory τ ∗ serves as a high-quality few-shot example in the prompt. It provides the agent with a successful action sequence reference. 
+
+Dual-Stream Action Injection . At each specific step t of the inference scaling, the agent needs to decide the next action. Instead of letting the model hallucinate or randomly sample, we inject explicit suggestions derived from the current node vt in our graph. We query the graph for the successors of 
+
+vt and generate two distinct lists based on the dual-stream values: • Suggested Actions: We select the Top-K actions with the highest Q+ values. These represent historically proven strategies for the current state. 
+
+Asuggest = TopK 
+
+> a∈Succ (vt)
+
+ Q+(a) (4) • Actions to Avoid: We select the Top-K actions with the lowest (most negative) Q− values. These represent known pitfalls or dead ends. 
+
+Aavoid = TopK 
+
+> a∈Succ (vt)
+
+ |Q−(a)| (5) 
+
+Prompt Integration . These retrieved signals are dynamically injected into the LLM’s prompt context at runtime. By converting numerical value estimates into semantic instructions, we steer the 5LLM’s probability distribution toward high-value regions while suppressing error-prone trajectories, improving inference efficiency without modifying the underlying decoding process. Rather than traditional POMDPs that suffer from state aliasing under abstraction, the Action-Centric Graph mitigates this issue through two mechanisms: LLM-generated actions are inherently descriptive and encode rich trajectory information, and LLMs act as an intrinsic contextual filter that evaluates retrieved historical actions in context, assigning near-zero probability to invalid actions and thereby preventing execution of erroneous branches. The prompt is structured as follows: Integration prompt template This is the best historical trajectory for the current task you had, you should first mimic these actions to get a good start:{ τ ∗}Based on successful trajectories for this task, here are some high-value actions you might consider: { Asuggest }WARNING: Based on analysis of unsuccessful trajectories, you should avoid these actions as they typically lead to poor outcomes: { Aavoid }
+
+## 4 Theoretical Analysis 
+
+In this section, we provide a theoretical guarantee for the efficiency of our framework GAMER .Specifically, we analyze how the Dual-Stream Value Estimation (Q+, Q −) and prompt-guided inference alter the probability distribution of trajectory rewards, thereby accelerating the convergence of inference scaling. 
+
+Definitions and Framework. Let πθ denote the base policy of the LLM. For a given task, the agent generates a trajectory τ which yields a scalar reward R(τ ). We treat the reward as a random variable 
+
+X. Let Xbase ∼ Fbase (x) be the random variable representing the reward obtained by the base policy 
+
+πθ (without memory), where Fbase (x) = P (Xbase ≤ x) is the cumulative distribution function (CDF). Let Xmem ∼ Fmem (x) be the random variable representing the reward obtained by our memory-guided policy πmem , which incorporates Asuggest and Aavoid via in-context learning. In the context of inference scaling, we are interested in the expected maximum reward over N independent samples: J(N ) = E[max Ni=1 Xi]. Our goal is to show that memory guidance induces First-order Stochastic Dominance (FSD), ensuring Jmem (N ) ≥ Jbase (N ).
+
+Inference Scaling Efficiency. The core intuition of GAMER is that the Action-Centric Graph 
+
+modifies the sampling distribution in two distinct ways. The injection of Asuggest increases the probability of selecting actions that historically led to high rewards. The warning against Aavoid 
+
+eliminates the probability of selecting actions that historically led to failures. 
+
+Assumption 4.1 (Monotonic Probability Re-allocation) . The memory guidance mechanism acts as a transformation operator T : πbase → πmem . We assume T reallocates probability mass from the failure set Aavoid (where rewards r < ϵ ) to the success set Asuggest (where rewards r > ϵ ′), such that for any reward threshold x, the cumulative mass moved from [x, ∞) to (−∞ , x ) is zero. 
+
+Theorem 4.2 (First-Order Stochastic Dominance) . If the value estimates Q+ and Q− are ϵ-consistent with the true reward landscape, the memory-guided policy πmem yields a reward distribution that first-order stochastically dominates the base policy: Xmem ⪰1 Xbase .
+
+Theorem 4.3 (Efficiency of Inference Scaling) . For any sample budget N ≥ 1, the expected maximum reward satisfies Jmem (N ) ≥ Jbase (N ). Furthermore, to reach a target reward x∗ with confidence 
+
+1 − δ, πmem requires a sample size Nmem ≤ Nbase .
+
+We further provide the detailed proof in Appendix B.1 and B.2. 
+
+## 5 Experiments 
+
+Benchmarks . To demonstrate the effectiveness of GAMER , we follow AgentBoard [ 4 ] to evaluate our method on a variety of domains, including AlfWorld [ 31 ], ScienceWorld (SciWorld) [ 42 ], PDDL [ 37 ], and Tool-Query (Tool) [4]. The details of each benchmark are available in Appendix C.1. 6Table 1: The average of four LLMs’ inference scaling results, Success Rate(SR %)/Progress Rate(PR %), across benchmarks. The average is the mean of four benchmarks. The best performances are in 
+
+bold , and the second-best method is underlined.                                                                            
+
+> Method AlfWorld SciWorld PDDL Tool Average Inference Scaling Methods
+> Vanilla 26.31 / 58.52 21.67 / 54.88 5.83 / 29.74 50.83 / 82.96 26.16 / 56.53(0.00% / 0.00% ) SFS 21.64 / 53.82 19.17 / 52.04 5.42 / 28.99 51.67 / 82.92 24.47 / 54.44 ( ↓-6.44% / ↓-3.68% ) Reflexion 18.66 / 58.18 19.17 / 48.65 1.67 / 14.26 43.75 / 79.11 20.81 / 50.05 ( ↓-20.45% / ↓-11.46% )
+> Memory Mechanism Methods
+> Voyager 36.75 / 65.47 8.89 / 36.89 5.83 / 25.25 39.58 / 76.92 22.76 / 51.13 ( ↓-12.98%/ ↓-9.54%) Generative 36.01 / 63.33 11.11 / 37.89 6.25 / 27.41 36.67 / 76.41 22.51 / 51.26 ( ↓-13.96% / ↓-9.32% ) MemoryBank 31.16 / 61.54 12.22 / 38.11 5.42 / 26.21 40.42 / 77.78 22.30 / 50.91 ( ↓-14.74% / ↓-9.94% )
+> Self-Evolving Methods
+> AWM 27.80 / 59.78 19.73 / 52.78 5.42 / 29.25 50.42 / 82.69 25.84 / 56.13 ( ↓-1.23% / ↓-0.71% ) A-Mem 36.01 / 66.39 24.45 / 49.35 6.25 / 27.53 49.58 / 81.26 29.07 / 56.13 ( ↑11.13% / ↓-0.70% ) ReasoningBank 4.49 / 27.97 5.00 / 25.11 3.33 / 16.31 37.50 / 66.81 12.58 / 34.05 ( ↓-51.91% / ↓-39.76% ) GAMER(Ours) 40.30 / 65.84 26.95 /59.63 7.08 /30.87 52.09 /83.72 31.60 /60.01 (↑20.81% /↑6.17% )
+
+Baselines . In this paper, we consider three types of baselines: memory-based, self-evolving, and inference-scaling agents. The former includes Voyager [ 39 ], MemoryBank [ 58 ] and Generative Agents [ 24 ]. The self-evolving agents include A-Mem [ 50 ], ReasoningBank [ 22 ], and AWM [ 44 ]. The latter contains Vanilla Best-of-N [ 32 ], Linear Search (Reflexion) [ 30 ], and Scattered Forest Search (SFS) [14]. The details of each baseline and setup are provided in Appendix C.2. 
+
+Setups & Metrics . To ensure a fair comparison, we adopt the Best-of-N setting for our experiments, where the highest-scoring trajectory is selected as the final result for each task across all methods. For memory-based approaches, historical trajectories are recorded and utilized as experience. We adapted the search-based baselines to suit agentic scenarios; specifically, for SFS, we utilized historical trajectories as scattering samples. To validate the effectiveness of our method, we evaluate it using three open-source backend LLMs and one closed source LLM: Qwen2.5-7B (Qwen) [51 ], Llama3.1-8B (Llama) [6], Gemma3-12B (Gemma) [35 ] and GPT-4o-mini (GPT) [ 21 ]. Across all benchmarks, we set the maximum step count to 10 and the inference budget to N = 64 . In our specific setup, the first 32 trajectories serve as warm-up knowledge, while our method is applied to the remaining 32 trajectories. We set K = 3 as the default for actions to suggest and avoid. Following AgentBoard [ 4], we report both Progress Rate(PR) and Success Rate(SR) .
+
+5.1 Main Results Endpoint Analysis of Inference Scaling . To evaluate the effectiveness of our method, we report the average best-of-N results across four LLMs for each benchmark in Table 1. Detailed results for individual LLMs are provided in Appendix D.1. As shown in the table, GAMER consistently outperforms all baselines, improving the success rate by 20 .81% and the progress rate by 6.17% 
+
+over the vanilla approach. Our method achieves the largest number of best and second-best results across benchmarks. Moreover, GAMER yields consistent performance gains over the vanilla baseline on most benchmarks. Notably, on AlfWorld, our method achieves a substantial improvement of 
+
+53 .17% compared to the stateless vanilla baseline. These results demonstrate both the effectiveness and generalization capability of our framework. Compared to the second-best method, A-Mem, GAMER achieves an average improvement of approx-imately 5% in progress rate, along with a slight advantage in success rate. In addition, our framework exhibits more robust performance across all benchmarks. For instance, on the Tool benchmark, 
+
+GAMER continues to improve performance, whereas A-Mem fails to show gains. We attribute these improvements to the fine-grained action suggestions enabled by our graph-based modeling, which provides more structured and informative guidance during inference. We further report LLM analysis tables in Appendix D.1, which indicate that our framework maintains strong and stable performance across different backbone LLMs. 
+
+Analysis of Scaling Behavior . While Table 1 reports the performance of GAMER and the baselines at N = 64 , a comprehensive understanding of our method requires more than an endpoint compar-70 10 20 30 40 50 60 
+
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> Success Rate
+> Vanilla
+> Voyager
+> Generative
+> A-Mem
+> MemoryBank
+> SFS
+> Reflexion
+> ReasoningBank
+> AWM
+> Ours
+
+(a) Success Rate 0 10 20 30 40 50 60  
+
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> Progress Rate
+> Vanilla
+> Voyager
+> Generative
+> A-Mem
+> MemoryBank
+> SFS
+> Reflexion
+> ReasoningBank
+> AWM
+> Ours
+
+(b) Progress Rate 
+
+Figure 2: Overall inference scaling results across four benchmarks and four LLMs. ison. In this section, we analyze the scaling behavior of inference-time computation, examining how performance improvements correlate with an increasing number of inference steps. Figure 2 presents a detailed scaling analysis by illustrating performance trends across the full range of N .We further visualize the evolution of success rate and progress rate as inference iterations increase. Table 2: The average token(M) consumption of Qwen and Llama in one inference. 
+
+Method AlfWorld SciWorld PDDL Tool Average Inference Scaling Methods 
+
+Vanilla 1.2387 1.3276 1.1399 0.9573 1.1659 SFS 1.1603 1.3259 1.1495 0.7404 1.0940 Reflexion 1.9549 1.7999 1.5172 1.1684 1.6101 
+
+Memory Mechanism Methods 
+
+Voyager 1.6485 1.7440 1.5582 1.2718 1.5556 Generative 1.8635 1.8513 1.5255 1.1791 1.6048 MemoryBank 1.8775 1.8465 1.5904 1.2687 1.6458 
+
+Self-Evolving Methods 
+
+AWM 1.2403 1.3339 1.1354 0.9102 1.1549 A-Mem 3.8703 2.8706 2.5977 1.7104 2.7623 ReasoningBank 7.6247 6.4736 3.3232 3.6072 5.2572 GAMER(Ours) 1.3300 2.0618 1.2403 1.0267 1.4147 As shown in the figures, our method consistently achieves higher returns than all baselines. After incorporating warm-up knowledge, the performance curve of GAMER becomes the best across the entire scaling regime. The gains from increased inference-time scaling surpass those of competing methods. Notably, even at N = 64 ,
+
+GAMER maintains the steepest per-formance slope, indicating that fur-ther increases in N would continue to widen the performance gap between our method and the baselines. 
+
+Token Consumption Analysis . To examine whether our method pro-vides advantages in token efficiency, we report the token consumption of Qwen and Llama across all bench-marks. The results are summarized in Table 2. GAMER incurs higher token costs only compared to SFS, AWM, and the vanilla baseline, while remaining more efficient than other memory-based methods. Compared with the A-Mem, our method saves 50% tokens on average. 
+
+Figure 3: Average inference time of a task on the benchmark Science-World with two open-source LLMs. SFS achieves lower token consumption than the vanilla baseline because, in our implementation, trajectory samples are used to replace the original examples. When the sampled trajectories contain fewer tokens than the original examples, SFS naturally incurs a lower token cost. For AWM, the reduced token usage is primarily due to its low success rate, which results in fewer stored workflow memories. In contrast, our method does not require external LLM calls for memory summarization, making the number of additional tokens highly predictable. This leads to more stable and controllable token consumption compared to approaches such as A-Mem and ReasoningBank. 
+
+Inference Time Comparison . To demonstrate the efficiency of our framework, we report the time consumed on the bench-mark SciWorld. In our experiments, the average time for graph construction in a single SciWorld task is 0.0013 seconds, and the average TD learning time per task is less than 4 seconds, indicating low computational overhead. These operations are based on a single thread of Intel(R) Xeon(R) Gold 6258R CPU. We also provide an inference time comparison on the SciWorld benchmark between our method and the second-best baseline, A-Mem. As the results show in Figure 3, our method demonstrates a clear advantage in terms of time efficiency. 81 2 3 4 5    
+
+> Number of Avoid Actions
+> 50
+> 55
+> SR (%)
+> (a) Avoid
+> SR
+> PR
+> 12345
+> Number of Suggestions
+> 49
+> 50
+> 51
+> SR (%)
+> (b) Suggestion
+> SR
+> PR
+> 32 16 84
+> Warm-up Episodes
+> 45
+> 50
+> SR (%)
+> (c) Warm-up
+> SR
+> PR
+> 68
+> 70
+> 72
+> PR (%)
+> 69
+> 70
+> PR (%)
+> 65.0
+> 67.5
+> 70.0
+> PR (%)
+
+Figure 4: Hyperparameter analysis on AlfWorld with Qwen and Llama. This improvement stems from the fact that our approach does not rely on additional large language model (LLM) calls for memory storage and retrieval, which are computationally expensive. 
+
+5.2 Ablation Study 
+
+To provide the insight of GAMER , we conduct ablation studies, including hyperparameters of actions to suggest and avoid, the variance of the warm-up knowledge, and the effectiveness of components. Table 3: The ablation study results(%) of components on Tool with Qwen, and SciWorld with Llama and Gemma. S, A and T mean Suggested Action, Action to Avoid, and Trajec-tory. The best performances are in bold , and the second-best method is underlined. 
+
+Tool SciWorld SciWorld Qwen Llama Gemma Module SR PR SR PR SR PR Vanilla 53.33 84.31 14.44 48.99 26.67 60.89 +A 60.00 86.17 18.89 50.28 32.22 65.67 +S 61.67 86.74 16.67 51.10 37.78 69.01 +T 40.00 75.72 14.44 45.73 34.44 64.28 +A+T 60.00 85.82 20.00 50.24 36.67 70.56 
+
++S+T 61.67 85.96 21.11 51.77 32.22 66.31 +A+S 60.00 86.32 22.22 52.36 34.44 68.40 +A+S+T 61.67 86.90 24.44 52.76 37.78 69.34 
+
+Analysis of Components . We con-duct the component analysis on Tool with Qwen, and SciWorld with Llama and Gemma. To evaluate the con-tribution of each component, we re-port the results of an ablation study in Table 3. As shown in the table, the suggested actions and actions to avoid components individually con-tribute to performance improvements. Conversely, introducing only the his-torical trajectories to the vanilla base-line yields mixed isolated results, no-tably decreasing the success rate on the Tool-Query benchmark and show-ing no initial improvement on Sci-World with Llama. However, the his-torical trajectories module proves cru-cial when integrated synergistically with the other components, leading to further overall gains. For example, on SciWorld with Llama, incorporating both suggested actions and actions to avoid alongside historical trajectories achieves better performance than relying on partial combinations. Based on these findings, we adopt all three modules in our final framework to ensure a robust architecture that generalizes well across different benchmarks and backbone LLMs. 
+
+Analysis of Hyperparameters . In this part, we conduct the ablation study on the AlfWorld benchmark with Qwen and Llama for hyperparameters. We analyze the sensitivity of our framework to key hyperparameters in Figure 4. As shown in the figure, our method is robust to variations in both the number of suggested actions and the number of actions to avoid. Across a wide range of values, the performance remains high with low variance, indicating stable behavior under different configurations. Regarding warm-up knowledge, we observe that using a larger number of warm-up trajectories leads to better performance. Detailed hyperparameter analyses for all benchmarks are provided in Appendix D.2. 
+
+## 6 Conclusion 
+
+In this paper, we propose GAMER , a novel framework for enhancing inference-time scaling in LLM-based agents. Our approach integrates historical trajectories into an action-centric graph and applies dual-stream iteration with temporal-difference learning to generate structured action guidance for agent decision-making. Compared to traditional memory-based mechanisms, GAMER 
+
+offers a more efficient and flexible way to leverage trajectory information, as it does not rely on the LLMs’ internal reasoning capability and incurs only a small additional token cost during 9inference. Extensive experiments across four benchmarks and four backbone LLMs demonstrate the effectiveness, robustness, and generalization ability of our framework. 
+
+Limitations . Despite strong empirical performance, our method depends on sufficient warm-up trajectories as initial knowledge. When the warm-up set is too small, the agent may converge to suboptimal behaviors and become trapped in erroneous patterns, degrading performance below the vanilla baseline. Addressing this limitation is left for future work. 
+
+Broader Impacts . This paper presents a novel framework to enhance inference-time scaling in LLM-based agents, improving both capability and efficiency. Achieving stronger performance with lower token cost, it makes agent systems more practical for real-world deployment. 
+
+## References 
+
+[1] Maciej Besta, Nils Blach, Ales Kubicek, Robert Gerstenberger, Michal Podstawski, Lukas Gianinazzi, Joanna Gajda, Tomasz Lehmann, Hubert Niewiadomski, Piotr Nyczyk, et al. Graph of thoughts: Solving elaborate problems with large language models. In Proceedings of the AAAI conference on artificial intelligence , volume 38, pages 17682–17690, 2024. [2] Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V Le, Christopher Ré, and Azalia Mirhoseini. Large language monkeys: Scaling inference compute with repeated sampling. arXiv preprint arXiv:2407.21787 , 2024. [3] Thomas Carta, Clément Romac, Thomas Wolf, Sylvain Lamprier, Olivier Sigaud, and Pierre-Yves Oudeyer. Grounding large language models in interactive environments with online reinforcement learning. In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara En-gelhardt, Sivan Sabato, and Jonathan Scarlett, editors, Proceedings of the 40th International Conference on Machine Learning , volume 202 of Proceedings of Machine Learning Research ,pages 3676–3713. PMLR, 23–29 Jul 2023. [4] Ma Chang, Junlei Zhang, Zhihao Zhu, Cheng Yang, Yujiu Yang, Yaohui Jin, Zhenzhong Lan, Lingpeng Kong, and Junxian He. Agentboard: An analytical evaluation board of multi-turn llm agents. Advances in neural information processing systems , 37:74325–74362, 2024. [5] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 , 2025. [6] Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. [7] Lutfi Eren Erdogan, Hiroki Furuta, Sehoon Kim, Nicholas Lee, Suhong Moon, Gopala Anu-manchipalli, Kurt Keutzer, and Amir Gholami. Plan-and-act: Improving planning of agents for long-horizon tasks. In Forty-second International Conference on Machine Learning , 2025. [8] Chen Gao, Xiaochong Lan, Nian Li, Yuan Yuan, Jingtao Ding, Zhilun Zhou, Fengli Xu, and Yong Li. Large language models empowered agent-based modeling and simulation: A survey and perspectives. Humanities and Social Sciences Communications , 11(1):1–24, 2024. [9] Chengbo He, Bochao Zou, Xin Li, Jiansheng Chen, Junliang Xing, and Huimin Ma. Enhancing llm reasoning with multi-path collaborative reactive and reflection agents. arXiv preprint arXiv:2501.00430 , 2024. [10] Chenxu Hu, Jie Fu, Chenzhuang Du, Simian Luo, Junbo Zhao, and Hang Zhao. Chatdb: Augmenting llms with databases as their symbolic memory. arXiv preprint arXiv:2306.03901 ,2023. [11] Manling Li, Shiyu Zhao, Qineng Wang, Kangrui Wang, Yu Zhou, Sanjana Srivastava, Cem Gokmen, Tony Lee, Li Erran Li, Ruohan Zhang, Weiyu Liu, Percy Liang, Li Fei-Fei, Jiayuan Mao, and Jiajun Wu. Embodied agent interface: Benchmarking llms for embodied decision making. In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, 10 editors, Advances in Neural Information Processing Systems , volume 37, pages 100428–100534. Curran Associates, Inc., 2024. [12] Xinyi Li, Sai Wang, Siqi Zeng, Yu Wu, and Yi Yang. A survey on llm-based multi-agent systems: workflow, infrastructure, and challenges. Vicinagearth , 1(1):9, 2024. [13] Zujie Liang, Feng Wei, Wujiang Xu, Lin Chen, Yuxi Qian, and Xinhui Wu. I-mcts: Enhancing agentic automl via introspective monte carlo tree search. arXiv preprint arXiv:2502.14693 ,2025. [14] Jonathan Light, Yue Wu, Yiyou Sun, Wenchao Yu, Yanchi Liu, Xujiang Zhao, Ziniu Hu, Haifeng Chen, and Wei Cheng. SFS: Smarter code space search improves LLM inference scaling. In 
+
+The Thirteenth International Conference on Learning Representations , 2025. [15] Zhiwei Liu, Weiran Yao, Jianguo Zhang, Liangwei Yang, Zuxin Liu, Juntao Tan, Prafulla K Choubey, Tian Lan, Jason Wu, Huan Wang, et al. Agentlite: A lightweight library for building and advancing task-oriented llm agent system. arXiv preprint arXiv:2402.15538 , 2024. [16] Junru Lu, Siyu An, Mingbao Lin, Gabriele Pergola, Yulan He, Di Yin, Xing Sun, and Yunsheng Wu. Memochat: Tuning llms to use memos for consistent long-range open-domain conversation. 
+
+arXiv preprint arXiv:2308.08239 , 2023. [17] Yueen Ma, Zixing Song, Yuzheng Zhuang, Jianye Hao, and Irwin King. A survey on vision-language-action models for embodied ai. arXiv preprint arXiv:2405.14093 , 2024. [18] Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, et al. Self-refine: Iterative refinement with self-feedback. Advances in Neural Information Processing Systems , 36:46534–46594, 2023. [19] Ali Modarressi, Ayyoob Imani, Mohsen Fayyaz, and Hinrich Schuetze. RET-LLM: Towards a general read-write memory for large language models. In ICLR 2024 Workshop: How Far Are We From AGI , 2024. [20] OpenAI. Chatgpt. 2022. [21] OpenAI. Gpt-4o mini: advancing cost-efficient intelligence. https://openai.com/index/ gpt-4o-mini-advancing-\cost-efficient-intelligence/ , 2024. Accessed: July 31, 2026. [22] Siru Ouyang, Jun Yan, I Hsu, Yanfei Chen, Ke Jiang, Zifeng Wang, Rujun Han, Long T Le, Samira Daruki, Xiangru Tang, et al. Reasoningbank: Scaling agent self-evolving with reasoning memory. arXiv preprint arXiv:2509.25140 , 2025. [23] Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G Patil, Ion Stoica, and Joseph E Gonzalez. Memgpt: Towards llms as operating systems. arXiv preprint arXiv:2310.08560 , 2023. [24] Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy Liang, and Michael S. Bernstein. Generative agents: Interactive simulacra of human behavior. In Proceed-ings of the 36th Annual ACM Symposium on User Interface Software and Technology , UIST ’23, New York, NY, USA, 2023. Association for Computing Machinery. [25] Zhenting Qi, Mingyuan MA, Jiahang Xu, Li Lyna Zhang, Fan Yang, and Mao Yang. Mutual reasoning makes smaller LLMs stronger problem-solver. In The Thirteenth International Conference on Learning Representations , 2025. [26] Swarnadeep Saha, Omer Levy, Asli Celikyilmaz, Mohit Bansal, Jason Weston, and Xian Li. Branch-solve-merge improves large language model evaluation and generation. In Kevin Duh, Helena Gomez, and Steven Bethard, editors, Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pages 8352–8370, Mexico City, Mexico, June 2024. Association for Computational Linguistics. 11 [27] Rana Salama, Jason Cai, Michelle Yuan, Anna Currey, Monica Sunkara, Yi Zhang, and Yassine Benajiba. MemInsight: Autonomous memory augmentation for LLM agents. In Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and Violet Peng, editors, Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 33136– 33152, Suzhou, China, November 2025. Association for Computational Linguistics. [28] Rana Salama, Jason Cai, Michelle Yuan, Anna Currey, Monica Sunkara, Yi Zhang, and Yassine Benajiba. Meminsight: Autonomous memory augmentation for llm agents. arXiv preprint arXiv:2503.21760 , 2025. [29] Bilgehan Sel, Lifu Huang, Naren Ramakrishnan, Ruoxi Jia, and Ming Jin. LLMs can reason faster only if we let them. In Forty-second International Conference on Machine Learning ,2025. [30] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. Advances in Neural Information Processing Systems , 36:8634–8652, 2023. [31] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768 , 2020. [32] Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul F Christiano. Learning to summarize with human feedback. 
+
+Advances in neural information processing systems , 33:3008–3021, 2020. [33] Richard S Sutton, Andrew G Barto, et al. Reinforcement learning: An introduction , volume 1. MIT press Cambridge, 1998. [34] Gemini Team, Petko Georgiev, Ving Ian Lei, Ryan Burnell, Libin Bai, Anmol Gulati, Garrett Tanzer, Damien Vincent, Zhufeng Pan, Shibo Wang, et al. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context. arXiv preprint arXiv:2403.05530 , 2024. [35] Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya Pathak, et al. Gemma 3 technical report. arXiv preprint arXiv:2503.19786 , 2025. [36] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timo-thée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al. Llama: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971 , 2023. [37] Mauro Vallati, Lukas Chrpa, Marek Grze´ s, Thomas Leo McCluskey, Mark Roberts, Scott Sanner, et al. The 2014 international planning competition: Progress and trends. Ai Magazine ,36(3):90–98, 2015. [38] Bing Wang, Xinnian Liang, Jian Yang, Hui Huang, Shuangzhi Wu, Peihao Wu, Lu Lu, Zejun Ma, and Zhoujun Li. Enhancing large language model with self-controlled memory framework. 
+
+arXiv preprint arXiv:2304.13343 , 2023. [39] Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. Voyager: An open-ended embodied agent with large language models. 
+
+Transactions on Machine Learning Research , 2024. [40] Hanlin Wang, Jian Wang, Chak Tou Leong, and Wenjie Li. Steca: Step-level trajectory calibration for llm agent learning. arXiv preprint arXiv:2502.14276 , 2025. [41] Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, et al. A survey on large language model based autonomous agents. Frontiers of Computer Science , 18(6):186345, 2024. [42] Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and Prithviraj Ammanabrolu. Scienceworld: Is your agent smarter than a 5th grader? arXiv preprint arXiv:2203.07540 , 2022. [43] Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. Self-consistency improves chain of thought reasoning in language models. In The Eleventh International Conference on Learning Representations , 2023. 12 [44] Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. Agent workflow memory. In Forty-second International Conference on Machine Learning , 2025. [45] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, brian ichter, Fei Xia, Ed Chi, Quoc V Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large language models. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh, editors, 
+
+Advances in Neural Information Processing Systems , volume 35, pages 24824–24837. Curran Associates, Inc., 2022. [46] Yangzhen Wu, Zhiqing Sun, Shanda Li, Sean Welleck, and Yiming Yang. Inference scaling laws: An empirical analysis of compute-optimal inference for LLM problem-solving. In The Thirteenth International Conference on Learning Representations , 2025. [47] Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie Jin, Enyu Zhou, et al. The rise and potential of large language model based agents: A survey. Science China Information Sciences , 68(2):121101, 2025. [48] Sang Michael Xie, Aditi Raghunathan, Percy Liang, and Tengyu Ma. An explanation of in-context learning as implicit bayesian inference. arXiv preprint arXiv:2111.02080 , 2021. [49] Yuxi Xie, Kenji Kawaguchi, Yiran Zhao, James Xu Zhao, Min-Yen Kan, Junxian He, and Michael Xie. Self-evaluation guided beam search for reasoning. Advances in Neural Information Processing Systems , 36:41618–41650, 2023. [50] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-mem: Agentic memory for LLM agents. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [51] An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, et al. Qwen2.5 technical report. 
+
+arXiv:2412.15115 [cs.CL] , 2024. [52] Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Tom Griffiths, Yuan Cao, and Karthik Narasimhan. Tree of thoughts: Deliberate problem solving with large language models. Ad-vances in neural information processing systems , 36:11809–11822, 2023. [53] Dan Zhang, Sining Zhoubian, Ziniu Hu, Yisong Yue, Yuxiao Dong, and Jie Tang. Rest-mcts*: Llm self-training via process reward guided tree search. Advances in Neural Information Processing Systems , 37:64735–64772, 2024. [54] Guibin Zhang, Muxin Fu, Kun Wang, Guancheng Wan, Miao Yu, and Shuicheng YAN. G-memory: Tracing hierarchical memory for multi-agent systems. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. [55] Kechi Zhang, Jia Li, Ge Li, Xianjie Shi, and Zhi Jin. Codeagent: Enhancing code generation with tool-integrated agent systems for real-world repo-level coding challenges. arXiv preprint arXiv:2401.07339 , 2024. [56] Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. Expel: Llm agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, pages 19632–19642, 2024. [57] Longtao Zheng, Rundong Wang, Xinrun Wang, and Bo An. Synapse: Trajectory-as-exemplar prompting with memory for computer control. arXiv preprint arXiv:2306.07863 , 2023. [58] Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. Memorybank: Enhancing large language models with long-term memory. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 38, pages 19724–19731, 2024. 13 A Related Work 
+
+Memory Mechanisms in LLM Agents. Memory is a core component that enables LLM-based agents to accumulate experience and support long-horizon task execution [ 41 , 47 , 8 , 12 ]. Early works primarily addressed context window limitations through inside-trial memory, storing interaction histo-ries via retrieval-augmented generation with dense retrieval [ 58 ] or read–write memory structures [ 19 ], as exemplified by MemoryBank [ 58 ], ChatDB [ 10 ], MemoChat [ 16 ], and AgentLite [ 15 ]. Subsequent approaches explored more sophisticated memory management, including cache-like prioritization in MemGPT [ 23 ] and controller-based memory streams in Self-Controlled Memory (SCM) [ 38 ], as well as cross-trial memory extensions and structured abstraction of experiences [ 56 , 57 , 24 , 5, 28 ], such as A-Mem [ 50 ], which organizes memories via adaptive abstraction, and G-MEM [ 54 ], which models memory as structured graphs to capture relational knowledge. ReasoningBank [ 22 ] intro-duces a self-evolving framework learning knowledge from both success and failure trajectories and AWM [ 44 ] focuses on task-oriented efficiency by encoding successful execution patterns into a dedicated workflow memory. Despite these advances, most existing methods rely on rigid memory schemas and fixed write–retrieve workflows, limiting their adaptability and generalization across diverse real-world tasks. Designing a flexible and universal memory system that supports robust long-term interactions, therefore, remains an open challenge. 
+
+Test-time Inference Scaling. Recent research has formalized test-time scaling as a paradigm to enhance LLM performance by allocating additional computational resources during inference [ 2,46 , 18 , 30 , 43 ], rather than scaling model parameters. The topological organization of subproblems categorizes these methods, determining how a complex query is decomposed and solved. The most prominent sequential approach is CoT, which encourages models to generate intermediate reasoning steps [ 45 ]. This method effectively extends the computation depth linearly, allowing the model to decompose problems into a sequence of logical deductions. To address the limitations of linear reasoning, non-sequential structures [ 26 , 53 , 25 ] such as ToT [ 52 ] and Graph of Thoughts (GoT) [ 1] have been introduced. These frameworks utilize tree or graph search algorithms to explore multiple reasoning paths [ 49 , 13 ], enable backtracking, and aggregate information from distinct thought branches [ 9, 26 ]. By treating inference as a search problem over a space of thoughts, these methods trade increased test-time compute for superior problem-solving accuracy, particularly in tasks requiring planning and lookahead. 
+
+## B Proof of Theoretical Analysis 
+
+B.1 Proof of Theorem 4.2 
+
+Proof. Let pbase (x) and pmem (x) be the probability density functions (PDF) of Xbase and Xmem 
+
+respectively. The memory guidance mechanism modifies the base distribution by suppressing low-reward trajectories and enhancing high-reward ones. Define the probability shift function 
+
+∆p(x) = pmem (x) − pbase (x). By the law of total probability, R ∞−∞ ∆p(x)dx = 0 .According to the Dual-Stream strategy, we define a pivot reward threshold ϵ. The transformation ensures: • For x < ϵ (Failure regions), ∆p(x) ≤ 0.• For x > ϵ (Success regions), ∆p(x) ≥ 0.The difference in CDF is given by: 
+
+Fmem (x) − Fbase (x) = 
+
+Z x
+
+> −∞
+
+∆p(t)dt 
+
+Case 1 : x < ϵ . Since ∆p(t) ≤ 0 for all t ≤ x < ϵ , the integral R x 
+
+> −∞
+
+∆p(t)dt ≤ 0. Thus, 
+
+Fmem (x) ≤ Fbase (x).
+
+Case 2 : x ≥ ϵ. We know that R ∞−∞ ∆p(t)dt = 0 . Therefore: 
+
+Z x
+
+> −∞
+
+∆p(t)dt =
+
+Z ∞−∞ 
+
+∆p(t)dt −
+
+Z ∞
+
+> x
+
+∆p(t)dt = 0 −
+
+Z ∞
+
+> x
+
+∆p(t)dt 
+
+14 For t ≥ x ≥ ϵ, we have ∆p(t) ≥ 0. Thus, R ∞ 
+
+> x
+
+∆p(t)dt ≥ 0, which implies: 
+
+Fmem (x) − Fbase (x) = −
+
+Z ∞
+
+> x
+
+∆p(t)dt ≤ 0
+
+Combined, Fmem (x) ≤ Fbase (x) for all x ∈ R. This confirms Xmem ⪰1 Xbase .
+
+B.2 Proof of Theorem 4.3 
+
+Proof. Expected Maximum Reward : Let X(1) , X (2) , . . . , X (N ) be N independent and identi-cally distributed (i.i.d.) samples drawn from a distribution F . We define the random variable 
+
+MN = max {X(1) , X (2) , . . . , X (N )} as the maximum reward obtained in N trials. The cumulative distribution function (CDF) of MN is given by: 
+
+P (MN ≤ x) = P (X(1) ≤ x, . . . , X (N ) ≤ x) = 
+
+> N
+
+Y
+
+> i=1
+
+P (X(i) ≤ x) = [ F (x)] N
+
+The expected value of the maximum reward, E[MN ], can be expressed using the survival function identity: 
+
+E[MN ] = 
+
+Z ∞
+
+> 0
+
+(1 − [F (x)] N )dx −
+
+Z 0
+
+> −∞
+
+[F (x)] N dx (6) Let ∆J = Jmem (N ) − Jbase (N ). Substituting the CDFs: 
+
+∆J =
+
+Z ∞−∞ 
+
+([ Fbase (x)] N − [Fmem (x)] N )dx (7) From Theorem 4.2, we have Fmem (x) ≤ Fbase (x) for all x ∈ R. Since F (x) ∈ [0 , 1] and the power function f (t) = tN is monotonically non-decreasing for t ≥ 0, the inequality is preserved under the 
+
+N -th power: 
+
+[Fmem (x)] N ≤ [Fbase (x)] N , ∀x ∈ R (8) Thus, ∆J ≥ 0, which proves that memory-guided inference yields a higher or equal expected maximum reward for any budget N .
+
+Sample Complexity : We now analyze the number of samples N required to achieve a target reward 
+
+x∗ with a success probability at least 1 − δ. The success condition is P (MN > x ∗) ≥ 1 − δ, which is equivalent to: 
+
+1 − [F (x∗)] N ≥ 1 − δ =⇒ [F (x∗)] N ≤ δ (9) Taking the natural logarithm on both sides (noting that ln F (x∗) ≤ 0): 
+
+N ln F (x∗) ≤ ln δ =⇒ N ≥ ln δ
+
+ln F (x∗) (10) Let Nmem and Nbase be the minimum samples required for each policy. Since Fmem (x∗) ≤
+
+Fbase (x∗), it follows that ln Fmem (x∗) ≤ ln Fbase (x∗). In terms of absolute values, 
+
+| ln Fmem (x∗)| ≥ | ln Fbase (x∗)|. Therefore: 
+
+Nmem =
+
+ ln δ
+
+ln Fmem (x∗)
+
+
+
+≤
+
+ ln δ
+
+ln Fbase (x∗)
+
+
+
+= Nbase (11) This inequality demonstrates that GAMER reaches the same performance target with a lower or equal sampling budget, effectively accelerating the inference scaling process. 
+
+## C Experimental Setup 
+
+C.1 Benchmarks 
+
+In this section, we provide a description of the benchmarks in this subsection. The detailed benchmark information is provided as follows. 15 AlfWorld [ 31 ] is a text-based embodied environment derived from the ALFRED benchmark, compris-ing 134 test tasks in which agents must perform long-horizon household tasks via natural-language interactions. Each task requires the agent to execute a sequence of grounded actions (e.g., naviga-tion, object manipulation) under partial observability. AlfWorld poses significant challenges for inference-time reasoning due to sparse rewards, compositional task structure, and strong dependencies between early and late-stage actions, making it well-suited for evaluating trajectory-level reasoning and memory reuse. 
+
+ScienceWorld [42 ] focuses on scientific reasoning and experimentation in a simulated environment with 90 test tasks. Agents interact with virtual laboratories to conduct multi-step experiments, manipulate physical variables, and infer latent scientific rules. Compared to AlfWorld, ScienceWorld places greater emphasis on causal reasoning, hypothesis testing, and long-term dependency tracking, which requires agents to retain and reuse intermediate reasoning states across inference steps. 
+
+PDDL [37 ] tasks are based on 60 test symbolic planning problems defined using the Planning Domain Definition Language. In these environments, agents are required to generate valid action sequences that satisfy preconditions and achieve specified goals under deterministic transition dynamics. PDDL domains emphasize structured state transitions and precise action dependencies, providing a clean testbed for evaluating whether inference-time scaling methods can efficiently explore and reuse promising action trajectories in a combinatorial search space. 
+
+Tool-Query [4 ] evaluates an agent’s ability to invoke external tools and APIs to answer user queries. Tasks typically require selecting appropriate tools, composing tool calls, and integrating tool outputs into coherent final answers. 60 test environments stress tool selection and execution planning at inference time, where reusing successful action patterns and pruning low-value tool trajectories is critical for efficient reasoning. 
+
+C.2 Baselines Voyager [39 ] is an LLM-powered embodied agent designed for autonomous lifelong learning. It integrates three core mechanisms: an automatic curriculum that generates adaptive goals to maximize discovery, a dynamic skill library that stores executable code for future retrieval and composition, and an iterative prompting mechanism that leverages environmental feedback and self-verification to refine generated programs. We follow the code of G-Memory [54] to implement. 
+
+MemoryBank [58 ] introduces an explicit long-term memory mechanism to augment LLM so they can recall and leverage past interactions over extended time spans. It structures memory hierarchically by recording and summarizing conversational events and user characteristics, then uses dense semantic embeddings and efficient vector retrieval to fetch relevant memories during new interactions. Our experiments are based on the implementation of G-Memory [54]. 
+
+Generative Agents [24 ] is a framework that extends LLMs to create autonomous software agents capable of simulating believable human-like behavior over long time horizons by maintaining and reasoning over rich internal memories. Each agent continuously logs experiences in a memory stream expressed in natural language, retrieves relevant memories based on recency and relevance, and periodically performs reflection to synthesize higher-level insights that shape its long-term behavior. We referred to the implementation method of G-Memory [54]. 
+
+SFS [ 14 ] introduces an inference-time optimization framework that improves LLM inference scaling by formulating code generation as a black-box search over the program space. It balances exploration and exploitation through three mechanisms: scattering to generate diverse improvement directions, foresting to explore multiple search trees from different initial solutions, and scouting to share feedback across branches. We adopt the source code to fit the benchmarks. 
+
+Reflexion [30 ] uses three components: an Actor to generate actions and text, an Evaluator to score those outputs, and a Self-Reflection module to convert feedback into natural language summaries. After each trial in an environment, the agent’s feedback and observations are transformed into reflective text and stored in an episodic memory buffer, which is then used as context in subsequent trials to guide better decision-making. In our implementation, for each action, we will use the same LLM to generate feedback. 
+
+A-Mem [50 ] is a dynamic memory system designed to enhance LLM Agents’ ability to manage and utilize long-term historical information. It employs an LLM to generate and organizes detailed 16 Table 4: The inference scaling results across benchmarks. The best performances are in bold , and the second-best method is underlined. 
+
+Method AlfWorld SciWorld PDDL Tool Average Qwen2.5 Inference Scaling Methods 
+
+Vanilla 38.81 / 67.35 21.11 / 44.05 8.33 / 31.94 53.33 / 84.31 30.40 / 56.91 SFS 30.60 / 62.00 17.78 / 39.58 6.67 / 30.83 55.00 / 83.79 27.51 / 54.05 Reflexion 34.33 / 72.01 14.44 / 45.09 1.67 / 15.98 50.00 / 81.41 25.11 / 53.62 
+
+Memory Mechanism Methods 
+
+Voyager 41.04 / 68.84 5.56 / 28.24 8.33 / 28.47 43.33 / 77.96 24.57 / 50.88 Generative 30.60 / 59.76 11.11 / 31.45 8.33 / 29.83 38.33 / 78.98 22.09 / 50.01 MemoryBank 29.10 / 59.89 13.33 / 36.88 8.33 / 27.78 41.67 / 77.72 23.11 / 50.57 
+
+Self-Evolving Methods 
+
+AWM 41.79 / 70.40 15.56 / 39.07 8.33 / 31.11 51.67 / 83.61 29.34 / 56.05 A-Mem 54.48 / 81.59 27.78 / 48.93 8.33 / 29.69 58.33 / 84.61 37.23 / 61.21 ReasoningBank 8.27 / 40.35 0.00 / 8.89 0.00 / 8.91 0.00 / 20.49 2.07 / 19.66 GAMER(Ours) 69.40 / 80.04 18.89 / 47.86 8.33 / 32.36 61.67 / 86.90 39.57 / 61.79 Llama3.1 Inference Scaling Methods 
+
+Vanilla 14.18 / 54.66 14.44 / 48.99 5.00 / 28.03 33.33 / 78.20 16.74 / 52.47 SFS 12.69 / 48.88 12.22 / 43.47 6.67 / 25.83 36.67 / 78.71 17.06 / 49.22 Reflexion 3.73 / 45.09 1.11 / 15.76 1.67 / 10.19 10.00 / 68.01 4.13 / 34.76 
+
+Memory Mechanism Methods 
+
+Voyager 13.43 / 54.42 1.11 / 5.45 3.33 / 19.91 20.00 / 71.97 9.47 / 37.94 Generative 20.90 / 56.97 1.11 / 7.50 3.33 / 19.53 15.00 / 71.58 10.09 / 38.90 MemoryBank 26.12 / 59.14 1.11 / 6.71 3.33 / 20.00 21.67 / 72.98 13.06 / 39.71 
+
+Self-Evolving Methods 
+
+AWM 17.16 / 55.97 15.56 / 46.53 6.67 / 27.64 33.33 / 78.36 18.18 / 52.13 A-Mem 8.96 / 51.68 1.11 / 10.08 3.33 / 20.44 25.00 / 74.00 9.60 / 39.05 ReasoningBank 0.00 / 8.02 6.67 / 33.03 3.33 / 19.11 26.67 / 72.21 9.17 / 33.09 GAMER(Ours) 29.10 / 61.63 24.44 / 52.76 5.00 / 27.26 28.33 / 77.69 21.72 / 54.84 Gemma3 Inference Scaling Methods 
+
+Vanilla 25.37 / 50.12 26.67 / 60.89 5.00 / 31.61 65.00 / 86.74 30.51 / 57.34 SFS 19.40 / 46.39 30.00 / 65.80 5.00 / 32.50 63.33 / 86.36 29.43 / 57.76 Reflexion 21.64 / 58.46 34.44 / 69.84 1.67 / 11.26 66.67 / 87.33 31.11 / 56.72 
+
+Memory Mechanism Methods 
+
+Voyager 37.31 / 62.13 13.33 / 56.16 8.33 / 31.08 60.00 / 84.46 29.74 / 58.46 Generative 43.28 / 64.80 22.22 / 56.16 10.00 / 35.58 61.67 / 81.94 34.29 / 59.62 MemoryBank 35.07 / 61.44 17.78 / 52.13 6.67 / 32.02 56.67 / 82.76 29.05 / 57.09 
+
+Self-Evolving Methods 
+
+AWM 25.37 / 50.62 30.00 / 64.74 3.33 / 32.52 63.33 / 85.89 30.51 / 58.44 A-Mem 44.78 / 63.06 38.89 / 68.91 8.33 / 32.65 60.00 / 84.25 38.00 / 62.22 ReasoningBank 0.00 / 15.73 0.00 / 8.34 6.67 / 25.65 68.33 / 89.15 18.75 / 34.72 GAMER(Ours) 29.85 / 57.09 37.78 / 69.34 10.00 / 35.16 66.67 / 87.57 36.08 / 62.29 GPT Inference Scaling Methods 
+
+Vanilla 26.87 / 61.94 24.44 / 65.60 5.00 / 27.38 51.67 / 82.59 27.00 / 59.38 SFS 23.88 / 58.02 16.67 / 59.30 3.33 / 26.80 51.67 / 82.82 23.89 / 56.74 Reflexion 14.93 / 57.15 26.67 / 63.90 1.67 / 19.59 48.33 / 79.67 22.90 / 55.08 
+
+Memory Mechanism Methods 
+
+Voyager 55.22 / 76.49 15.56 / 57.69 3.33 / 21.53 35.00 / 73.28 27.28 / 57.25 Generative 49.25 / 71.77 10.00 / 56.46 3.33 / 24.68 31.67 / 73.12 23.56 / 56.51 MemoryBank 34.33 / 65.67 16.67 / 56.71 3.33 / 25.04 41.67 / 77.64 24.00 / 56.27 
+
+Self-Evolving Methods 
+
+AWM 26.87 / 62.13 17.78 / 60.79 3.33 / 25.74 53.33 / 82.90 25.33 / 57.89 A-Mem 35.82 / 69.22 30.00 / 69.47 5.00 / 27.33 55.00 / 82.17 31.46 / 62.05 
+
+ReasoningBank 9.70 / 47.76 13.33 / 50.16 3.33 / 11.58 55.00 / 85.40 20.34 / 48.73 GAMER(Ours) 32.84 / 64.61 26.67 / 68.56 5.00 / 28.68 51.67 / 82.72 29.05 / 61.14 
+
+memory notes for each interaction that include contextual descriptions, keywords, and tags, and then uses semantic similarity to autonomously link related memories. It allows agents to autonomously 17 construct, link, and evolve their memories over time, enabling better long-term reasoning and consistency in complex tasks. We modify the source code to meet the benchmarks. 
+
+Agent Workflow Memory [44 ] introduces a method for storing workflows from experience for multi-step tasks, thereby enhancing the ability of LLM agents. Unlike traditional memory systems that store raw interaction trajectories, AWM focuses on extracting high-level, reusable sub-routines, essentially patterns of successful actions, that can be generalized across different but related tasks. We customize the source code to match the benchmarks. 
+
+ReasoningBank [ 22 ] is a framework designed to enable AI agents to evolve autonomously by leveraging a structured memory. It allows the agent to extract reasoning skills from the failure and success trajectories. By treating reasoning as a reusable and evolvable asset, the method allows agents to progressively improve their performance and generalizability through a self-evolving loop. We follow the paper to implement a simple version of the sequential scaling agent. 
+
+C.3 Implementation 
+
+In our implementation, we adopt the base agent architecture from AgentBoard [ 4 ] across all bench-mark environments. Each task episode is strictly capped at a maximum of 10 steps. At each step, the LLM is provided with the complete trajectory of past observations and actions to inform decision-making, alongside few-shot demonstrations within the prompt to enhance performance. For the temporal difference (TD) learning phase, we set the discount factor γ = 0 .95 and the learning rate 
+
+α = 0 .05 . Finally, the Q-values are updated for 100 iterations per task to ensure convergence. The default top k for suggestion and avoid actions are 3. 
+
+C.4 Compute Resources Used 
+
+The experimental setup incorporates open-source LLMs (Qwen2.5-7B, Gemma3-12B, Llama3.1-8B) alongside a commercial LLM (GPT4o-mini). For GPT4o-mini, we perform inference through the OpenAI API using standard Linux CPU environments. To isolate performance measurements and eliminate cross-model interference, the open-source models are evaluated locally in a strictly sequential manner. Each model is loaded independently onto a single NVIDIA A100 GPU (80GB VRAM) to maintain consistent and reproducible runtime metrics. The complete host system features an Intel Xeon Gold 6258R CPU and eight NVIDIA A100 GPUs (80GB each), configured with CUDA 12.8, Python 3.10, and PyTorch 2.6.0 to readily support iterative and parallel workflows. 
+
+## D Detailed Experiments 
+
+D.1 Main Results Endpoint Analysis of Inference Scaling . We provide a detailed comparison between GAMER and baseline methods across multiple benchmarks and LLM backbones in this subsection. The results are summarized in Table 4. As shown in Table 4, GAMER achieves the highest number of best and second-best results across benchmarks, further demonstrating its overall superiority over competing approaches. Compared to stateless inference-scaling methods, GAMER consistently outperforms these baselines in nearly all settings, benefiting from the incorporation of historical memory knowledge that enables more informed decision-making. In contrast to memory-based agent frameworks, GAMER provides fine-grained, action-level guidance rather than relying on high-level summaries or implicit reasoning. As a result, methods that heavily depend on the intrinsic reasoning capabilities of LLMs exhibit a larger performance gap when paired with smaller models, such as Qwen2.5-7B and Llama3.1-8B. A similar trend is observed for self-evolving baselines. For example, when using Llama3.1-8B, 
+
+GAMER achieves a success rate that is over 50% higher than that of A-Mem. However, when switch-ing to a stronger backbone such as Gemma3-12B, A-Mem attains a higher success rate, suggesting that its performance is more sensitive to the underlying LLM’s reasoning ability. In contrast, as shown in Table 4, GAMER delivers consistent improvements across all four LLM backbones. This stability highlights the robustness of our framework and indicates that its effectiveness is less dependent on model scale, making it well-suited for a wide range of deployment scenarios. 18 Table 5: The detailed token(M) costs results across benchmarks. The LLMs are Qwen2.5-7B and Llama3.1-8B.                                                                                                                   
+
+> AlfWorld SciWorld PDDL Tool Average Method Qwen Llama Qwen Llama Qwen Llama Qwen Llama Qwen Llama
+> Inference Scaling Methods
+> Vanilla 1.2340 1.2434 1.3014 1.3539 1.1479 1.1320 0.7732 1.1414 1.1141 1.2177 SFS 1.1575 1.1631 1.2931 1.3587 1.1429 1.1560 0.7404 1.0985 1.0835 1.2259 Reflexion 1.9294 1.9803 1.7775 1.8222 1.5425 1.4918 0.9832 1.3536 1.5582 1.6620
+> Memory Mechanism Methods
+> Voyager 1.7297 1.5673 1.7448 1.7432 1.5481 1.5683 0.9958 1.5478 1.5046 1.6066 Generative 1.9334 1.7936 1.7665 1.9361 1.5069 1.5442 0.9331 1.4250 1.5350 1.6747 MemoryBank 1.7824 1.9727 1.8327 1.8604 1.6327 1.5481 1.0435 1.4939 1.5728 1.7188
+> Self-Evolving Methods
+> AWM 1.2424 1.2382 1.3071 1.3607 1.1338 1.1369 0.7184 1.1020 1.1004 1.2095 A-Mem 3.9247 3.8159 2.8388 2.9024 2.6547 2.5407 1.4194 2.0015 2.7094 2.8151 ReasoningBank 8.3453 6.9041 6.1859 6.7612 3.0506 3.5958 2.7358 4.4785 5.0794 5.4349 GAMER(Ours) 1.2525 1.4074 2.0428 2.0808 1.2463 1.2343 0.7456 1.3078 1.3218 1.5076
+
+Token Consumption Analysis . We report detailed token consumption results for Qwen2.5-7B and Llama3.1-8B in Table 5. As shown in the table, GAMER consistently demonstrates strong advantages in token efficiency over most baseline methods. In particular, compared with A-Mem, the second-best method in Table 1, GAMER achieves an average reduction of approximately 50% in total token usage. Notably, on AlfWorld, our method incurs only about one-third of the token cost of A-Mem, highlighting its efficiency in long-horizon tasks. For ReasoningBank, the substantially higher token consumption arises from its self-refinement mechanism, which repeatedly invokes the LLM at each reasoning step. This leads to multiple LLM calls per task and results in significantly greater token usage than any other method. In contrast, our framework avoids iterative external reasoning calls and instead relies on structured memory and graph-based action guidance, enabling more efficient inference with predictable and controlled token growth. These results indicate that GAMER offers a favorable trade-off between performance and computational cost, making it more suitable for large-scale or resource-constrained deployment scenarios. 
+
+Analysis of Scaling Behavior . To further examine the scaling behavior of GAMER , we present detailed per-benchmark results in Figure 5. As shown in the figure, our method achieves consistent and steady performance improvements across different benchmarks and LLM backbones, demonstrating strong robustness to both task variation and model choice. We also observe that several baseline methods, such as ReasoningBank, exhibit relatively low initial success and progress rates. When these methods incorporate negative or low-quality historical trajectories as knowledge, the agent can become trapped in suboptimal action sequences and struggle to recover, limiting the effectiveness of further inference scaling. A similar trend is observed for most other baselines: while increasing the number of scaling operations leads to substantial gains in the early stages, the improvements gradually diminish and plateau as scaling continues. In contrast, GAMER continues to deliver meaningful performance gains even in the later stages of inference scaling. This sustained improvement indicates that our framework is more effective at leveraging additional inference steps, allowing the agent to refine its decisions over time rather than prematurely converging to suboptimal behaviors. These results highlight the advantage of structured, action-level guidance in enabling long-term benefits from inference-time scaling. 
+
+D.2 Ablation Study Analysis of Hyperparameters . In this subsection, we present detailed ablation results analyzing the impact of key hyperparameters. As shown in Table 6, GAMER exhibits robust performance with respect to both the number of suggested actions and the number of actions to avoid, for both success rate and progress rate. Across different LLM backbones, the performance variations remain within a narrow range, indicating low sensitivity to these hyperparameter choices. 19 Table 6: The hyperparameter analysis results(%) of SR and PR on components on AlfWorld with Qwen and Llama. H-Para. means hyperparameters. The best performances are in bold , and the second-best method is underlined. 
+
+AlfWorld H-Para. Qwen Llama Average Avoid  1 72.39 / 82.09 30.60 / 61.63 51.50 / 71.86 2 73.88 / 83.02 34.33 / 63.12 54.11 / 73.07 
+
+3 69.40 / 80.04 29.10 / 61.63 49.25 / 70.84 4 67.91 / 78.73 30.60 / 62.00 49.26 / 70.37 5 69.40 / 80.22 32.84 / 61.82 51.12 / 71.02 Suggestion  1 69.40 / 80.04 29.10 / 61.63 49.25 / 70.84 
+
+2 69.40 / 80.04 29.85 / 61.26 49.63 / 70.65 3 69.40 / 80.04 29.10 / 61.63 49.25 / 70.84 
+
+4 69.40 / 80.04 32.09 / 61.19 50.75 / 70.62 5 69.40 / 80.04 32.09 / 61.19 50.75 / 70.62 Warm-up  32 69.40 / 80.04 29.10 / 61.63 49.25 / 70.84 
+
+16 69.40 / 79.85 26.12 / 56.53 47.76 / 68.19 8 64.93 / 77.61 24.63 / 55.35 44.78 / 66.48 4 64.93 / 76.68 20.90 / 52.74 42.92 / 64.71 Regarding warm-up knowledge, we observe consistent trends across multiple benchmarks and LLMs. In particular, increasing the amount of warm-up trajectories generally leads to a high improved performance, highlighting the importance of sufficient initial knowledge for stable inference scaling. These results suggest that our framework is resilient to hyperparameter variations and can be reliably applied across different tasks and model scales without extensive tuning. 20 0 10 20 30 40 50 60 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+0.25 
+
+0.30 
+
+0.35 
+
+0.40 
+
+> Success Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours (a) Success Rate of AlfWorld. 0 10 20 30 40 50 60 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+> Progress Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours (b) Progress Rate of AlfWorld. 0 10 20 30 40 50 60 
+
+0.00 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+0.25 
+
+> Success Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours 
+
+(c) Success Rate of ScienceWorld. 0 10 20 30 40 50 60 
+
+0.1 
+
+0.2 
+
+0.3 
+
+0.4 
+
+0.5 
+
+0.6 
+
+> Progress Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours (d) Progress Rate of ScienceWorld. 0 10 20 30 40 50 60 
+
+0.00 
+
+0.01 
+
+0.02 
+
+0.03 
+
+0.04 
+
+0.05 
+
+0.06 
+
+0.07 
+
+> Success Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours 
+
+(e) Success Rate of PDDL. 0 10 20 30 40 50 60 
+
+0.05 
+
+0.10 
+
+0.15 
+
+0.20 
+
+0.25 
+
+0.30 
+
+> Progress Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours (f) Progress Rate of PDDL. 0 10 20 30 40 50 60 
+
+0.20 
+
+0.25 
+
+0.30 
+
+0.35 
+
+0.40 
+
+0.45 
+
+0.50 
+
+> Success Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours 
+
+(g) Success Rate of Tool-Query. 0 10 20 30 40 50 60 
+
+0.55 
+
+0.60 
+
+0.65 
+
+0.70 
+
+0.75 
+
+0.80 
+
+0.85 
+
+> Progress Rate
+
+Vanilla 
+
+Voyager 
+
+Generative 
+
+A-Mem 
+
+MemoryBank 
+
+SFS 
+
+Reflexion 
+
+ReasoningBank 
+
+AWM 
+
+Ours (h) Progress Rate of Tool-Query. 
+
+Figure 5: The average results of four LLM backbones on all Benchmarks. 21
