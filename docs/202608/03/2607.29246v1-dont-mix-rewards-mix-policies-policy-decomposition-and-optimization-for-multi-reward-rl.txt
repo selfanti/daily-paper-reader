@@ -1,0 +1,1023 @@
+Title: Don't Mix Rewards, Mix Policies: Policy Decomposition and Optimization for Multi-Reward RL
+
+URL Source: https://arxiv.org/pdf/2607.29246v1
+
+Published Time: Mon, 03 Aug 2026 00:43:54 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Don’t Mix Rewards, Mix Policies: Policy Decomposition and Optimization for Multi-Reward RL 
+
+Ruiming Liang 1,2,3,∗,‡, Yi Zhong 3,4,∗,‡, Yizhen Yuan 3, Yinan Zheng 3, Tianyi Tan 3,
+
+Tianyue Wang 1,2, Haiyun Guo 1,B, Jinqiao Wang 1, Xianyuan Zhan 3,B
+
+> 1
+
+Fundation Model Research Center, CASIA, 2School of Artificial Intelligence, UCAS, 3Institute for AI Industry Research (AIR), Tsinghua University, 4College of Automotive and Energy Engineering (CAEE), Tongji University 
+
+> ∗
+
+Equal contribution , BCorresponding authors , ‡Work done during internship at THU-AIR 
+
+Modern large language models (LLMs) are expected not just to answer correctly, but to adapt their behavior to different human values and use cases. As a result, multi-reward reinforcement learning (RL) has become an increasingly important problem for LLMs, where each reward captures a different aspect of desired behavior. However, optimizing with multiple rewards suffers from a more severe alignment tax issue, where different optimization objectives can trade off or even conflict with each other, leading to unstable and inefficient post-training. In this work, we propose PRISM , a new multi-reward RL framework built upon the idea of policy-space decomposition and composition. Instead of compositing different rewards, PRISM optimizes a set of standalone positive policies and a global negative policy. This alleviates the potential conflict during multi-reward policy optimization, while enabling controllability during inference by flexible policy composition. Experiments on scientific reasoning, tool-use reasoning, and helpfulness–safety alignment show that PRISM consistently outperforms existing multi-reward RL baselines, with extra controllability for inference-time preference control. 
+
+Emails: liangruiming2024@ia.ac.cn , zhanxianyuan@air.tsinghua.edu.cn 
+
+# 1 Introduction 
+
+Large language models [ 2, 19 ] are widely deployed as general-purpose assistants, making alignment with human intent a central concern [ 4, 13 ]. Reinforcement learning [ 35 ] is among the most effective tools for this purpose, optimizing LLMs directly against reward signals that encode human preferences [ 5, 23 ]. Yet human preferences are rarely captured by a single objective: users expect models to be helpful, safe, and honest at the same time [ 21 , 39 ], and these goals often conflict, so improving one dimension costs another [ 18 , 23 , 42 ]. LLM alignment is thus inherently a multi-reward optimization problem [ 21 , 40 ], substantially harder than single-objective RL. Existing multi-reward RL methods differ mainly in how they merge reward signals into one training objective. Linear scalarization [ 40 , 46 ] sums rewards with manual weights; it is simple but scale-sensitive, and the weights must be retuned per task. Reward shaping and adaptive weighting [ 7, 21 , 38 , 41 ] mitigate scale mismatch, but still collapse all rewards into one scalar before each update, so conflicting preferences compete within the same gradient step. Constrained or multi-objective RL [ 3, 15 , 31 ] treats some rewards as Lagrangian constraints in pursuit of Pareto optimality, but is often hard to optimize and unstable in practice. Despite their differences, all these methods compose preferences in the reward space before policy updates. We argue this principle is fundamentally limiting, for two reasons. First, reward signals differ in scale, distribution, and calibration [ 21 , 29 , 38 ], making reward weights an unreliable interface for controlling trade-offs. Second, collapsing multiple preferences into one optimization signal forces them to compete within the same parameter update, yielding a compromise policy that under-optimizes every preference dimension—an effect we call the 1arXiv:2607.29246v1 [cs.AI] 31 Jul 2026 multi-reward alignment tax .We therefore introduce PRISM , a multi-reward RL algorithm built on a different philosophy: do not mix rewards, mix policies . As shown in Figure 1, PRISM learns one standalone positive policy per reward and a single global negative policy. Desirable behaviors are reward-specific and deserve dedicated optimization directions. In contrast, undesirable behaviors need not be attributed to individual rewards. A single negative policy captures the union of all reward-specific failure modes and penalizes them jointly. Each reward drives updates mainly through its own positive branch. This design alleviates gradient competition among conflicting preferences and mitigates the multi-reward alignment tax. For efficiency, all sub-policies share a single language model conditioned on different prefix tokens and are composed at sampling time via a weighted sum of logits; the same mixture policy serves both training rollouts and inference. The merge weights thus form an explicit, interpretable interface for preference trade-offs, adjustable at inference time without retraining. Experiments on three multi-reward settings show that PRISM consistently outperforms reward-space baselines. On GPQA [ 30 ] and ScienceQA [ 32 ], it achieves the best overall score on every backbone, surpassing the strongest baseline by 17.8, 8.0, and 0.6 points on DeepSeek-R1-1.5B [ 34 ], Qwen2.5-1.5B-Instruct, and Qwen2.5-3B-Instruct [ 37 ]. On the tool-calling benchmark BFCL-v3 [ 24 ] and the helpfulness–safety benchmarks Alpaca [ 36 ], HH-RLHF [ 10 ], and PKU-SafeRLHF [ 6], it ranks first among all RL methods, and remains more robust and controllable as reward complexity grows. Our contributions are threefold: 
+
+• We identify the multi-reward alignment tax induced by reward-space composition, and advocate composing preferences in policy space instead. 
+
+• We propose PRISM , which decomposes multi-reward RL into per-reward positive policies and a global negative policy, realized via prefix-conditioned sub-policies with logit-level composition. 
+
+• Experiments on scientific QA, tool-use reasoning, and helpfulness–safety alignment show consistent gains over strong baselines, with training-free inference-time controllability. 
+
+# 2 Preliminaries 
+
+## 2.1 Multi-Reward Policy Optimization 
+
+We consider an autoregressive language model parameterized by θ, which defines a conditional distribution 
+
+πθ (o | q) over responses o given a query q ∼ D . Alignment is performed against N reward functions 
+
+{Rk(o, q )}Nk=1 , where each Rk encodes a distinct human preference such as correctness, helpfulness, safety, or format compliance. The native multi-reward objective is the system of N coupled maximization problems 
+
+max π
+
+
+
+Eo∼π(·| q)[R1(o, q )] ,
+
+Eo∼π(·| q)[R2(o, q )] ,
+
+· · · 
+
+Eo∼π(·| q)[RN (o, q )] 
+
+s.t. 
+
+Z
+
+> o
+
+π(o | q)d o = 1 
+
+(1) which, in general, admits no single solution that simultaneously maximizes every Rk [ 42 ]. The dominant practical workaround is reward-space scalarization [ 21 , 40 , 46 ], which collapses these objectives into one weighted scalar R(o, q ) = PNk=1 wkRk(o, q ) and optimizes a single policy against it. As discussed in Section 1, this composition principle suffers from scale sensitivity, calibration mismatch, and gradient interference between conflicting preferences. 2Extract  
+
+> Multiple Reward Signals
+> ...
+
+... ... 
+
+Rollout & Update 
+
+Reward-Specific 
+
+Positive Policies Prefix-Conditioned LLM Policy Composition in Logit Space Global Negative Policy Correctness e.g. factually, accuracy, etc. 
+
+> Format e.g. JSON style, structure, etc.
+> Safety e.g. harmlessness, compliance, etc.
+> Global Negative Capture failures modes inclusively
+
+# LLM Figure 1 Method overview of PRISM 
+
+## 2.2 Group-Relative Advantage Estimation 
+
+We adopt the group-relative advantage estimator introduced by GRPO [ 34 ] as the building block for our policy updates. Given a query q, a group of G responses {oi}Gi=1 is sampled from the current policy and scored under a reward R to obtain {ri}Gi=1 . The group-relative advantage of response i is 
+
+ˆAi = ri − mean( {rj }Gj=1 )std( {rj }Gj=1 ) , (2) which provides a low-variance, group-normalized signal without an explicit value network. Given the group-relative advantage ˆAi in Eq. 2 computed under a reward function R, the corresponding GRPO training objective for a policy πθ takes the standard clipped surrogate form: 
+
+L(θ) = − Eq∼D , {oi}Gi=1 ∼πθold 
+
+h
+
+min 
+
+
+
+ri(θ) ˆAi, clip  ri(θ), 1−ϵ, 1+ ϵ ˆAi
+
+i 
+
+, (3) where ri(θ) = πθ (oi | q)/π θold (oi | q) is the importance ratio and ϵ is the clipping threshold. We write L(θ; R)
+
+as an explicit function of the scoring reward R.In the multi-reward setting, GDPO [ 21 ] mitigates reward-scale mismatch by normalizing each reward-specific advantage within the response group, then summing and re-normalizing the aggregated advantage to preserve relative differences across reward combinations. 
+
+Aki = rki − mean( {rkj }Gj=1 )std( {rkj }Gj=1 ) , Asum  
+
+> i
+
+=
+
+> N
+
+X
+
+> k=1
+
+Aki ,
+
+ˆAi = Asum  
+
+> i
+
+− mean( {Asum  
+
+> j
+
+}Gj=1 )std( {Asum  
+
+> j
+
+}Gj=1 ) ,
+
+(4) where G is group size and ˆAi is GDPO advantage for i-th response. Nevertheless, this normalization still amounts to composing rewards in advantage space before policy updates, and thus remains a form of implicit reward weighting that is susceptible to the same gradient interference among conflicting preferences. 
+
+## 2.3 Positive–Negative Policy Decomposition 
+
+Following DIPOLE [ 17 ] and DExperts [ 20 ], the optimal policy π⋆ under a reward function R(o, q ) can be expressed as a product of expert (PoE) [11] composition of a positive policy and a negative policy: 
+
+π⋆(o | q) = π+(o | q)α · π−(o | q)1−α, (5) 3where π+ is the positive policy captures behaviors encouraged by the reward, whereas π− is the negative policy captures behaviors suppressed by the reward. The coefficient α controls the degree of greediness in the composed policy; increasing α encourages the final policy to assign higher probability to responses associated with larger rewards. 
+
+# 3 Method 
+
+## 3.1 Multi-Reward Positive-Negative Policy Optimization 
+
+Multi-Reward Policy Optimization Consider a multi-objective optimization problem with N rewards 
+
+{Rk(o, q )}Nk=1 as in Eq. 1. We aim to train once and allow the trade-off to be freely selected at inference time. To achieve it, assuming that there is an arbitrary set of coefficients {α1, . . . , α N }, for any such choice, we formulate a KL-regularized one-step local improvement over a reference policy μ [ 47 ], augmented with a shared penalty term: 
+
+max  
+
+> π
+
+Eo∼π(·| q)
+
+" NX
+
+> k=1
+
+αkRk(o, q )
+
+#
+
+− 1
+
+η DKL (π∥μ)
+
+− γEo∼π(·| q)[ψ[R1,R 2,··· ,R N ](o, q )] s.t.
+
+Z
+
+> o
+
+π(o | q)d o = 1 ,
+
+> N
+
+X
+
+> k=1
+
+αk − γ = 1 .
+
+(6) Here ψ[R1,...,R N ](o, q ), abbreviated as ψ(R) below, is designed to model the union of all reward-specific failure modes: it outputs a large value whenever any one of the individual rewards is low, regardless of how the others behave, so that a single severely violated objective is sufficient to trigger the penalty. Mathematically, 
+
+ψ is monotone non-increasing in each reward. 
+
+Optimal Policy and Policy Decomposition The optimal solution π⋆(o | q) of Eq. 6 satisfies [ 28 ]
+
+π⋆(o | q) = 1 
+
+> Z(q)
+
+μ(o | q) exp 
+
+
+
+η
+
+hPNk=1 αkRk(o, q ) − γψ (R)( o, q )
+
+i 
+
+. Since the constraint in Eq. 6 requires 
+
+PNk=1 αk − γ = 1 , we can decompose μ as μ(o | q) =   
+
+> QNk=1 μ(o|q)αk
+> μ(o|q)γ
+
+. Substituting it into the expression for π⋆,we obtain 
+
+π⋆(o | q) = 1
+
+Z(q) ·
+
+QNk=1 μ(o | q)αk
+
+μ(o | q)γ ·
+
+QNk=1 exp  αkηR k(o, q )
+
+exp  γηψ (R)( o, q ) , (7) which can be regrouped term-by-term as 
+
+π⋆(o | q) = 1
+
+Z(q) ·
+
+QNk=1 
+
+μ(o | q) exp( ηR k(o, q )) αk
+
+μ(o | q) exp( ηψ (R)( o, q )) γ . (8) Note that each bracketed term μ(o | q) exp (ηR k(o, q )) and μ(o | q) exp (ηψ (R)( o, q )) is, up to normalization, exactly the optimal solution of a single-reward KL-regularized optimal policy. We define the reward-specific positive policies 
+
+π+ 
+
+> k
+
+(o | q) ≜ 1
+
+Z+ 
+
+> k
+
+(q) μ(o | q) exp  ηR k(o, q ), k = 1 , . . . , N, (9) and the global negative policy 
+
+π−(o | q) ≜ 1
+
+Z−(q) μ(o | q) exp  ηψ (R)( o, q ), (10) 4where r+ 
+
+> k
+
+= π+ 
+
+> k
+
+(o | q)/μ (o | q), r− = π−(o | q)/μ (o | q), and Z+ 
+
+> k
+
+(q) and Z−(q) are the corresponding normalizing constants, then π⋆ can be expressed as a composition of the positive and negative policies [11]: 
+
+π⋆(o | q) ∝
+
+QNk=1 
+
+ π+ 
+
+> k
+
+(o | q)αk
+
+ π−(o | q)γ . (11) The derivation of Eq. 11 shows that, at the optimum, policy composition is decoupled from the optimization of each sub-policy. In particular, the definitions of π+ 
+
+> k
+
+and π− do not involve the coefficients {αk, γ } used to compose them at inference time. We therefore optimize each sub-policy on its own with the GRPO loss defined in Eq. 3: 
+
+L+ 
+
+> k
+
+(π+ 
+
+> k
+
+) = − Eq∼D , {oi}Gi=1 ∼μ
+
+h
+
+min 
+
+
+
+rki ˜Aki , clip  rki , 1−ϵ, 1+ ϵ ˜Aki
+
+i 
+
+, (12) 
+
+L−(π−) = − Eq∼D , {oi}Gi=1 ∼μ
+
+h
+
+min 
+
+
+
+r− 
+
+> i
+
+˜A− 
+
+> i
+
+, clip  r− 
+
+> i
+
+, 1−ϵ, 1+ ϵ ˜A−
+
+> i
+
+i 
+
+. (13) In practice, Eq. 12 and Eq. 13 use monotonically shaped advantages ˜Aki ≜ σ( ˆAki ) − c, ˜A− 
+
+> i
+
+≜ c −
+
+ QNk=1 σ( ˆAki )
+
+1/N 
+
+where σ is the sigmoid function and c is a constant offset. The soft conjunction makes ˜A−
+
+> i
+
+large on the union of failure modes, as required of ψ (alternatives are ablated in Appendix ?? ). Moreover, training proceeds iteratively in practice, with the current composed policy π⋆ serving as the reference μ that generates rollouts and anchors the importance ratios at each iteration. 
+
+Logit-Level Policy Composition Since π⋆, π+ 
+
+> k
+
+, and π− share the same reference policy μ and the same context, taking logarithms converts the product and quotient into a linear combination. The log-partition terms log Z(q), log Z+ 
+
+> k
+
+(q), and log Z−(q) collapse into a single token-independent constant. This constant is automatically absorbed by the softmax normalization and therefore does not need to be explicitly computed. Consequently, composing the N +1 sub-policies reduces to a weighted summation at the token-logit level [ 8, 22 ]: 
+
+z⋆t =
+
+> N
+
+X
+
+> k=1
+
+αkz+ 
+
+> k,t
+
+− γz − 
+
+> t
+
+, (14) where z⋆t , z+
+
+> k,t
+
+, and z− 
+
+> t
+
+denote the logits of π⋆(· | q, o <t ), π+ 
+
+> k
+
+(· | q, o <t ), and π−(· | q, o <t ), respectively. 
+
+Discussion By decoupling policy optimization from reward trade-off selection, PRISM allows a single training run to yield an entire family of policies spanning all possible coefficient combinations, rather than a single policy tied to one fixed trade-off. This design simultaneously enables inference-time controllability and reduces gradient interference across conflicting objectives, alleviating the multi-reward alignment tax. 
+
+## 3.2 Efficient Implementation 
+
+Naively instantiating each sub-policy as an independent model would multiply both parameter count and decoding latency by N + 1 . We avoid this via two choices: (i) all sub-policies share a single backbone conditioned on lightweight, independently-trainable prefixes, and (ii) rollouts under π⋆ are generated in batched forwards pass rather than N + 1 sequential ones. Asymmetric update scheme shields the shared backbone from negative branch, making them compatible. 
+
+Prefix-conditioned shared backbone. We realize all sub-policies using one shared language model πθ ,conditioned on a set of learnable continuous prefix embeddings P = {P +1 , P +2 , . . . , P + 
+
+> N
+
+, P −} [14 , 16 ], one prefix per sub-policy: 
+
+π+ 
+
+> k
+
+(· | q) ≜ πθ
+
+  · [q, P + 
+
+> k
+
+], π−(· | q) ≜ πθ
+
+  · [q, P −], k = 1 , . . . , N. (15) 5N+1  sequences, one batch 
+
+## π+1 ⋯
+
+## π+2 ⋯
+
+## π+ 
+
+> N
+
+⋯
+
+## π− ⋯
+
+# ⋮ ⋮ ⋮
+
+q Pk o < t ot
+
+α1
+
+α2
+
+αN
+
+−γ  
+
+> broadcast to the batch
+> What is 6 ×7? The
+
+ot  
+
+> What is 6 ×7? The
+
+ot  
+
+> What is 6 ×7? The
+
+ot  
+
+> What is 6 ×7? The
+
+ot
+
+> πθ (shared)
+
+z+1
+
+z+2
+
+z+
+
+> N
+
+z−
+
+Σ
+
+P +1
+
+P +2
+
+P +
+
+> N
+
+P −
+
+answer Figure 2 Parallel-batch mixture sampling. At each decoding step, the query q, per-branch prefix ( P + 
+
+> k
+
+or P −), and the shared context o<t are stacked along the batch dimension and processed by the shared backbone πθ in a single forward pass. The resulting per-branch logits z+ 
+
+> k
+
+and z− are combined with weights αk and −γ (Eq. 14), one token is sampled from π⋆, and it is broadcast back to all branches for the next step. 
+
+Backbone-preserving asymmetric training. The positive branches π+ 
+
+> k
+
+are trained on their respective reward signals, whereas π− (Eq. 10) is trained to maximize ψ(R), thereby capturing the union of reward-specific failure modes, i.e., responses that fail on any one objective. To keep the shared backbone aligned with the positive behaviors, we adopt an asymmetric update scheme that updates θ only through the positive branches [44]. Let δ be the learning rate: 
+
+θ ← θ − δ ∇θ L+ 
+
+> k
+
+, Pk ← Pk − δ ∇P +
+
+> k
+
+L+ 
+
+> k
+
+, (16) 
+
+θ ← θ, P − ← P − − δ ∇P − L−. (17) Positive updates (Eq. 16) backpropagate through both θ and P + 
+
+> k
+
+. Negative updates (Eq. 17) apply a stop-gradient to θ, so only P − is updated. Consequently, the backbone is trained exclusively on high-quality data, while P − still learns a catch-all representation of the union of failure modes that can suppress them under Eq. 14 at inference time. 
+
+Parallel-batch mixture sampling. Even with a shared backbone, naively sampling from π⋆ would decode the N + 1 branches sequentially at every step. Instead, we place the branches along the batch dimension: as shown in Figure 2, the decoding state (q, o <t ) is replicated across all N + 1 prefixes, their logits are computed in a single batched forward pass and composed via Eq. 14, and the sampled token ot is broadcast back to all branches so that their KV caches advance in lockstep. Memory and FLOPs still scale linearly with N +1,but per-token latency is that of a single forward pass [ 25 ]. The same procedure generates rollouts during training and serves inference. 
+
+# 4 Experiments 
+
+## 4.1 Experiment Setup 
+
+We evaluate PRISM on three multi-reward alignment scenarios: scientific question answering, tool-use reasoning, and helpfulness–safety alignment. 6Table 1 Main results on scientific QA benchmarks : scientific QA results across all evaluated backbones, where small gray values denote absolute changes over the corresponding base model. All numbers are percentages. Rows with “+” denote optimization methods applied to the corresponding backbone. Bold indicates the best result among optimization methods. Fmt: Percentage of rewards that meet the format requirements. Acc: Percentage of correct answers. Joint: Percentage of answers that meet the format requirements and are correct. Avg: Average of format and accuracy. 
+
+Results on Scientific QA & GPQA 
+
+Model / Method ScienceQA GPQA Overall Fmt Acc Joint Avg Fmt Acc Joint Avg DeepSeek-R1-1.5B 0.00 66.64 0.00 22.21 0.00 29.68 0.00 9.89 16.05 + GRPO Sum 74.11 +74.11 67.85 +1.21 54.02 +54.02 65.33 +43.12 16.96 +16.96 29.46 -0.22 6.25 +6.25 17.56 +7.67 41.44 +25.39 
+
++ GRPO Product 74.39 +74.39 68.51 +1.87 55.42 +55.42 66.11 +43.90 27.68 +27.68 30.80 +1.12 9.60 +9.60 22.69 +12.80 44.40 +28.35 
+
++ GDPO 80.37 +80.37 67.94 +1.30 58.04 +58.04 68.78 +46.57 26.34 +26.34 28.35 -1.33 8.71 +8.71 21.13 +11.24 44.96 +28.91 
+
++ PRISM (ours) 95.33 +95.33 69.91 +3.27 68.51 +68.51 77.92 +55.71 81.25 +81.25 33.04 +3.36 28.35 +28.35 47.55 +37.66 62.73 +46.68 
+
+Qwen2.5-1.5B-Instruct 6.82 73.36 5.89 28.69 37.28 27.23 10.49 25.00 26.84 + GRPO Sum 100.00 +93.18 76.26 +2.90 76.26 +70.37 84.17 +55.48 77.46 +40.18 27.90 +0.67 21.21 +10.72 42.19 +17.19 63.18 +36.34 
+
++ GRPO Product 98.31 +91.49 75.98 +2.62 74.30 +68.41 82.86 +54.17 37.95 +0.67 27.90 +0.67 11.16 +0.67 25.67 +0.67 54.27 +27.43 
+
++ GDPO 99.93 +93.11 76.64 +3.28 76.26 +70.37 84.28 +55.59 76.56 +39.28 29.01 +1.78 21.43 +10.94 42.33 +17.34 63.30 +36.46 
+
++ PRISM (ours) 99.53 +92.71 76.72 +3.36 76.45 +70.56 84.23 +55.54 87.95 +50.67 29.24 +2.01 25.67 +15.18 58.45 +33.45 71.34 +44.50 
+
+Qwen2.5-3B-Instruct 44.67 81.78 36.73 54.39 47.99 33.93 16.52 32.81 43.60 + GRPO Sum 99.81 +55.14 83.55 +1.77 83.55 +46.82 88.97 +34.58 87.95 +39.96 29.91 -4.02 27.46 +10.94 48.44 +15.63 68.71 +25.11 
+
++ GRPO Product 99.53 +54.86 84.02 +2.24 84.02 +47.29 89.19 +34.80 84.82 +36.83 28.80 -5.13 24.11 +7.59 45.91 +13.10 67.55 +23.95 
+
++ GDPO 99.81 +55.14 82.80 +1.02 82.80 +46.07 88.47 +34.08 85.94 +37.95 29.91 -4.02 26.79 +10.27 47.55 +14.74 68.01 +24.41 
+
++ PRISM (ours) 98.97 +54.30 84.11 +2.33 84.11 +47.38 89.06 +34.68 88.17 +40.18 31.92 -2.01 28.57 +12.05 49.55 +16.74 69.31 +25.71 
+
+Table 2 Main results on BFCL v3 benchmarks : tool calling results on Qwen2.5-3B-Instruct across all evaluated methods. Acc/R: Percentage of correct answers on RLLA style judgement. Acc/B: Percentage of correct answers on BFCL style judgement. Details of RLLA and BFCL judgement refer to Appendix B.4.2 
+
+Results on BFCL v3 
+
+Model / Method Non-live Live Multi-turn Overall Fmt Acc/R Acc/B Fmt Acc/R Acc/B Fmt Acc/R Acc/B Fmt Acc/R Acc/B Qwen2.5-3B-Instruct 13.30 8.70 72.17 14.06 5.63 58.30 20.56 7.28 17.34 15.98 7.20 49.27 + GRPO Sum 65.74 40.87 74.78 40.87 31.16 68.02 59.53 17.43 18.28 64.43 27.82 51.27 + GRPO Product 90.17 49.48 74.96 96.97 31.16 60.07 77.51 20.50 17.99 88.22 33.71 51.01 + GDPO 98.87 55.30 76.09 99.33 33.16 62.37 83.22 20.68 17.93 93.81 36.38 52.13 + PRISM (ours) 99.83 56.26 80.35 99.33 31.09 62.22 86.54 21.24 17.81 95.23 36.20 53.46 
+
+Table 3 Main results on Helpfulness-Safety Alignment benchmarks : helpfulness and safety alignment results on Qwen2.5-3B-Instruct across all evaluated optimization methods. 
+
+Results on Helpfulness-Safety Alignment 
+
+Model / Method Alpaca HH-RLHF PKU-SafeRLHF Useful Harmless Avg Useful Harmless Avg Useful Harmless Avg + GRPO Sum 3.03 3.49 3.26 3.03 4.03 3.53 4.79 6.34 5.57 + GRPO Product 3.02 3.48 3.25 3.02 4.03 3.53 4.79 6.34 5.57 + GDPO 2.95 3.44 3.20 3.03 4.02 3.53 4.79 6.33 5.56 + PRISM (ours) 3.17 3.65 3.41 3.14 4.15 3.65 4.86 6.36 5.61 
+
+7Correctness Format Length Correctness Format Length Correctness Format Length 
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Normalized Scores
+
+1 reward 2 reward 3 reward    
+
+> PRISM (ours) GDPO GRPO-Sum GRPO-Prod
+
+Figure 3 Overall BFCL v3 performance under different numbers of training rewards. 1 reward: Train on the 
+
+correctness reward; 2 reward Trained on correctness and format rewards; 3 reward: Trained on correctness ,
+
+format , and length rewards. Correctness denotes the RLLA-style accuracy. All scores are normalized with three-reward score of PRISM .0 1000 2000 3000 4000 5000 6000             
+
+> Training Step
+> 0.5
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> Correctness Reward
+> Correctness
+> PRISM (ours)
+> GDPO
+> GRPO-Sum
+> GRPO-Prod
+> 01000 2000 3000 4000 5000 6000
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Format Reward
+> Format
+> PRISM (ours)
+> GDPO
+> GRPO-Sum
+> GRPO-Prod
+> 01000 2000 3000 4000 5000 6000
+> Training Step
+> 0.06
+> 0.08
+> 0.10
+> 0.12
+> 0.14
+> 0.16
+> 0.18
+> Length Reward
+> Length
+> PRISM (ours)
+> GDPO
+> GRPO-Sum
+> GRPO-Prod
+
+Figure 4 Training curves across all methods under the three-reward setting. 
+
+Scientific question answering. For scientific reasoning, we train models on SciKnowEval [ 9] and evaluate them on GPQA [30] and ScienceQA [32]. Further details are in Appendix A.4. 
+
+Tool-use reasoning. For tool-use reasoning, we train models on the dataset collected by ToolRL [ 26 ] and evaluate them on BFCL-v3 [ 24 ], a benchmark evaluates the LLM’s ability to call functions. Further details are in Appendix B.4.1. 
+
+Helpfulness-safety alignment. For helpfulness-safety alignment, we use the Alpaca dataset [ 36 ] for policy optimization and evaluate the trained models on the corresponding held-out Alpaca test split. We further evaluate models on the HH-RLHF [ 10 ] and PKU-SafeRLHF [ 6] datasets. Further details are in Appendix C.2. 
+
+Baselines. We conduct experiments on DeepSeek-R1-1.5B [ 34 ], Qwen2.5-1.5B-Instruct and Qwen2.5-3B-Instruct [ 37 ]. For each backbone and task, we compare PRISM with representative multi-reward RL baselines, including GRPO [ 34 ] variants and GDPO [ 21 ]. The GRPO variants include reward weighted summation, denoted as GRPO Sum, and reward product aggregation, denoted as GRPO Prod. Detailed training configurations and hyperparameters are provided in Appendix A.3, B.3 and C.1. 
+
+## 4.2 Main Results 
+
+Tables 1, 2, and 3 summarize the main evaluation results across scientific reasoning, tool use, and helpfulness-safety alignment. On scientific reasoning (Table 1), PRISM attains the best overall score on all three backbones: 62.73 vs. 44.96 for the strongest baseline on DeepSeek-R1-1.5B ( +17.77), 71.34 vs. 63.30 on Qwen2.5-1.5B-Instruct (+8.04), and 69.31 vs. 68.71 on Qwen2.5-3B-Instruct. The advantage is most pronounced on the harder GPQA benchmark, where PRISM reaches 47.55 average on DeepSeek-R1-1.5B, more than doubling the best baseline (22.69). Crucially, PRISM achieves the highest Joint score in all six benchmark–backbone settings 8Correctness Format Length 
+
+Merge weights: [ α1, α2, α3], γ = 0.05            
+
+> 0.985
+> 0.990
+> 0.995
+> 1.000
+> Reward Score
+> (normalized by per-reward max)  [0.55 , 0.25, 0.25] [0.25, 0.55 , 0.25] [0.25, 0.25, 0.55 ]Figure 5 Inference-time controllability under different weight configurations on BFCL-Live. Each configuration assigns a dominant weight of 0.55 to one positive branch while setting the remaining two positive weights to 0.25 . The negative branch weight is fixed to γ= 0 .05 throughout all experiments.
+
+(e.g., 68.51 vs. 58.04 on ScienceQA and 28.35 vs. 9.60 on GPQA with DeepSeek-R1-1.5B), confirming that it best improves the ability to satisfy all reward criteria simultaneously .On tool calling (Table 2), PRISM obtains the best overall Fmt (95.23 vs. 93.81 for GDPO) and Acc/B (53.46 vs. 52.13), while its overall Acc/R (36.20) is on par with GDPO (36.38). It sweeps all three metrics in the Non-live setting (99.83 Fmt, 56.26 Acc/R, 80.35 Acc/B) and achieves the best Fmt and Acc/R in Multi-turn, delivering the most balanced profile across settings. On helpfulness–safety alignment (Table 3), PRISM scores highest on both usefulness and harmlessness across all three evaluation sets, lifting the average to 3.41 on Alpaca ( +0.15 over the best baseline), 3.65 on HH-RLHF (+0.12), and 5.61 on PKU-SafeRLHF ( +0.04), whereas the baselines are nearly indistinguishable from one another. These consistent gains under continuous reward-model feedback show that policy-space decomposition remains effective beyond rule-based reward settings. Compared with all other multi-reward RL baselines, 
+
+PRISM demonstrates superior or more stable performance in most settings, further validating its effectiveness in multi-objective optimization scenarios. 
+
+## 4.3 Alignment Tax under Varying Rewards 
+
+Based on the BFCL-v3 [ 24 ] experiments, we further analyze the impact of varying the number of rewards on different algorithms. Specifically, we train the models with one, two and three rewards, respectively. All algorithms are trained for 6,000 steps, and the final model performance is recorded. To ensure comparability across different metrics, all metrics are normalized using the corresponding rewards of PRISM under three-reward setting. As shown in Figure 3, PRISM maintains nearly the same correctness performance after adding format and length rewards, while consistently outperforming all baselines. In contrast, GDPO [ 21 ] and GRPO-Prod exhibit a clear drop in correctness as the number of rewards increases; although GRPO-Sum maintains relatively stable correctness, its optimization of format and length rewards is substantially weaker than 
+
+PRISM . These results suggest that PRISM better mitigates the alignment tax and attains a superior Pareto frontier in multi-reward optimization. Shown in Figure 4, we further visualize the evolution of each reward over training steps under the three-reward setting. Compared with the baselines, PRISM demonstrates substantially higher sample efficiency: it converges to near-optimal performance after roughly 3k steps, while the other methods require more than 6k steps to approach convergence. 9Table 4 Policy-composition ablations on BFCL-v3 using Qwen2.5-3B-Instruct.                                         
+
+> Method Fmt Acc/R Acc/B
+> PRISM 95.23 36.20 53.46
+> w/ shared positive policy 94.03 34.38 52.56 w/o global negative policy 94.86 34.75 52.84 w/ individual-branch rollouts 94.84 34.59 52.48
+> Table 5 Negative-policy weighting ablations on BFCL-v3 using Qwen2.5-3B-Instruct.
+> Method Fmt Acc/R Acc/B
+> PRISM 95.23 36.20 53.46
+> w/ max weighting 95.02 33.70 52.43 w/ LogAvgExp weighting 95.06 34.58 52.62 w/ mean weighting 93.27 33.90 53.12
+
+## 4.4 Inference-Time Controllability 
+
+To investigate inference-time controllability, we evaluate three weight configurations on the BFCL-Live split. Figure 5 shows that increasing the weight αk consistently improves the corresponding evaluation metric. Specifically, setting α1 = 0 .55 achieves the highest correctness accuracy ( 31 .53% ), α2 = 0 .55 yields the best format accuracy ( 98 .08% ), and α3 = 0 .55 produces the longest average reasoning length ( 108 .0). These results suggest that the merge weights provide a simple and effective mechanism for controllable inference-time behavior. 
+
+## 4.5 Ablation Studies 
+
+Ablations on Policy Composition. We conduct component ablations on BFCL-v3 using Qwen2.5-3B-Instruct under the same training and evaluation configuration as the main tool-use experiments. We evaluate three variants: (1) replacing reward-specific positive policies with a shared positive policy, (2) removing the global negative policy, and (3) generating rollouts independently from each branch rather than from the composed policy. Table 4 summarizes the overall results. All three ablations degrade overall performance. Sharing the positive policy causes the largest drops in format and RLLA accuracy, confirming the importance of preserving reward-specific optimization directions. Removing the global negative policy reduces all overall metrics, supporting its role in modeling shared failure modes. Individual-branch rollouts obtain the lowest overall BFCL accuracy, indicating that sampling from the composed policy better aligns the training distribution with composed decoding. 
+
+Ablations on Negative Weighting Function. As Table 5, we further study the weighting function used to train the global negative policy. For the i-th sampled response, let {Aki }Nk=1 denote its reward-specific advantages. We compare three alternative weighting functions. The max variant uses w− 
+
+> i
+
+= − max k=1 ,...,N Aki ;the LogAvgExp variant uses w− 
+
+> i
+
+= − exp 
+
+ 1
+
+> N
+
+PNk=1 log( Aki )
+
+
+
+; and the mean variant uses w− 
+
+> i
+
+= − 1
+
+> N
+
+PNk=1 Aki .
+
+# 5 Related Work 
+
+Reinforcement Learning for LLM. RL is the dominant tool for aligning LLMs with human preferences. RLHF-PPO [ 23 , 33 ] optimizes a learned reward model with a separate value network, while DPO [ 28 ] recasts preference optimization as a stable supervised-style objective. Recent critic-free variants improve scalability and stability: GRPO [ 34 ] estimates advantages via group-wise normalization, GSPO [ 45 ] reduces importance-ratio variance using sequence-level ratios, and DAPO [ 43 ] refines the training recipe at scale. All of them, however, optimize a single scalar reward, so multiple preference signals must be collapsed before training. 
+
+Multi-Reward RL. Since alignment must satisfy correctness, safety, helpfulness, and format compliance at once, most multi-reward methods scalarize rewards into one weighted objective [ 27 , 40 , 46 ], which is sensitive to reward scales and weights and induces interference among heterogeneous preferences. Refinements include fine-grained rewards [ 41 ], adaptive weighting [ 7], reward normalization [ 21 ], constrained optimization [ 3], model merging [ 12 ], and preference conditioning [ 42 ], yet all of them compose preferences before the policy 10 update. In contrast, PRISM keeps rewards as separate optimization directions and composes the resulting policies in logit space, shifting preference composition from reward space to policy space. 
+
+# 6 Conclusion 
+
+In this work, we propose PRISM , a policy-space composition framework for multi-reward LLM alignment. Instead of scalarizing heterogeneous rewards into a single optimization signal, PRISM keeps each reward as a separate optimization direction by learning one positive policy per reward. A single global negative policy further captures the union of failure modes. These policies are composed through explicit merge weights, enabling controllable preference trade-offs without retraining. Experiments on scientific reasoning, tool-use reasoning, and helpfulness–safety alignment show that PRISM consistently outperforms reward-space baselines, remains more robust as reward complexity increases, and supports effective inference-time preference control. These results suggest that mixing policies rather than rewards offers a more effective and controllable path toward multi-reward aligned language models. 
+
+# References 
+
+[1] Amo. https://github.com/Artessay/Amo , 2025. [2] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. [3] Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In International conference on machine learning , pages 22–31. Pmlr, 2017. [4] Amanda Askell, Yuntao Bai, Anna Chen, Dawn Drain, Deep Ganguli, Tom Henighan, Andy Jones, Nicholas Joseph, Ben Mann, Nova DasSarma, et al. A general language assistant as a laboratory for alignment. arXiv preprint arXiv:2112.00861 , 2021. [5] Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al. Training a helpful and harmless assistant with reinforcement learning from human feedback. arXiv preprint arXiv:2204.05862 , 2022. [6] Juntao Dai, Xuehai Pan, Ruiyang Sun, Jiaming Ji, Xinbo Xu, Mickel Liu, Yizhou Wang, and Yaodong Yang. Safe rlhf: Safe reinforcement learning from human feedback. In International Conference on Learning Representations ,volume 2024, pages 50750–50777, 2024. [7] Karin De Langis, Ryan Koo, and Dongyeop Kang. Dynamic multi-reward weighting for multi-style controllable generation. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 6783–6800, 2024. [8] Jasper Dekoninck, Marc Fischer, Luca Beurer-Kellner, and Martin Vechev. Controlled text generation via language model arithmetic. arXiv preprint arXiv:2311.14479 , 2023. [9] Kehua Feng, Xinyi Shen, Weijie Wang, Xiang Zhuang, Yuqi Tang, Qiang Zhang, and Keyan Ding. Sciknoweval: Evaluating multi-level scientific knowledge of large language models. arXiv preprint arXiv:2406.09098 , 2024. [10] Deep Ganguli, Liane Lovitt, Jackson Kernion, Amanda Askell, Yuntao Bai, Saurav Kadavath, Ben Mann, Ethan Perez, Nicholas Schiefer, Kamal Ndousse, et al. Red teaming language models to reduce harms: Methods, scaling behaviors, and lessons learned. arXiv preprint arXiv:2209.07858 , 2022. [11] Geoffrey E Hinton. Training products of experts by minimizing contrastive divergence. Neural computation , 14(8): 1771–1800, 2002. [12] Joel Jang, Seungone Kim, Bill Yuchen Lin, Yizhong Wang, Jack Hessel, Luke Zettlemoyer, Hannaneh Hajishirzi, Yejin Choi, and Prithviraj Ammanabrolu. Personalized soups: Personalized large language model alignment via post-hoc parameter merging. arXiv preprint arXiv:2310.11564 , 2023. [13] Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen, Ruiyang Sun, Yizhou Wang, and Yaodong Yang. Beavertails: Towards improved safety alignment of llm via a human-preference dataset. 
+
+Advances in Neural Information Processing Systems , 36:24678–24704, 2023. 
+
+11 [14] Brian Lester, Rami Al-Rfou, and Noah Constant. The power of scale for parameter-efficient prompt tuning. In 
+
+Proceedings of the 2021 conference on empirical methods in natural language processing , pages 3045–3059, 2021. [15] Chengao Li, Hanyu Zhang, Yunkun Xu, Hongyan Xue, Xiang Ao, and Qing He. Gradient-adaptive policy optimization: Towards multi-objective alignment of large language models. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 11214–11232, 2025. [16] Xiang Lisa Li and Percy Liang. Prefix-tuning: Optimizing continuous prompts for generation. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers) , pages 4582–4597, 2021. [17] Ruiming Liang, Yinan Zheng, Kexin Zheng, Tianyi Tan, Jianxiong Li, Liyuan Mao, Zhihao Wang, Guang Chen, Hangjun Ye, Jingjing Liu, et al. Dichotomous diffusion policy optimization. arXiv preprint arXiv:2601.00898 ,2025. [18] Yong Lin, Hangyu Lin, Wei Xiong, Shizhe Diao, Jianmeng Liu, Jipeng Zhang, Rui Pan, Haoxiang Wang, Wenbin Hu, Hanning Zhang, et al. Mitigating the alignment tax of rlhf. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 580–606, 2024. [19] Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 , 2024. [20] Alisa Liu, Maarten Sap, Ximing Lu, Swabha Swayamdipta, Chandra Bhagavatula, Noah A Smith, and Yejin Choi. Dexperts: Decoding-time controlled text generation with experts and anti-experts. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers) , pages 6691–6706, 2021. [21] Shih-Yang Liu, Xin Dong, Ximing Lu, Shizhe Diao, Peter Belcak, Mingjie Liu, Min-Hung Chen, Hongxu Yin, Yu-Chiang Frank Wang, Kwang-Ting Cheng, Yejin Choi, Jan Kautz, and Pavlo Molchanov. Gdpo: Group reward-decoupled normalization policy optimization for multi-reward rl optimization, 2026. URL https://arxiv. org/abs/2601.05242 .[22] Sean O’Brien and Mike Lewis. Contrastive decoding improves reasoning in large language models. arXiv preprint arXiv:2309.09117 , 2023. [23] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. 
+
+Advances in neural information processing systems , 35:27730–27744, 2022. [24] Shishir G. Patil, Huanzhi Mao, Charlie Cheng-Jie Ji, Fanjia Yan, Vishnu Suresh, Ion Stoica, and Joseph E. Gonzalez. The berkeley function calling leaderboard (bfcl): From tool use to agentic evaluation of large language models. In 
+
+Forty-second International Conference on Machine Learning , 2025. [25] Reiner Pope, Sholto Douglas, Aakanksha Chowdhery, Jacob Devlin, James Bradbury, Anselm Levskaya, Jonathan Heek, Kefan Xiao, Shivani Agrawal, and Jeff Dean. Efficiently scaling transformer inference. arXiv preprint arXiv:2211.05102 , 2022. [26] Cheng Qian, Emre Can Acikgoz, Qi He, Hongru Wang, Xiusi Chen, Dilek Hakkani-Tur, Gokhan Tur, and Heng Ji. Toolrl: Reward is all tool learning needs. Advances in Neural Information Processing Systems , 38:105523–105553, 2026. [27] Shanghaoran Quan. Dmoerm: Recipes of mixture-of-experts for effective reward modeling. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 7006–7028, 2024. [28] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36:53728–53741, 2023. [29] Alexandre Ramé, Nino Vieillard, Léonard Hussenot, Robert Dadashi, Geoffrey Cideron, Olivier Bachem, and Johan Ferret. Warm: On the benefits of weight averaged reward models. arXiv preprint arXiv:2401.12187 , 2024. [30] David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R Bowman. Gpqa: A graduate-level google-proof q&a benchmark. arXiv preprint arXiv:2311.12022 , 2023. [31] Diederik M Roijers, Peter Vamplew, Shimon Whiteson, and Richard Dazeley. A survey of multi-objective sequential decision-making. Journal of Artificial Intelligence Research , 48:67–113, 2013. 
+
+12 [32] Tanik Saikh, Tirthankar Ghosal, Amish Mittal, Asif Ekbal, and Pushpak Bhattacharyya. Scienceqa: A novel resource for question answering on scholarly articles. International Journal on Digital Libraries , 23(3):289–301, 2022. [33] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [34] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. 
+
+arXiv preprint arXiv:2402.03300 , 2024. [35] Richard S Sutton, Andrew G Barto, et al. Reinforcement learning: An introduction , volume 1. MIT press Cambridge, 1998. [36] Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann Dubois, Xuechen Li, Carlos Guestrin, Percy Liang, and Tatsunori B. Hashimoto. Stanford alpaca: An instruction-following llama model. https://github.com/tatsu-lab/ stanford_alpaca , 2023. [37] Qwen Team. Qwen2.5: A party of foundation models, September 2024. URL https://qwenlm.github.io/blog/ qwen2.5/ .[38] Haoxiang Wang, Wei Xiong, Tengyang Xie, Han Zhao, and Tong Zhang. Interpretable preferences via multi-objective reward modeling and mixture-of-experts. Association for Computational Linguistics, 2024. [39] Yufei Wang, Wanjun Zhong, Liangyou Li, Fei Mi, Xingshan Zeng, Wenyong Huang, Lifeng Shang, Xin Jiang, and Qun Liu. Aligning large language models with human: A survey. arXiv preprint arXiv:2307.12966 , 2023. [40] Marcus Williams. Multi-objective reinforcement learning from ai feedback. arXiv preprint arXiv:2406.07295 ,2024. [41] Zeqiu Wu, Yushi Hu, Weijia Shi, Nouha Dziri, Alane Suhr, Prithviraj Ammanabrolu, Noah A Smith, Mari Ostendorf, and Hannaneh Hajishirzi. Fine-grained human feedback gives better rewards for language model training. Advances in Neural Information Processing Systems , 36:59008–59033, 2023. [42] Rui Yang, Xiaoman Pan, Feng Luo, Shuang Qiu, Han Zhong, Dong Yu, and Jianshu Chen. Rewards-in-context: Multi-objective alignment of foundation models with dynamic preference adjustment. In International Conference on Machine Learning , pages 56276–56297. PMLR, 2024. [43] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing Systems , 38:113222–113244, 2026. [44] Ruiqi Zhang, Licong Lin, Yu Bai, and Song Mei. Negative preference optimization: From catastrophic collapse to effective unlearning. arXiv preprint arXiv:2404.05868 , 2024. [45] Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, et al. Group sequence policy optimization. arXiv preprint arXiv:2507.18071 , 2025. [46] Zhanhui Zhou, Jie Liu, Jing Shao, Xiangyu Yue, Chao Yang, Wanli Ouyang, and Yu Qiao. Beyond one-preference-fits-all alignment: Multi-objective direct preference optimization. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 10586–10613, 2024. [47] Daniel M Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B Brown, Alec Radford, Dario Amodei, Paul Christiano, and Geoffrey Irving. Fine-tuning language models from human preferences. arXiv preprint arXiv:1909.08593 , 2019. 
+
+13 A Experimental details of scientific question answering 
+
+## A.1 Dataset and Prompt Format 
+
+We train on the SciKnowEval dataset, restricting to the multiple-choice subset. Each example is formatted as a two-turn chat prompt. The system prompt is: 
+
+System Prompt 
+
+You are a helpful AI assistant specialized in solving multiple-choice science questions. For every request, solve the problem carefully and step by step before giving the final answer. You must respond in exactly the following format: <think> Provide a clear, step-by-step solution. </think> <answer> Provide only the final answer. </answer> Rules: 1. The <think> section must contain the complete reasoning process. 2. The <answer> section must appear after </think>. 3. The <answer> section must contain only one option letter: A, B, C, or D. 4. Do not include explanation, extra words, or additional formatting in <answer>. 5. Always complete the reasoning before writing the final answer. 
+
+The user turn is rendered as: 
+
+User Prompt 
+
+Given a question and four options, please select the right answer. Your answer should be "A", "B", "C" or "D". {question} Choices: A. {choice_a} B. {choice_b} C. {choice_c} D. {choice_d} 
+
+## A.2 Reward Functions 
+
+Training uses two reward signals: correctness and format. 
+
+Correctness Reward. The correctness reward Rcorrect ∈ { 0, 1} evaluates whether the predicted answer matches the reference answer: 
+
+Rcorrect = 1[a(x) = y],
+
+where y denotes the reference option letter, and a(x) is the option extracted from the model completion x.
+
+Format Reward. The format reward Rformat ∈ { 0, 1} is defined as 
+
+Rformat = 1[x matches the target format ],
+
+where the target format is <think>. . . </think><answer>. . . </answer> .14 A.3 Training Hyperparameters 
+
+We train Qwen2.5-1.5B-Instruct and Qwen2.5-3B-Instruct for 1 epoch, and DeepSeek-R1-Distill-Qwen-1.5B for 1.5 epochs. Other training hyperparameters are summarized in Table 6. 
+
+Table 6 Scientific question answering training configuration. Setting Value LoRA target modules q,k,v,o gate,up,down_proj 
+
+LoRA rank / alpha / dropout 32 / 64 / 0.05 Batch size 512 Group size 4Max prompt length 1024 Max completion length 1000 Learning rate 1 × 10 −5
+
+## A.4 Evaluation on ScienceQA and GPQA 
+
+Each model is required to first produce its reasoning process enclosed by <think></think> , followed by a final answer enclosed by <answer></answer> . The order of these two fields must be preserved. We use two rewards in this setting. The format reward verifies whether the output contains both <think></think> and 
+
+<answer></answer> in the correct order. The correctness reward evaluates whether the answer extracted from the <answer></answer> field matches the ground-truth answer. We report pass@1 accuracy under greedy decoding, together with format adherence rate. All evaluation samples follow the same prompt format and answer-extraction protocol as described in Section A.1. For ScienceQA, we use text-only samples from the natural science and closed-choice subset. For GPQA, we use the gpqa_main split and render each sample as a four-choice question, with answer options deterministically shuffled per sample. 
+
+# B Experimental Details of Tool-use Reasoning 
+
+## B.1 Training Prompt Format 
+
+Prompt Format for ToolRL Training 
+
+You are a helpful dialogue assistant capable of leveraging tool calls to solve user tasks and provide structured chat responses. 
+
+Available Tools 
+
+In your response, you can use the following tools: {{ Tool List }} 
+
+Steps for Each Turn 
+
+1. Think: Recall relevant context and analyze the current user goal. 2. Decide on Tool Usage: If a tool is needed, specify the tool and its parameters. 3. Respond Appropriately: If a response is needed, generate one while maintaining consistency across user queries. 
+
+Output Format 
+
+<think> Your thoughts and reasoning </think> 
+
+15 <tool_call> {"name": "Tool name", "parameters": {"Parameter name": "Parameter content", "...": "..."}} {"name": "...", "parameters": {"...": "...", "...": "..."}} ... 
+
+</tool_call> <response> AI’s final response </response> 
+
+Important Notes 
+
+1. You must always include the <think> field to outline your reasoning. Provide at least one of <tool_call> or 
+
+<response> . Decide whether to use <tool_call> possibly multiple times, <response> , or both. 2. You can invoke multiple tool calls simultaneously in the <tool_call> fields. Each tool call should be a JSON object with a "name" field and a "parameters" field containing a dictionary of parameters. If no parameters are needed, leave the "parameters" field as an empty dictionary. 3. Refer to the previous dialogue records in the history, including the user’s queries, previous <tool_call> ,
+
+<response> , and any tool feedback noted as <obs> if exists. 
+
+User Prompt for ToolRL Training 
+
+Dialogue History 
+
+<user> {{ Initial User Input }} </user> <think> Round 1 Model Thought </think> 
+
+{{ Round 1 model output <tool_call> or <response> }} 
+
+<obs> Round 1 Observation </obs> 
+
+... 
+
+<user> {{ User Input }} </user> 
+
+... 
+
+## B.2 Tool Calling Reward Functions 
+
+Format Reward. The format reward Rformat ∈ { 0, 1} evaluates whether a model output follows the tag structure required by the ground-truth answer. The output must begin with a <think> section and then contain the required <tool_call> and/or <response> sections in the prescribed order. When a tool-call or response section is required, its opening and closing tags must each appear exactly once. 
+
+Correctness Reward. The correctness reward Rcorrect ∈ [−3, 3] quantifies how well the predicted tool calls match the ground-truth tool calls. The comparison includes: 1. Tool name matching : a multiset overlap score in [0 , 1] is computed between the predicted and ground-truth tool names; 2. Parameter matching : ground-truth calls are processed one by one. For each ground-truth call, every unmatched predicted call with the same tool name is assigned a parameter-level score. This score is the sum of a parameter-name overlap term in [0 , 1] and one point for each ground-truth parameter whose value is predicted exactly. The highest parameter-level score is added to the total score, and the corresponding predicted call is marked as matched. Each predicted call can therefore be matched at most once. The tool-name score and all selected parameter-level scores are summed and divided by the maximum attainable score for the ground-truth calls. The resulting normalized score in [0 , 1] is then linearly mapped to 
+
+[−3, 3] .16 Length Reward. The length reward Rlength ∈ [0 , 1] encourages the model to produce sufficiently detailed reasoning within the <think> section. It increases linearly with the length of the reasoning content up to the predefined threshold of 512 words and is capped at 1 once the threshold is reached. Outputs without a valid 
+
+<think> section receive a reward of 0.
+
+## B.3 Training Hyperparameters 
+
+Detail training hyperparameters of Tool-Use Reasoning are summarized in Table 7.              
+
+> Table 7 Tool-use reasoning training configuration. Setting Value LoRA target modules q,k,v,o gate,up,down_proj
+> LoRA rank / alpha / dropout 32 / 64 / 0.05 Batch size 2048 Mini batch size 128 Group size 4Max prompt length 2048 Max completion length 1024 Learning rate 1×10 −5
+> Epochs 2
+
+## B.4 BFCL Evaluation 
+
+B.4.1 Evaluation Protocol 
+
+To evaluate tool-use reasoning on BFCL, we convert BFCL examples into the RLLA protocol instead of using the native BFCL function-calling interface. For each example, we construct an RLLA-style prompt following the same prompt format described in §B.1, including the available tool definitions and dialogue history. Each model is required to first generate its reasoning process enclosed by <think></think> , and then decide whether to perform a tool call or directly respond to the user. If the model chooses to call a tool, it must output a JSON-formatted tool request enclosed by <tool_call></tool_call> . If the model chooses to answer directly, it must output the final response enclosed by <response></response> . We again use two rewards. The format reward checks whether the output follows the required structure, namely <think></think> followed by either <tool_call></tool_call> or <response></response> . The correctness reward evaluates whether the answer in <response></response> matches the ground truth, or whether the generated tool call contains the correct fields. 
+
+B.4.2 Evaluation Metrics 
+
+Let N denote the number of evaluated examples. We report both strict RLLA metrics and BFCL-style semantic metrics. 
+
+RLLA Accuracy. The RLLA accuracy is a strict task-level metric. For examples with reference tool calls, it requires the correctness reward to reach its maximum possible score. For examples without reference tool calls, it requires the model to predict no tool call: 
+
+rlla _acc = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1
+
+h
+
+(Gi̸ = ∅ ∧ Rcorrect (Pi, G i) = 3) ∨ (Gi = ∅ ∧ Pi = ∅)
+
+i
+
+. (18) 
+
+BFCL Accuracy. The BFCL accuracy evaluates the semantic correctness of predicted tool calls while ignoring RLLA wrapper-format errors. Predicted <tool_call> blocks are extracted, converted back into BFCL-style function calls, and evaluated using the BFCL checker: 17 bfcl _acc = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1
+
+h
+
+BFCLChecker( Pi, G i) = correct 
+
+i
+
+. (19) 
+
+Format Accuracy. The format accuracy measures protocol adherence independently of tool correctness: 
+
+format _acc = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+1 [Rformat (xi) = 1] ,
+
+where Rformat follows the same definition as the format reward in the training objective. 
+
+Length Reward. The evaluation-time length reward measures the mean normalized reasoning length using the same definition as the training-time length reward: 
+
+length _reward = 1
+
+N
+
+> N
+
+X
+
+> i=1
+
+min 
+
+
+
+1, nthink (xi)
+
+L
+
+
+
+,
+
+where the maximum reasoning length is 
+
+L = 512 .
+
+# C Experimental details of helpfulness-safety alignment 
+
+## C.1 Training Hyperparameters 
+
+For helpfulness-safety alignment, we train Qwen2.5-3B-Instruct with LoRA and evaluate the checkpoint at step 540. Other training hyperparameters are summarized in Table 8. 
+
+Table 8 Helpfulness-safety alignment training configuration. Setting Value Base model Qwen2.5-3B-Instruct 
+
+LoRA target modules q,k,v,o gate,up,down_proj 
+
+LoRA rank / alpha / dropout 32 / 64 / 0.05 Batch size 128 Group size 4Max prompt length 512 Max completion length 1024 Learning rate 1 × 10 −6
+
+KL coefficient 0.001 Training precision bfloat16 Training checkpoint step 540 
+
+## C.2 Evaluation Details of Helpfulness-Safety Alignment 
+
+Each model is given a user prompt and is required to produce a response that is both helpful to the user and safe with respect to potentially harmful requests. We use two rewards in this setting. The helpfulness reward is computed using the helpfulness reward model provided by the Amo project [ 1]. The safety reward is derived from the corresponding harmlessness cost model from the same project. The overall alignment objective encourages responses that are simultaneously helpful and safe. 18 D Prefix Token Initialization. 
+
+We initialize each learnable prefix embedding as 
+
+p(0)  
+
+> i
+
+= Emb θ0 (\n )
+
+where Emb θ0 denotes the input embedding layer of the pretrained language model. The newline embedding provides an in-distribution initialization that is compatible with the pretrained model’s input embedding space and prompt formatting. 
+
+# E Controllable Inference Cases 
+
+We illustrate inference-time steerability with an example from the BFCL-Live split. 
+
+Task. 
+
+User 
+
+I’d like to purchase 2 tickets for ‘After The Wedding’ showing on 2023-04-22 at 19:00 in Berkeley. 
+
+Expected Tool Call 
+
+Movies_1_BuyMovieTickets({ movie_name, number_of_tickets, show_date, location, show_time, show_type }) 
+
+Responses under three weight configurations. 
+
+Weights are ordered as (α1, α 2, α 3), corresponding to correctness, format, and length. In each configuration, the dominant branch is set to 0.55 and the other two branches are set to 0.25 .
+
+α1 = 0 .55 , α 2 = α3 = 0 .25 (correctness-dominant). The model directly invokes the target purchase tool with all required arguments. 
+
+Correctness-dominant Inference 
+
+< think > Identifies the movie title , ticket count , date , location , and time , then selects the purchase tool . [...length=126 words] 
+
+</ think > < tool_call > {" name ": " Movies_1_BuyMovieTickets ", " parameters ": {" movie_name ": " After The Wedding ", " number_of_tickets ": 2, " show_date ": "2023 -04 -22" , " location ": " Berkeley , CA ", " show_time ": "19:00" , " show_type ": " regular "}} </ tool_call > 
+
+α2 = 0 .55 , α 1 = α3 = 0 .25 (format-dominant). The response is syntactically well-formed, but the model calls a show-time lookup tool rather than completing the purchase. 
+
+Format-dominant Inference 
+
+< think > Recognizes the ticket - purchase intent , but 
+
+19 decides to confirm show - time details first . [...length=115 words] 
+
+</ think > < tool_call > {" name ": Movies_1_GetTimesForMovie, // wrong tool: should call Movies_1_BuyMovieTickets 
+
+" parameters ": {"movie_name": "After The Wedding", "location": "Berkeley, CA", "show_date": "2023-04-22", "theater_name": "Any Theater", "show_type": "regular" } // parameters belong to the wrong tool schema 
+
+}</ tool_call > 
+
+α3 = 0 .55 , α 1 = α2 = 0 .25 (length-dominant). The model produces a longer reasoning trace. 
+
+Length-dominant Inference 
+
+< think > Mentions the movie , date , time , location , and ticket count , then gives extra reasoning about finding show times before buying tickets . 
+
+[...length=164 words] // longer reasoning trace under the length-dominant inference 
+
+</ think > < tool_call > {" name ": Movies_1_GetTimesForMovie, // wrong tool: should call Movies_1_BuyMovieTickets 
+
+" parameters ": {"movie_name": "After The Wedding", "location": "Berkeley, CA", "show_date": "2023-04-22", "show_type": "regular" } // parameters belong to the wrong tool schema 
+
+}</ tool_call > 
+
+# F Inference Efficiency 
+
+We measure the inference cost of PRISM against a single-policy baseline under the same serving configuration on 8 × NVIDIA H800. We report per-response decoding latency, generation throughput, and peak GPU memory. 
+
+Table 9 Inference efficiency on Qwen2.5-3B-Instruct. Latency is measured in second, throughput in tokens per second, and peak GPU memory in GB. PRISM with N rewards decodes N +1 branches. Method Latency Throughput Memory Single policy 2.01 127.56 63.74 
+
+PRISM (N =2 ) 2.04 125.71 63.74 
+
+PRISM (N =3 ) 2.12 121.06 63.74 
+
+20 G Limitations 
+
+There are several limitations in this study. First, PRISM assumes that each reward can be represented by a distinct positive policy. It also assumes that a single negative policy can capture the union of reward-specific failure modes. This design is effective across all our experimental settings, which cover up to three rewards. Validating it at substantially larger reward counts is left for future work. Second, the current policy-space composition relies on manually specified merge weights, and how to automatically adapt these weights to different prompts, users, or deployment contexts remains underexplored. Third, although per-token latency stays that of a single forward pass, mixture decoding requires multiple prefix-conditioned branches, and its memory and FLOPs scale with the number of rewards. Future work can study more adaptive policy composition mechanisms, more expressive negative-policy designs, and more efficient decoding strategies. 21

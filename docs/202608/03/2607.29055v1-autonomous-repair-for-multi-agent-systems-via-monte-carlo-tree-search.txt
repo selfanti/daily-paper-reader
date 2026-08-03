@@ -1,0 +1,596 @@
+Title: Autonomous Repair for Multi-Agent Systems via Monte-Carlo Tree Search
+
+URL Source: https://arxiv.org/pdf/2607.29055v1
+
+Published Time: Mon, 03 Aug 2026 00:28:59 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Autonomous Repair for Multi-Agent Systems via Monte-Carlo Tree Search 
+
+# Hanxiao Lu, Tianyi Zhang 
+
+Purdue University lu525@purdue.edu, tianyi@purdue.edu 
+
+Abstract 
+
+Multi-agent systems (MAS) are increasingly deployed to solve complex tasks. In case of incorrect or unsatisfactory outputs, users have to manually locate agent mistakes by inspecting agent trajectories (i.e., failure attribution ) and provide feed-back to refine the outputs (i.e., repair ). Despite some recent work in MAS failure attribution, automated mechanisms to re-cover from such mistakes remain largely unexplored. To bridge this gap, we propose MARS , a search-based framework that formulates MAS repair as a Monte Carlo Tree Search (MCTS) process and navigates the vast space of potential repairs via diagnosis-guided expansion with taxonomy-augmented eval-uation. Unlike standard MCTS, which evaluates a complete simulation via full rollout, MARS evaluates the agent tra-jectory using partial rollout to reduce token consumption. Furthermore, we introduce StateMAS , a large-scale MAS repair benchmark with 1,310 replayable multi-agent failure trajectories spanning four types of agent architectures and four LLM backbones. Experiments on StateMAS demon-strate that MARS consistently outperforms state-of-the-art methods, achieving an absolute improvement from 3.0% to 12.1% across all settings, while maintaining a comparable to-ken consumption cost. The ablation study further confirms that taxonomy-augmented evaluation and diagnosis-guided expan-sion are critical to achieving these performance gains. 
+
+# Introduction 
+
+Multi-agent systems (MAS) have received significant at-tention and are increasingly deployed to solve complex tasks (Wu et al. 2025; Zhang et al. 2025b; Qian et al. 2024; Hong et al. 2023). However, when a MAS produces an incor-rect or unsatisfactory output, users have to manually inspect its agent trajectories to locate mistakes (i.e., failure attribu-tion ) and provide feedback to refine the output (i.e, repair ). This manual process is tedious and time-consuming. To reduce this manual burden, recent research has focused on automating failure attribution in MAS (Zhang et al. 2025a; Cemri et al. 2026; Zhang et al. 2026a,b). Although identi-fying the root cause is a crucial first step, automated MAS repair remains largely unexplored. To the best of our knowl-edge, DoVer (Ma et al. 2026) is the only work for automated MAS repair. Specifically, it segments a MAS trajectory into trails using re-plan steps as segmentation points, identifies 
+
+Copyright © 2027, Association for the Advancement of Artificial Intelligence (www.aaai.org). All rights reserved. 
+
+suspicious steps, refines agent messages, and re-executes the agentic system from there. Although DoVer represents a pi-oneering step toward automated MAS repair, its sequential exploration strategy could limit the search space in high to-ken costs. Furthermore, DoVer focuses on repair at the or-chestrator level by directly editing the orchestrator’s plan or its message to a sub-agent, which limits its applicability to agentic systems without a centralized orchestrator. To overcome these limitations, we propose MARS , which performs Monte Carlo Tree Search (MCTS) to explore the vast space of potential repairs to an MAS trajectory. Instead of committing to a single, monolithic trajectory regeneration, 
+
+MARS systematically explores alternative repair solutions by iteratively applying specialized Rollback , Guided Repair ,and Continuation actions. This process, termed diagnosis-guided expansion, utilizes partial rollout (i.e., re-executing the agentic system up to k steps) rather than full rollouts (i.e., re-executing the system to completion). This design sig-nificantly reduces token consumption while providing fine-grained control over trajectory exploration. However, since partial rollouts do not produce complete trajectories, their quality cannot be assessed using the final task outcome. To address this challenge, we introduce a novel taxonomy-augmented evaluation mechanism that characterizes com-mon failure patterns and generates dynamic reward signals for MCTS, enabling informed search decisions even before a complete trajectory is available. Evaluating MAS repair methods requires datasets that move beyond static, non-replayable agent trajectories from MAS failure attribution benchmarks (Zhang et al. 2025a; Cemri et al. 2026; Zhang et al. 2026a,b). To this end, we introduce StateMAS , a large-scale benchmark with 1310 re-playable MAS failure trajectories spanning across four types of agent architectures and four LLM backbones on two popu-lar agent benchmarks, GAIA (Mialon et al. 2023) and Assis-tantBench (Yoran et al. 2024). Specifically, StateMAS cap-tures the complete system state at every agent step and pro-vides interfaces to deterministically replay the agent execu-tion based on a logged trajectory and roll back the execution to any arbitrary step for intervention. We evaluate MARS on StateMAS against DoVer (Ma et al. 2026) and two alternative repair methods based on Reflex-ion (Shinn et al. 2023) and ReAct (Yao et al. 2023). The results show that MARS consistently outperforms all base-arXiv:2607.29055v1 [cs.LG] 31 Jul 2026 lines in all settings. Specifically, compared to DoVer, MARS 
+
+achieved absolute improvement from 8.5% to 10.3% on GAIA and from 6.1% to 12.2% on AssistantBench across four LLM backbones. Furthermore, MARS ’s performance improvement is generalizable when repairing task failures of MAS with different architectures, ranging from 3.0 % to 12.1% compared to the strongest baseline. Notably, with the partial rollout design, these improvements are not achieved by inflating computational cost. MARS maintains token con-sumption comparable to the most economical baseline with only 5.6% overhead, while consuming up to 59.1% fewer to-kens than the most expensive baseline. Finally, the ablation study confirms that these performance gains are driven by the critical synergy between our specialized repair actions and the taxonomy-augmented evaluation mechanism. 
+
+# Problem Formulation 
+
+We formalize a multi-agent system as a tuple M =
+
+⟨N , S, A, T ⟩ , where: 
+
+• N = {1, . . . , n } is the set of n distinct agents. 
+
+• S represents the global state space of MAS. Each state 
+
+st ∈ S is a a replayable snapshot of the system after step t. It contains the conversation history and the run-time information required to resume execution, such as agent activation status, orchestration control variables, per-agent memory, and tool outputs. 
+
+• A denotes the joint action space of all agents, such as generating a natural language response and calling a tool. 
+
+• T is the state transition function governing system evolu-tion S × A → S . This function specifies the interaction between agents. It defines how an action at by an agent updates the global context to st+1 and determines which agent i ∈ N is activated next. The multi-agent system trajectory is defined as τ =(s0, a 0, s 1, a 1, . . . , s T ). In this work, we assume access to an initial trajectory τf ail that leads to a task failure. Follow-ing prior work (Zhang et al. 2025a; Cemri et al. 2026), we define a task failure as any MAS run that does not achieve the intended task objective. Such failures may stem from various reasons, e.g., incorrect agent reasoning, task mis-understanding, tool call errors, etc. Such failures may also arise from multiple errors introduced by different agents at different stages of the trajectory. A repair intervention is defined as δ = ( t, ϕ ), where t rep-resents the rollback step and ϕ represents the repair operation. Applying an intervention δ reverts the system state back to 
+
+t, performs the repair operation ϕ, and resumes the system execution from there, which produces a refined trajectory τ ′
+
+with a new final state s′ 
+
+> T
+
+. Since there may be multiple errors in the original trajectory and the repair intervention may also lead to new errors, a single intervention is often insufficient. Thus, the goal is to search for a sequence of interventions 
+
+∆∗ = {δ1, δ 2, . . . , δ k} that iteratively fix any potential errors and guide the system to a refined output. During the search process, we do not assume access to an oracle (e.g., a human evaluator, a ground-truth result, a test suite, etc.) that can be repeatedly queried to assess the final outcome of a trajectory. In practice, such an oracle is often unavailable or expensive to query at inference time. 
+
+# Method 
+
+To efficiently navigate the vast space of possible repair inter-ventions, we propose a Multi-Agent Repair Search method called MARS that performs Monte Carlo Tree Search (MCTS) problem over the search space. Figure 1 presents an overview of MARS . Specifically, each node in the search tree represents a system state, as described in the previous section. MARS 
+
+continuously selects a repair operation that transforms a sys-tem state to another state until it reaches a search limit or a refined output that it deems satisfiable. While MARS adopts the widely used Upper Confidence Bound for Trees (UCT) heuristic (Coulom 2006) for node selection, we introduce two new designs that adapt the standard MCTS algorithm to efficient MAS repair with low token cost. First, to enable fine-grained control over the repair exploration process, we define an action space that distinguishes failure attribution from repair and also supports partial rollouts and continu-ation. Second, to evaluate partially completed trajectories, we introduce a novel taxonomy-augmented evaluation mech-anism that characterizes common failure patterns and gen-erates dynamic reward signals for MCTS, thereby enabling informed search decisions before a complete trajectory be-comes available. 
+
+Partial Rollout and Action Space 
+
+MCTS algorithms in domains such as code genera-tion (Zhang et al. 2023) and game playing (Hao et al. 2023) commonly evaluate a node by rolling out to a terminal state and observing a verifiable outcome. However, for multi-agent systems, full trajectory rollouts are computationally expen-sive, since reaching a terminal state requires many additional agent turns and LLM calls. MARS instead support partial rollouts, which continues the execution of the multi-agent system for up to L steps from the current state. This design bounds the cost of each rollout while allowing the search to build longer trajectories incrementally. To support partial rollouts, we design two actions in the action space of MARS , Guided Repair and Continuation . Fur-thermore, we design a separate Rollback action to decouple state restoration from repair execution to allow fine-grained control over the repair exploration process. This design is especially beneficial when the initial fault attribution is in-accurate, as it allows MARS to perform multiple rollbacks without unnecessary re-execution. 
+
+Rollback. Errors early in an MAS trajectory can propagate through later steps. Restarting the entire execution discards the valid prefix. Rollback resolves this problem by truncating the trajectory at the faulty step t and removing all subsequent steps, which preserves the valid prefix. MARS then reloads the system state st for a repair attempt. 
+
+Guided Repair. The Guided Repair adds the fix guidance ϕ
+
+to the prompt for the next agent turn and resumes the MAS for L steps. The guidance is a concrete suggestion for ad-dressing a diagnosed failure cause (e.g., “ Avoid the previous error X... ”) and corresponds to the feedback prompt shown in rollback       
+
+> rollback
+> rollback
+> 1
+> 2
+> 3
+> 4
+> 5
+> 6
+> 7
+> 8
+> 9
+> 10
+> 11
+> 12
+> 13
+> 14
+> 15
+> 16
+> Rollback
+> step 4faulty discard
+> steps 5-16
+> restore to
+> step 4
+> rollback
+> guided
+> repair
+> guided
+> repair
+> Guided r epair
+> root cause
+> @ step 4
+> inject feedback
+> prompt
+> regenerate
+> +L steps
+> + L steps
+> + L steps
+> rollback + L steps
+> continuation
+> + L steps
+> continuation
+> Continuation
+> no edit run +L
+> more steps re-evaluate
+
+....                 
+
+> 1Selection (UCT)
+> 2Feedback-guided expansion
+> rollback guided repair continuation
+> 3Taxonomy-augmented evaluation
+> MAST Taxonomy
+> 14 failure modes
+> Score rubric
+> 5-tier, r ∈[0,1]
+> LLM-as-a-Judge
+> 4Backpropgation
+> score r
+> diagnostic
+> feedback f score r
+> uses stored feedback f
+> Node
+> trajectory τ
+> feedback f
+> score r
+> evaluate
+> trajectory
+> stored in
+> node
+> execution attributed failure task fail intervention new execution selected action explored alternative
+
+Figure 1: The overview framework of MARS .Figure 1. We explain how MARS generates ϕ in the following subsection, Diagnosis-guided Node Expansion . Limiting the repair to L steps avoids the cost of a full trajectory rollout. 
+
+Continuation. For Continuation , MARS resumes the MAS from the current state without adding repair guidance and ex-ecutes it for L additional steps. This action extends a promis-ing partial trajectory and explores another possible path from the selected node. 
+
+Taxonomy-Augmented Evaluation and Diagnosis 
+
+While supporting partial rollouts reduces token costs, it intro-duces a new challenge as a partial trajectory has no final task outcome to evaluate on and the evolving nature of MAS inter-actions makes an intermediate node’s contribution to the final solution difficult to assess. To address this challenge, we pro-pose an evaluation and diagnosis mechanism that leverages known MAS failure patterns to identify early signs of failure in partial trajectories. Furthermore, we propose a granular scoring rubric to measure partial task progress. This mecha-nism is implemented using an LLM judge, whose complete prompt is provided in the appendix. 
+
+MAS Failure Recognition and Diagnosis. We curated 14 failure patterns based on the MAST taxonomy, which was rig-orously developed by a comprehensive analysis of 150 MAS failure trajectories (Cemri et al. 2026). Some example pat-terns include step repetition , not following task specification ,
+
+violating system role , ignoring input from other agents , and 
+
+premature termination . Each pattern is encoded as a check-list item with a concise definition in the evaluation prompt to the LLM judge. Guided by these failure patterns, the LLM judge is instructed to perform a comprehensive analysis of a given trajectory to identify any potential issues and infer likely root causes. We denote these results as diagnostic feed-back f . This feedback informs the trajectory score r, which is assigned using the fine-grained rubric described below. The feedback f is also stored in the corresponding node in the search tree and used to guide subsequent expansion if that node is selected again. If no issue is found, the trajectory is deemed promising if it is a partial trajectory or successful if it is a complete trajectory with the final outcome included. 
+
+Granular Scoring Rubric. Inspired by single-step simula-tion strategies (Zhang et al. 2025b), the LLM judge assigns each trajectory a scalar score r ∈ [0 , 1] to reflect the task progress. The rubric defines five levels. Verified Comple-tion (1.0) is reserved for a complete trajectory that satis-fies three conditions. First, the judge detects no failure. Sec-ond, the final answer is supported by data returned through web search, file reading, or code execution, which we call 
+
+supporting evidence . Third, the judge derives the same an-swer using this evidence, which provides independent answer verification . Strong Progress (0.8–0.9) indicates substantial progress without a detected failure, although completion has not been fully established. Moderate Progress (0.5–0.7) in-dicates useful progress with important steps unresolved or progress stalled. Limited Progress (0.2–0.4) indicates little progress or a clear but recoverable error. Failure / Divergence 
+
+(0.0–0.1) indicates severe errors, repeated loops, substantial task drift, or a hallucinated final answer. A partial trajectory is scored by its current progress and is not treated as a fail-ure merely because it lacks a final answer or is short. MARS 
+
+then uses standard MCTS backpropagation (Coulom 2006) to propagate r through the search tree. Diagnosis-guided Node Expansion 
+
+During expansion, an LLM-based action selector first exam-ines the diagnostic feedback f from the node’s previous eval-uation against its trajectory. This design is motivated by our observation that sometimes the LLM judge may misinterpret a partial trajectory. Therefore, the action selector performs an examination first before acting to detect any diagnosis er-rors, inspired by prior work on self-reflection (Madaan et al. 2023). If the selector confirms the diagnosis of a failure, it uses the failure cause described in f to determine the rollback step t and generate a specific fix suggestion ϕ. If it agrees that the partial trajectory contains no failure, the selector favors extending the current trajectory. When its own assessment differs from the stored diagnosis f , the selector can choose a different expansion action. Once the selector makes its de-cision, MARS applies it to create a child node in the search tree. If MARS later selects the same node again, the selector repeats this process to create another child. The node is fully expanded once its number of children reaches the maximum branching factor K. The full prompt for the action selector is described in the appendix. 
+
+# Benchmark 
+
+We introduce StateMAS , a large-scale benchmark for evalu-ating MAS repair methods. While benchmarks from existing MAS failure attribution work provide static failure logs and attribution annotations, they lack the execution states needed to replay and repair a trajectory. DoVer (Ma et al. 2026) describes its failure trace collection procedure and releases code for regenerating the traces using an interactive MAS debugging tool (Epperson et al. 2025). However, it does not preserve the intermediate system states needed to replay a specific failure trajectory. When reproducing failure traces, rerunning the agents does not guarantee the same traces due to the stochasticity of agent executions. Besides, DoVer col-lects failure traces using one agent architecture and one LLM backbone. In comparison, StateMAS covers four agent archi-tectures and four LLM backbones. StateMAS also records in-termediate system states throughout each execution, allowing a repair method to restore and modify the trajectory from any saved state. We build StateMAS with the Microsoft Agentic Framework (MAF) (Microsoft 2026), an open-source frame-work for developing multi-agent workflows.  
+
+> StateMAS
+
+includes two key features. First, it provides APIs for deterministic replay of failure trajectories by setting the LLM temperature to zero and preserving all system config-urations. Second, it can load the serialized MAS state at any execution step t and resume execution from that point. 
+
+Benchmark Construction. Following recent MAS failure attribution work (Zhang et al. 2025a; Cemri et al. 2026) and DoVer (Ma et al. 2026), we run tasks from GAIA (Mialon et al. 2023) and AssistantBench (Yoran et al. 2024) validation set to collect failure trajectories. GAIA evaluates general assistants on real-world, multi-modal questions that require reasoning and tool use, including web navigation and file handling. AssistantBench evaluates assistants on realistic, time-intensive web navigation tasks. To collect diverse failure trajectories, we construct MAS Table 1: The distribution of failure trajectories in StateMAS                                
+
+> Partition Arch. Qwen3 Nemontron3 Qwen3.5 GPT
+> GAIA-Free Cent. 58 57 54 45 Seq. 60 63 64 40 Decent. 62 63 63 49 Concur. 59 61 54 44 GAIA-Comm Cent. 83 84 72 61 AssistantBench Cent. 28 31 29 26
+
+with four widely used agent architectures identified in re-cent surveys (Li et al. 2024; Luo et al. 2025), including 
+
+centralized , sequential , decentralized , and concurrent . Fol-lowing Who&When (Zhang et al. 2025a), each architec-ture uses the five-agent team from Magentic-One (Fourney et al. 2024). Furthermore, we use four LLM backbones, in-cluding Qwen3.5-9B, Qwen3-30B-A3B, Nemotron-3-Nano-30B-A3B, and GPT-5.4-mini. These models span different model families and sizes, including both open-source and closed-source models. Together, these choices yield 16 MAS configurations with varied communication structures and un-derlying models. Running all 16 configurations on every task would in-cur substantial token costs and commercial API fees. We therefore run them on 66 GAIA tasks that can be solved using free tools and APIs, such as the Wikipedia API (Wiki-media Foundation 2026). We call this partition GAIA-Free .The remaining 99 GAIA tasks and all 33 AssistantBench validation tasks require paid services and APIs such as Fire-crawl (Firecrawl 2026). To control the cost, we run these tasks using the centralized architecture with each of the four LLM backbones. We call these two partitions GAIA-Comm 
+
+and AssistantBench . Each execution records a trajectory and a replayable MAS state at every execution step. We label an execution as successful if the solution produced by the MAS matches the benchmark ground truth and as failed otherwise. In total, this process produces 1,584 initial trajectories, in-cluding 274 successful and 1,310 failed executions. Table 1 reports the distribution of the failed trajectories. Additional construction details are provided in the appendix. 
+
+# Experiments 
+
+Experiment Setup 
+
+Baseline Methods. We compare MARS with DoVer (Ma et al. 2026) and two repair baselines adapted from Reflex-ion (Shinn et al. 2023) and ReAct (Yao et al. 2023). DoVer is the state-of-the-art automated MAS repair method. It per-forms a linear search over failure-attribution hypotheses. Its repair interventions edit only the orchestrator’s plans or mes-sages to subagents, followed by a full rollout from each in-tervention point. The Reflexion-based baseline examines the current failed trajectory, generates a reflection that identi-fies likely errors and suggests improvements, and inserts this reflection-derived feedback at the latest resumable check-point, and continues execution linearly. The ReAct-based baseline repairs the trajectory through a sequential reasoning-and-action loop. At each iteration, it examines the current Table 2: Post-repair pass rate across GAIA and AssistantBench benchmarks with centralized orchestration.                                                    
+
+> GAIA AssistantBench
+> Model Initial Reflexion ReAct DoVer MARS Initial Reflexion ReAct DoVer MARS
+> Qwen3.5-9B 23.6% 29.7% 37.0% 35.2% 44.8% 12.1% 15.2% 27.3% 24.2% 36.4%
+> Qwen3-30B-A3B 14.5% 17.6% 24.8% 23.6% 33.9% 15.2% 21.2% 27.3% 30.3% 36.4%
+> Nemotron-3-Nano-30B-A3B 14.5% 17.0% 20.0% 22.4% 32.1% 6.1% 9.1% 18.2% 15.2% 27.3%
+> GPT-5.4-mini 35.8% 43.6% 52.1% 51.5% 60.0% 21.2% 27.3% 33.3% 33.3% 42.4%
+
+Table 3: Post-repair pass rate across four orchestrations on GAIA-Free.                                                                                       
+
+> Repair Method
+> Model Orchestration Initial Reflexion ReAct DoVer MARS
+> Qwen3.5-9B Centralized 18.2% 22.7% 27.3% 28.8% 36.4%
+> Sequential 3.0% 6.1% 18.2% N/A 28.8%
+> Decentralized 4.5% 10.6% 22.7% N/A 34.8%
+> Concurrent 18.2% 22.7% 28.8% N/A 34.8%
+> Qwen3-30B-A3B Centralized 12.1% 15.2% 19.7% 21.2% 30.3%
+> Sequential 9.1% 10.6% 18.2% N/A 27.3%
+> Decentralized 6.1% 10.6% 13.6% N/A 19.7%
+> Concurrent 10.6% 18.2% 22.7% N/A 30.3%
+> Nemotron-3-Nano-30B-A3B Centralized 13.6% 15.2% 16.7% 21.2% 24.2%
+> Sequential 4.5% 9.1% 15.2% N/A 19.7%
+> Decentralized 4.5% 6.1% 10.6% N/A 13.6%
+> Concurrent 7.6% 10.6% 13.6% N/A 19.7%
+> GPT-5.4-mini Centralized 31.8% 40.9% 50.0% 47.0% 57.6%
+> Sequential 39.4% 43.9% 51.5% N/A 59.1%
+> Decentralized 25.8% 39.4% 43.9% N/A 54.5%
+> Concurrent 33.3% 40.9% 47.0% N/A 56.1%
+
+trajectory, reasons about the next intervention, selects the action, and observes the resulting execution before making its next decision. It uses the same action space as MARS but follows a single repair path without tree search. We denote these two baselines as Reflexion and ReAct for short in the tables. We select them as baselines because they support it-erative interaction with an executable environment and can therefore modify and rerun failed MAS trajectories. 
+
+Metrics. Following the outcome-oriented evaluation of DoVer (Ma et al. 2026), we report the initial pass rate and post-repair pass rate. The initial pass rate is the percentage of tasks solved by the MAS before repair. The post-repair pass rate is the percentage of tasks successfully solved after a repair method is applied to the initially failed executions. 
+
+Implementation Details. We use the same LLM backbone for repair as in the original execution and implement all methods with the Microsoft Agentic Framework (MAF) (Mi-crosoft 2026). DoVer is limited to centralized orchestration because it focuses on editing a central orchestrator’s plans and messages to subagents. We therefore evaluate DoVer only under the centralized agent architecture and report N/A for the other architectures. For MARS , we set branching factor 
+
+K to 3, partial-rollout length L to 4 steps, maximum depth to 8, the UCT exploration weight to 1.41, and maximum search budget to 75 iterations. The LLM-as-a-judge and action se-lector use temperatures of 0.2 and 0.7, respectively. 
+
+Main Results 
+
+Effectiveness across Benchmarks. Table 2 reports post-repair pass rates on all GAIA and AssistantBench valida-tion tasks under the centralized orchestration. Across all four LLM backbones, MARS achieves the highest post-repair pass rate on both benchmarks. Its improvement over the strongest baseline ranges from 7.8% to 9.7% on GAIA and from 6.1% to 9.1% on AssistantBench. For example, MARS im-proves the GAIA result with Nemotron-3-Nano-30B-A3B from DoVer’s 22.4% to 32.1%. On AssistantBench with Qwen3.5-9B, it improves the strongest baseline from 27.3% to 36.4%. These results show that the repair gains hold across both benchmarks and all four LLM backbones. 
+
+Effectiveness across MAS Architectures. Table 3 reports the effectiveness of repairing MAS with four different ar-chitectures. MARS achieves the highest post-repair pass rate under every MAS architecture and LLM backbone. Its im-provement over the strongest applicable baseline ranges from 3.0% to 12.1%. The largest gain occurs with Qwen3.5-9B under the decentralized architecture, where MARS reaches 34.8% compared with ReAct’s 22.7%. The gains also hold for GPT-5.4-mini, ranging from 7.6% under the centralized and sequential orchestrations to 10.6% under the decentral-Table 4: Repair-time token consumption across four orchestration and four LLM backbones.                                                                      
+
+> Model Method Centralized Sequential Decentralized Concurrent
+> Qwen3.5-9B Reflexion 1,916,430 3,088,399 2,748,577 2,953,488
+> ReAct 2,243,906 1,668,761 1,371,421 3,175,610 DoVer 2,075,860 N/A N/A N/A
+> MARS 2,451,982 1,968,894 1,644,313 4,193,241 Qwen3-30B-A3B Reflexion 1,664,699 1,436,719 1,973,608 4,904,795 ReAct 682,517 405,198 763,907 1,305,062
+> DoVer 768,275 N/A N/A N/A
+> MARS 861,915 658,318 806,733 2,091,065 Nemotron-3-Nano-30B-A3B Reflexion 841,352 1,392,854 2,436,846 3,514,361 ReAct 424,179 762,944 527,884 1,534,598
+> DoVer 611,048 N/A N/A N/A
+> MARS 617,550 537,620 620,946 1,874,168 GPT-5.4-mini Reflexion 1,840,274 1,262,636 1,592,576 1,590,872 ReAct 1,239,844 1,067,292 952,362 1,390,122
+> DoVer 1,023,725 N/A N/A N/A
+> MARS 1,455,252 1,300,835 1,130,827 1,685,436
+
+Table 5: Ablation study on GAIA-Free with Qwen3-30B-A3B under the centralized orchestration.              
+
+> Variant Pass Rate Tokens
+> Linear Search ( K= 1 )22.7% 824,591
+> Full Rollout 22.7% 3,140,488
+> MARS w/o Tax. 25.8% 714,680
+> MARS (Full) 30.3% 861,915
+
+ized orchestration. 
+
+Token Cost Analysis 
+
+Table 4 reports total repair-time token consumption across four LLM backbones and four MAS architectures. Each value reports the average number of tokens consumed to repair one failed trajectory, including both repair decisions and the resulting MAS execution. Compared with Reflexion, MARS 
+
+reduces token consumption by 1.6% to 54.7%. Reflexion accumulates reflection and interaction context across repair attempts, whereas the Rollback action in MARS removes an erroneous trajectory suffix before execution continues. This difference allows MARS to explore more repair alternatives without retaining the complete history of every attempt. Compared with ReAct, MARS incurs a relative increase in token cost from 14.0% to 38.7% across the four LLM backbones. Its relative performance improvement over Re-Act ranges from 56.2% to 92.5%, which is greater than the relative token cost overhead. Furthermore, compared to DoVer, MARS ’s relative cost increase ranges from 1.1% to 42.2%, while its relative performance improvement ranges from 39.5% to 100%. Thus, the relative improvement in repair effectiveness exceeds the relative increase in token consumption for both comparisons. 
+
+Ablation Study 
+
+We conduct the ablation study on GAIA-Free using Qwen3-30B-A3B under centralized orchestration. We evaluate the three main design choices in MARS : tree search, partial roll-outs, and taxonomy-guided evaluation. Linear Search sets the branching factor to K = 1 , producing a single repair path while retaining the other components. Full Rollout uses an action space consisting of Rollback and Guided Repair . In this variant, Guided Repair performs a full rollout from the selected checkpoint to MAS termination. MARS w/o Tax. re-moves the MAS failure patterns from the evaluation prompt but retains the granular scoring rubric. All other experimen-tal settings remain unchanged. Table 5 shows that the full system achieves the highest post-repair pass rate of 30.3%. Linear search reduces the pass rate from 30.3% to 22.7% because K = 1 prevents the search from comparing alternative repair paths. The full-rollout variant also achieves 22.7% but increases token con-sumption from 861,915 to 3,140,488. Full rollouts consume more tokens and delay reevaluation, allowing errors to prop-agate before the search can redirect the trajectory. Removing the taxonomy reduces the pass rate from 30.3% to 25.8% be-cause the judge lacks explicit failure patterns for diagnosing the trajectory and guiding later repair decisions. 
+
+Stochasticity Analysis 
+
+We measure run-to-run variation by repeating MARS three times for each orchestration on GAIA-Free with Qwen3-30B-A3B. All runs use the same initial trajectories and hyperpa-rameters. Table 6 reports the minimum, maximum, and mean post-repair pass rates. The difference between the minimum and maximum is 1.5% for the sequential and decentralized orchestrations and 3.0% for the centralized and concurrent or-chestrations. The mean differs from the corresponding result in main results table by at most 1.5%. This limited variation indicates that the main results are not dominated by a single outlier run. Table 6: Stochasticity results with Qwen3-30B-A3B.                
+
+> Orchestration Post-Repair Pass Rate Minimum Maximum Mean
+> Centralized 27.3% 30.3% 28.8% Sequential 25.8% 27.3% 26.8% Decentralized 18.2% 19.7% 18.7% Concurrent 30.3% 33.3% 31.8%
+
+Sensitivity Analysis 
+
+We vary the branching factor K, iteration budget, and gener-ation steps L on GAIA-Free using Qwen3-30B-A3B under centralized orchestration. Performance initially improves as 
+
+K increases, then decreases since wider branching reduces search depth. Increasing the iteration budget consistently im-proves performance, although the gains diminish at higher budget. Moderate rollout lengths outperform both short roll-outs that limit progress and long rollouts that delay reevalu-ation. Full results are provided in the appendix. 
+
+# Related Work 
+
+Failure Attribution in Multi-Agent Systems. Recent work studies which agent and step cause an MAS task failure. MAST (Cemri et al. 2026) catalogs failure patterns involv-ing task specification, inter-agent coordination, and verifica-tion. Who&When (Zhang et al. 2025a) evaluates all-at-once, step-by-step, and binary-search attribution methods for lo-cating the responsible agent and decisive error step from execution logs. AgenTracer (Zhang et al. 2026b) trains a specialized failure tracer on automatically constructed tra-jectories. RAFFLES (Zhu et al. 2026) uses a central LLM judge to investigate faults and specialized evaluators to assess both candidate faults and the judge’s reasoning. AgentFore-sight (Zhang et al. 2026a) instead audits partial trajectories online to flag decisive errors during execution. These meth-ods identify or predict failures but do not execute repairs. In contrast, our work uses failure diagnosis to guide a search over executable repairs. 
+
+Repair for Multi-Agent Systems. Interactive debugging tools such as AGDebugger (Epperson et al. 2025) and Lang-Graph (LangChain 2024) support checkpointing, rollback, editing, and re-execution. However, users must choose and validate each intervention. General agent methods such as Reflexion (Shinn et al. 2023) and ReAct (Yao et al. 2023) improve agent execution through feedback or interleaved rea-soning and action, but do not search over stateful MAS repair alternatives. To the best of our knowledge, DoVer (Ma et al. 2026) is the only method that is specifically designed for automated MAS repair. Given a failure trajectory, DoVer proposes failure attribution hypotheses and converts the hy-potheses to repair edits to the orchestrator’s plans or mes-sages to sub-agents. Then, it performs a full rollout from each intervention point. This sequential process incurs high token costs. Its orchestrator-level edits also restrict it to cen-tralized agent architectures. In contrast, MARS formulates MAS repair as a Monte Carlo Tree Search problem, enabling efficient exploration of a much larger repair space through partial rollouts that substantially reduce token costs. MARS 
+
+also supports repair edits to any point in the trajectory, rather than restricting edits to the orchestrator alone. 
+
+Benchmarks for MAS Repair. Existing failure-attribution benchmarks (Zhang et al. 2025a; Cemri et al. 2026; Zhang et al. 2026a,b) primarily store execution logs and failure an-notations. They do not preserve the runtime states required to restore and modify an MAS execution. DoVer (Ma et al. 2026) performs repair within live debugging sessions, so it cannot release the resulting executions as a standalone, reusable benchmark. StateMAS addresses this gap by stor-ing replayable MAS states at every step across four agent architectures and four LLM backbones. 
+
+Monte Carlo Tree Search for LLMs. MCTS (Coulom 2006) builds a search tree through repeated node selection, expansion, evaluation, and value backpropagation. Recent LLM work applies MCTS to various domains. PG-TD uses MCTS-guided planning to generate code (Zhang et al. 2023). GIF-MCTS generates and iteratively refines executable code world models (Dainese et al. 2024). Alpha-SQL searches over partial SQL constructions (Li et al. 2025). SWE-Search combines MCTS with iterative refinement for repository-level software engineering tasks (Antoniades et al. 2025). Despite these advances, MCTS has not yet been applied to automated MAS repair. MARS fills this gap by adapting the MCTS algorithm to support partial rollouts and specific ac-tions for MAS repair. 
+
+# Conclusion 
+
+We presented MARS , an automated framework that for-mulates MAS repair as Monte Carlo Tree Search process. It searches for candidate repairs through partial rollouts, diagnosis-guided node expansion, and taxonomy-augmented evaluation. We also introduced StateMAS , the first large-scale benchmark with 1,310 replayable MAS failure trajecto-ries across four agent architectures and four LLM backbones. Compared to the state-of-the-art method, MARS achieves an absolute performance improvement ranging from 8.5% to 10.3% on GAIA and from 6.1% to 12.2% on AssistantBench. Furthermore, MARS consistently outperforms the strongest applicable baseline with an absolute improvement from 3.0% to 12.1%, when repairing failures from MAS with different architectures. Ablation results show that the specialized re-pair actions and taxonomy-augmented evaluation work to-gether to improve repair performance. Appendix 
+
+StateMAS Dataset 
+
+Who&When (Zhang et al. 2025a) includes 127 tasks selected from GAIA and AssistantBench. In contrast, StateMAS cov-ers the complete validation sets of both benchmarks and contains 1,584 trajectories. We execute each task under its assigned model-architecture configurations. Of these trajec-tories, 274 produce the correct answer without repair, while 1,310 do not and are subsequently processed by the repair methods. We label a trajectory Resolved if it produces the correct final answer and Unresolved otherwise. We divide StateMAS into three partitions. GAIA-Free con-tains 66 tasks that can be solved using open-access resources, such as the Wikipedia API (Wikimedia Foundation 2026), yielding 1,056 trajectories across four agent architectures and four LLM backbones. GAIA-Comm contains the remain-ing 99 GAIA tasks, which require paid web-browsing APIs such as Firecrawl (Firecrawl 2026), yielding 396 trajectories across four LLM backbones under the centralized architec-ture. AssistantBench contains all 33 AssistantBench valida-tion tasks, which involve realistic and time-intensive web navigation, yielding 132 trajectories under the same central-ized setting. 
+
+Base Models. We evaluate MARS with four LLM backbones spanning different sizes and architectures. We access the closed-source GPT-5.4-mini model through its official API. The three open-source models are Qwen3.5-9B, a dense Transformer; Qwen3-30B-A3B, which uses a Mixture-of-Experts architecture (Shazeer et al. 2017); and Nemotron-3-Nano-30B-A3B, which uses the Mamba architecture (Gu and Dao 2024). We serve the open-source models locally with vLLM (Kwon et al. 2023) using their default inference configurations. 
+
+Agentic Systems. We construct StateMAS using four agent architectures derived from collaboration patterns identified in recent surveys (Li et al. 2024; Luo et al. 2025). Following Who&When (Zhang et al. 2025a), each architecture uses the five-agent team from Magentic-One (Fourney et al. 2024). The agents specialize in capabilities such as web browsing and local file navigation. Using the same team across ar-chitectures isolates the effect of their communication and coordination structures. 1. Sequential: Agents operate as a pipeline. Each agent pro-cesses the task in turn and passes its output to the next agent. Systems such as MetaGPT (Hong et al. 2023), ChatDev (Qian et al. 2024), and OpenManus (Foun-dationAgents 2024) use this architecture for multistage workflows in which each step depends on previous out-puts. 2. Concurrent: Multiple agents process the same task in parallel, and their outputs are subsequently aggregated. HyperAgent (Phan et al. 2024) adopts this architecture to collect diverse candidate solutions or perspectives. 3. Centralized: A central manager selects agents and coor-dinates the communication flow. Magentic-One (Fourney et al. 2024) and AppWorld (Trivedi et al. 2024) use this architecture to support iterative collaboration among spe-cialized agents. 4. Decentralized: Agents communicate through direct hand-offs without a central manager. Following the pattern in-troduced by OpenAI Swarm (OpenAI 2024), each agent decides when and to whom it should delegate the task. 
+
+Data Representation. Evaluating MAS repair requires re-playable execution states rather than static interaction logs. For a trajectory containing T execution steps, StateMAS 
+
+stores a corresponding MAS state st after every step t. Each state captures the accumulated context, agent memories, and runtime variables at that point. We set the LLM tempera-ture to zero and preserve the system configuration to support deterministic replay. A repair method can reload st to repro-duce the remaining execution or modify the restored state before resuming it. These operations enable counterfactual evaluation of how an intervention changes the final outcome. Each trajectory in StateMAS contains four components: 1. Query : The original task prompt drawn from GAIA or AssistantBench. 2. Execution Log : The complete interaction trace. For a failed execution, this trace provides the diagnostic input for repair. 3. State Snapshots : Serialized MAS states recorded after each execution step. These checkpoints allow a repair method to restore and modify the execution at a selected step. 4. Workspace : The task input files and intermediate artifacts produced during execution. These files preserve the con-text required to resume the MAS accurately. 
+
+Detailed MARS Algorithm 
+
+Algorithm 1 presents the complete MARS procedure. A node becomes fully expanded once it accumulates K children across repeated visits. Each expansion calls the LLM-based action selector once and adds one child. SelectExpandable 
+
+traverses fully expanded nodes from the root by selecting the child c with the highest UCT value: 
+
+UCT( c) = Q(c)
+
+N (c) + C
+
+s
+
+ln N (p)
+
+N (c) , (1) where p denotes the parent of c, Q(c) is its cumulative score, 
+
+N (c) is its visit count, and C controls exploration. Nodes at the maximum depth Dmax cannot be expanded further. 
+
+ApplyAction creates a child using Rollback , Guided Re-pair , or Continuation . The two generation actions execute the MAS for L rounds during child construction, so MARS 
+
+requires no separate simulation rollout. The LLM judge then assigns the child a trajectory score r and diagnostic feed-back f . Standard MCTS backpropagation updates the se-lected search path using r.The search terminates when the judge assigns Verified Completion (r = 1 ) or the search reaches its budget of Niter 
+
+expansions. MARS returns the evaluated trajectory with the highest score. If the budget is exhausted and the returned trajectory does not produce a correct final answer, the repair attempt is counted as unsuccessful. Algorithm 1: Multi-Agent Repair via MARS  
+
+> 1:
+
+Input: τf ail , Niter , K, L, Dmax  
+
+> 2:
+
+Output: Highest-scoring trajectory ˆτ 
+
+> 3:
+
+root ← Node (τf ail ) 
+
+> 4:
+
+best _traj ← τf ail ; max _r ← 0 
+
+> 5:
+
+for i ← 1 to Niter do  
+
+> 6:
+
+{Phase 1: Selection } 
+
+> 7:
+
+node ← SelectExpandable (root, K, D max , UCT ) 
+
+> 8:
+
+{Phase 2: Expansion } 
+
+> 9:
+
+action ← ActionSelector (node ) 
+
+> 10:
+
+child ← ApplyAction (node, action, L ) 
+
+> 11:
+
+{Phase 3: Evaluation } 
+
+> 12:
+
+(r, f ) ← LLM_Judge (child.state ) 
+
+> 13:
+
+child.f eedback ← f 
+
+> 14:
+
+if r > max _r then  
+
+> 15:
+
+max _r ← r; best _traj ← child.traj  
+
+> 16:
+
+end if  
+
+> 17:
+
+{Phase 4: Backpropagation } 
+
+> 18:
+
+curr ← child  
+
+> 19:
+
+while curr ̸ = NULL do  
+
+> 20:
+
+N (curr ) ← N (curr ) + 1  
+
+> 21:
+
+Q(curr ) ← Q(curr ) + r 
+
+> 22:
+
+curr ← curr.parent  
+
+> 23:
+
+end while  
+
+> 24:
+
+if r = 1 then  
+
+> 25:
+
+break  
+
+> 26:
+
+end if  
+
+> 27:
+
+end for  
+
+> 28:
+
+return best _traj 
+
+Sensitivity Experiment 
+
+We vary the branching factor K, MCTS iteration budget, and number of generation steps L while holding the other settings fixed. All experiments use Qwen3-30B-A3B on GAIA-Free under centralized orchestration. 
+
+Branching Factor. Figure 2 shows that increasing the branching factor from two to three raises the post-repair pass rate from 24.2% to 30.3%. A small branching factor limits the alternative Rollback , Guided Repair , and Continuation 
+
+branches that MARS can explore. Performance remains at 30.3% with four branches and decreases to 28.8% with five. Under a fixed iteration budget, excessive branching expands the tree too broadly and leaves too few iterations to explore promising repair trajectories in depth. 
+
+Iteration Budget. The post-repair pass rate increases from 19.7% with 45 iterations to 27.3% with 60, 30.3% with 75, and 31.8% with 90. Additional iterations allow MARS to evaluate more candidate branches, compare alternative re-pairs, and revisit promising trajectories. The improvement becomes smaller after 75 iterations, suggesting diminishing returns as the most promising branches receive more thor-ough exploration. 
+
+Generation Steps. The post-repair pass rate increases from 22.7% with two generation steps to 30.3% with four and 31.8% with six. Short rollouts may end before the agents can make sufficient progress or fully apply the fix guidance. In-creasing the rollout to eight steps reduces the rate to 27.3%. 
+
+Figure 2: Sensitivity results with centralized orchestration Longer rollouts delay the next evaluation and expansion de-cision, which can allow errors to propagate before the search redirects the trajectory. 
+
+Limitation 
+
+Our work has three limitations. First, we build StateMAS 
+
+with the Microsoft Agentic Framework, so its checkpoints and replay procedures may require adaptation for MAS im-plemented with other frameworks. Second, the benchmark tasks come from GAIA and AssistantBench and primarily cover general-assistant and web-navigation scenarios. Eval-uation on domain-specific tasks is needed to establish broader generalizability. Third, computational and commercial API costs prevented us from evaluating all 16 combinations of four agent architectures and four LLM backbones on every task. We evaluate all 16 combinations on GAIA-Free, but use only the centralized architecture with four backbones on GAIA-Comm and AssistantBench. 
+
+Prompt Templates 
+
+Taxonomy-Augmented Evaluation Prompt   
+
+> You are an expert evaluator for a Multi-Agent System (MAS). Your task is to assess the quality and health of the conversation trajectory. You must evaluate the trajectory along two dimensions: 1. Strategic Validity: Are the current sub-goals logical
+
+and necessary for solving the Original User Query? 2. Execution Progress: Have the agents effectively exe-cuted these sub-goals? 
+
+[MAST Taxonomy – Failure Mode Checklist] 
+
+Carefully screen the trajectory for the following specific failure patterns: 
+
+Category 1: Agent Execution Issues 
+
+• FM 1.1 Disobey Task Spec: Failure to adhere to spe-cific constraints or requirements of a given task, leading to suboptimal outcomes. 
+
+• FM 1.2 Disobey Role Spec: Acting outside defined responsibilities (e.g., an analyst behaving like a coder). 
+
+• FM 1.3 Step Repetition: Unnecessary reiteration of previously completed steps without new context. 
+
+• FM 1.4 Context Loss: Disregarding recent history or corrections and reverting to an older state. 
+
+• FM 1.5 Unaware of Termination: Failing to recognize when termination criteria are met, causing unnecessary loops. 
+
+Category 2: Inter-Agent Misalignment 
+
+• FM 2.1 Conversation Reset: Unwarranted restart of the dialogue, losing progress. 
+
+• FM 2.2 No Clarification: Failing to ask for help when data is unclear or incomplete. 
+
+• FM 2.3 Task Derailment: Deviating from the intended objective to irrelevant topics. 
+
+• FM 2.4 Info Withholding: Failing to share critical insights that other agents need. 
+
+• FM 2.5 Ignored Input: Disregarding corrections or output provided by peer agents. 
+
+• FM 2.6 Reasoning-Action Mismatch: Taking an ac-tion that contradicts the internal reasoning log. 
+
+Category 3: Verification Issues 
+
+• FM 3.1 Premature Termination: Stopping before all objectives are visibly met. 
+
+• FM 3.2 Incomplete Verification: Partial or shallow checking (e.g., “it runs” rather than “it works as re-quested”). 
+
+• FM 3.3 Incorrect Verification: False positives or fail-ure to cross-check crucial information. 
+
+[Supporting Evidence Requirement] CRITICAL: Only set found_solution to true if all of these conditions are met: 1. A tool call, such as web search, file read, or code exe-cution, returned actual data. 2. The answer is directly derived from that tool output rather than from the agent’s prior knowledge or reason-ing alone. 3. The specific data supporting the answer is visible in the tool results. If an agent states an answer without any tool pro-viding the supporting data, this is hallucination. Set 
+
+found_solution=false , assign a score no greater than 0.3, and detect FM 3.3 ( Incorrect Verification ). 
+
+If tool calls failed, returned errors, or returned empty re-sults, the agents cannot have a valid answer. The score must be no greater than 0.3. Be skeptical: agents frequently fabricate plausible-sounding answers. Verify that the claimed answer appears in a tool result. If the agent says “data unavailable,” “unable to find,” “not found,” or gives a similar non-answer, this is not a solution. Set found_solution=false and assign a score no greater than 0.3. 
+
+[Independent Answer Verification] 
+
+After checking the tool evidence, verify the answer logic: 1. Does the extracted answer directly and precisely answer the original question? 2. Is the answer in the correct format? For example, if the query asks for a number, is the answer a number? 3. Does the answer have the correct units and scale? For example, distinguish 17 from 17,000 when the source reports values in thousands. 4. Is the answer complete? For example, if the query asks for a full name, do not accept only the first name. 5. Could the answer refer to a different entity with a similar name? If the answer fails any of these checks, assign a score no greater than 0.7 and explain the issue. 
+
+[Answer Re-Derivation] 
+
+After extracting the answer, perform this check: 1. Find the specific tool output, such as a search result, file content, or code output, on which the answer is based. 2. Quote the exact text from that tool output that supports the answer. 3. Independently derive the answer using only that quoted text. 4. If the independent derivation differs from the agent’s answer, the agent likely made an error. Assign a score no greater than 0.5 and explain the discrepancy. 5. If no tool output directly supports the answer, treat the answer as hallucinated and assign a score no greater than 0.3. 
+
+[Evaluation Rubric] 
+
+• 1.0 (Verified Completion): The answer is directly supported by quoted tool evidence, the re-derivation matches, and no failure modes are detected. 
+
+• 0.8–0.9 (Strong Progress): The trajectory makes sub-stantial progress with logical sub-goals and no detected failure. If an answer is present, it is supported by tool evidence with at most minor ambiguity. 
+
+• 0.5–0.7 (Moderate Progress): The trajectory makes useful progress but has unresolved steps or shows stag-nation. If an answer is present, its evidence may be weak or indirect, or the re-derivation may produce a different result. 
+
+• 0.2–0.4 (Limited Progress): The trajectory makes little progress or contains a clear but recoverable error, such as an unsupported answer or incorrect units, entity, or scale. • 0.0–0.1 (Failure/Divergence): The trajectory contains severe errors, repeated loops, substantial task drift, or a hallucinated terminal answer. A complete trajectory that terminates without an answer also falls within this level. 
+
+[Fresh-Start Awareness] 
+
+If the trajectory is very short, it was likely recently truncated to remove an earlier error. Do not penalize short trajectories without failure mode. 
+
+[Output Format] 
+
+Found_solution: true OR false Detected_failure_mode: "None" OR "FM X.Y" OR "Other" Reasoning: [Explain why the direction is valid or invalid and cite specific interactions.] Score: [Float between 0.0 and 1.0] 
+
+[Input Context] Analyze the following trajectory and as-sign a score using the evaluation rubric. 
+
+[Original User Query] 
+
+{user_query} 
+
+[Full Trajectory History] 
+
+{trajectory} 
+
+Feedback-Guided Expansion Prompt 
+
+You are the Decision-Making Module for a Multi-Agent System repair process. You will be given: 1. The full Trajectory History of the multi-agent conver-sation. 2. Diagnostic Feedback from the previous evaluation phase, which includes a detected failure mode (if any), reasoning, and a numerical score. Your task is to decide the next action for the search tree by following these steps: 
+
+[Step 1: Verify] 
+
+Cross-check the Diagnostic Feedback against the actual Trajectory History. Does the feedback accurately describe what happened? Is the identified failure mode (if any) con-sistent with the trajectory? 
+
+[Step 2: Decide] 
+
+Based on your verification: 
+
+• If you agree with the failure assessment (a real failure mode was detected and confirmed), choose rollback .Identify the earliest checkpoint where the failure began and provide concrete fix guidance. 
+
+• Otherwise, choose guided repair if stored fix guidance is available from a prior rollback; if not, choose contin-uation .
+
+Available Actions: 
+
+1. Rollback: Roll back to the decisive error checkpoint and provide fix guidance for a new attempt. 2. Guided Repair: Continue the agent conversation from the restored state while explicitly conditioning it on the stored fix guidance from rollback. 
+
+3. Continuation: Continue the agent conversation from the current state. 
+
+Constraint: You must call exactly one function (( rollback ,
+
+guided repair , or continuation ) exactly once. Do not call multiple functions. Your entire response must be a single function invocation. 
+
+[Trajectory History] 
+
+{trajectory} 
+
+[Diagnostic Feedback from Previous Evaluation] 
+
+{diagnostic_feedback} 
+
+# References 
+
+Antoniades, A.; Örwall, A.; Zhang, K.; Xie, Y.; Goyal, A.; and Wang, W. 2025. Swe-search: Enhancing software agents with monte carlo tree search and iterative refinement. In 
+
+International Conference on Learning Representations , vol-ume 2025, 64485–64515. Cemri, M.; Pan, M. Z.; Yang, S.; Agrawal, L. A.; Chopra, B.; Tiwari, R.; Keutzer, K.; Parameswaran, A.; Klein, D.; Ram-chandran, K.; et al. 2026. Why Do Multi-Agent LLM Sys-tems Fail? In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track .Coulom, R. 2006. Efficient selectivity and backup operators in Monte-Carlo tree search. In International conference on computers and games , 72–83. Springer. Dainese, N.; Merler, M.; Alakuijala, M.; and Marttinen, P. 2024. Generating code world models with large language models guided by monte carlo tree search. Advances in Neural Information Processing Systems , 37: 60429–60474. Epperson, W.; Bansal, G.; Dibia, V. C.; Fourney, A.; Gerrits, J.; Zhu, E.; and Amershi, S. 2025. Interactive debugging and steering of multi-agent ai systems. In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems , 1–15. Firecrawl. 2026. Firecrawl: The API to Search, Scrape, and Crawl the Web. https://www.firecrawl.dev/. Accessed: 2026-05-09. FoundationAgents. 2024. OpenManus: An Open Source Autonomous Agent. https://github.com/FoundationAgents/ OpenManus. Fourney, A.; Bansal, G.; Mozannar, H.; Tan, C.; Salinas, E.; Niedtner, F.; Proebsting, G.; Bassman, G.; Gerrits, J.; Alber, J.; et al. 2024. Magentic-one: A generalist multi-agent system for solving complex tasks. arXiv preprint arXiv:2411.04468 .Gu, A.; and Dao, T. 2024. Mamba: Linear-Time Sequence Modeling with Selective State Spaces. In The First Confer-ence on Language Modeling .Hao, S.; Gu, Y.; Ma, H.; Hong, J.; Wang, Z.; Wang, D.; and Hu, Z. 2023. Reasoning with language model is planning with world model. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 8154– 8173. Hong, S.; Zhuge, M.; Chen, J.; Zheng, X.; Cheng, Y.; Wang, J.; Zhang, C.; Wang, Z.; Yau, S. K. S.; Lin, Z.; et al. 2023. MetaGPT: Meta programming for a multi-agent collabora-tive framework. In The Twelfth International Conference on Learning Representations .Kwon, W.; Li, Z.; Zhuang, S.; Sheng, Y.; Zheng, L.; Yu, C. H.; Gonzalez, J. E.; Zhang, H.; and Stoica, I. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. In Proceedings of the 29th Symposium on Operating Systems Principles , 611–626. LangChain. 2024. LangGraph Studio. https://github.com/ langchain-ai/langgraph-studio. Accessed: 2025-12-02. Li, B.; Zhang, J.; Fan, J.; Xu, Y.; Chen, C.; Tang, N.; and Luo, Y. 2025. Alpha-SQL: Zero-Shot Text-to-SQL using Monte Carlo Tree Search. In International Conference on Machine Learning , 36810–36830. PMLR. Li, X.; Wang, S.; Zeng, S.; Wu, Y.; and Yang, Y. 2024. A survey on LLM-based multi-agent systems: workflow, infras-tructure, and challenges. Vicinagearth , 1(1): 9. Luo, J.; Zhang, W.; Yuan, Y.; Zhao, Y.; Yang, J.; Gu, Y.; Wu, B.; Chen, B.; Qiao, Z.; and Long, Q. 2025. Large language model agent: A survey on methodology, applications and challenges. arXiv 2025. arXiv preprint arXiv:2503.21460 .Ma, M.; Zhang, J.; Yang, F.; Kang, Y.; Lin, Q.; Rajmohan, S.; and Zhang, D. 2026. DoVer: Intervention-Driven Auto Debugging for LLM Multi-Agent Systems. In The Fourteenth International Conference on Learning Representations .Madaan, A.; Tandon, N.; Gupta, P.; Hallinan, S.; Gao, L.; Wiegreffe, S.; Alon, U.; Dziri, N.; Prabhumoye, S.; Yang, Y.; et al. 2023. Self-refine: Iterative refinement with self-feedback. Advances in Neural Information Processing Sys-tems , 36: 46534–46594. Mialon, G.; Fourrier, C.; Wolf, T.; LeCun, Y.; and Scialom, T. 2023. Gaia: a benchmark for general ai assistants. In The Twelfth International Conference on Learning Representa-tions .Microsoft. 2026. Microsoft Agent Framework . Accessed: 2026-01-20. OpenAI. 2024. Swarm. https://github.com/openai/swarm. Accessed: 2026-01-29. Phan, H. N.; Nguyen, T. N.; Nguyen, P. X.; and Bui, N. D. 2024. Hyperagent: Generalist software engineering agents to solve coding tasks at scale. arXiv preprint arXiv:2409.16299 .Qian, C.; Liu, W.; Liu, H.; Chen, N.; Dang, Y.; Li, J.; Yang, C.; Chen, W.; Su, Y.; Cong, X.; et al. 2024. Chatdev: Com-municative agents for software development. In Proceedings of the 62nd Annual Meeting of the Association for Computa-tional Linguistics (Volume 1: Long Papers) , 15174–15186. Shazeer, N.; Mirhoseini, A.; Maziarz, K.; Davis, A.; Le, Q.; Hinton, G.; and Dean, J. 2017. Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer. In 
+
+International Conference on Learning Representations .Shinn, N.; Cassano, F.; Gopinath, A.; Narasimhan, K.; and Yao, S. 2023. Reflexion: Language agents with verbal re-inforcement learning. Advances in neural information pro-cessing systems , 36: 8634–8652. Trivedi, H.; Khot, T.; Hartmann, M.; Manku, R.; Dong, V.; Li, E.; Gupta, S.; Sabharwal, A.; and Balasubramanian, N. 2024. Appworld: A controllable world of apps and people for benchmarking interactive coding agents. arXiv preprint arXiv:2407.18901 .Wikimedia Foundation. 2026. Wikipedia. https://www. wikipedia.org/. Accessed: 2026-05-09. Wu, J.; Yin, W.; Jiang, Y.; Wang, Z.; Xi, Z.; Fang, R.; Zhang, L.; He, Y.; Zhou, D.; Xie, P.; and Huang, F. 2025. Web-Walker: Benchmarking LLMs in Web Traversal. In Pro-ceedings of the 63rd Annual Meeting of the Association for Computational Linguistics .Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K.; and Cao, Y. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In International Conference on Learning Representations (ICLR) .Yoran, O.; Amouyal, S. J.; Malaviya, C.; Bogin, B.; Press, O.; and Berant, J. 2024. Assistantbench: Can web agents solve realistic and time-consuming tasks? In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 8938–8968. Zhang, B.; Zhu, J.; Shi, Z.; Liu, D.; and Tang, R. 2026a. AgentForesight: Online Auditing for Early Failure Prediction in Multi-Agent Systems. arXiv preprint arXiv:2605.08715 .Zhang, G.; Wang, J.; Chen, J.; Zhou, W.; Wang, K.; and Yan, S. 2026b. AgenTracer: Who Is Inducing Failure in the LLM Agentic Systems? In The Thirteenth International Conference on Learning Representations (ICLR) .Zhang, S.; Chen, Z.; Shen, Y.; Ding, M.; Tenenbaum, J. B.; and Gan, C. 2023. Planning with Large Language Models for Code Generation. In The Eleventh International Conference on Learning Representations .Zhang, S.; Yin, M.; Zhang, J.; Liu, J.; Han, Z.; Zhang, J.; Li, B.; Wang, C.; Wang, H.; Chen, Y.; et al. 2025a. Which Agent Causes Task Failures and When? On Automated Fail-ure Attribution of LLM Multi-Agent Systems. Proceedings of Machine Learning Research , 267: 76583–76599. Zhang, Y.; Ma, Z.; Ma, Y.; Han, Z.; Wu, Y.; and Tresp, V. 2025b. Webpilot: A versatile and autonomous multi-agent system for web task execution with strategic exploration. In 
+
+Proceedings of the AAAI Conference on Artificial Intelli-gence , volume 39, 23378–23386. Zhu, C.; Hong, S.; Wu, J.; Chawla, K.; Tang, Y.; Yin, Y.; Wolfe, N.; Babinsky, E.; and Liu, D. 2026. Raffles: Reasoning-based attribution of faults for llm systems. In 
+
+Proceedings of the 19th Conference of the European Chap-ter of the Association for Computational Linguistics (Volume 1: Long Papers) , 7659–7688.

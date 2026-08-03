@@ -6,65 +6,73 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-08-02
-- 运行时间：2026-08-02 21:24:21 UTC
+- 最新运行日期：2026-08-03
+- 运行时间：2026-08-03 21:28:16 UTC
 - 运行状态：成功
-- 本次总论文数：15
+- 本次总论文数：17
 - 精读区：6
-- 速读区：9
+- 速读区：11
 
 ### 今日简报（AI）
-今日共推荐15篇论文，精读6篇、速读9篇，重点关注智能体记忆管理与多跳推理方向。最值得精读的是《ChronoMem》提出LLM记忆的版本控制与语义回滚机制，以及《Co-Evolving Graph and Text Memory》实现免训练的多跳问答。若时间有限，可优先浏览速读中的动作空间学习与多智能体道德风险两篇，了解在线RL与大模型协作中的新问题。
-- 详情：[/202608/02/README](/202608/02/README)
+今日17篇论文聚焦智能体自进化与测试时强化学习，精读6篇、速读11篇。  
+最值得看的是SERPO（9.0）的自进化评分策略优化，以及Code Is the Body（9.0）的智能体软件体递归进化；速读还显示朴素RAG与复杂记忆管理效果相当。  
+建议普通读者从这两篇精读入手，关注智能体持续学习与自修改如何落地到推荐和网络操作等场景。
+- 详情：[/202608/03/README](/202608/03/README)
 
 ### 精读区论文标签
-1. [ChronoMem: Version Control and Semantic Rollback for Large Language Model Agent Memory](/202608/02/2607.27773v1-chronomem-version-control-and-semantic-rollback-for-large-language-model-agent-memory)  
-   标签：评分：10.0/10、query:agentic-rl
-   evidence：面向大模型智能体记忆的语义版本控制与回滚机制
-2. [Co-Evolving Graph and Text Memory for Training-Free Multi-Hop Question Answering](/202608/02/2607.23278v1-co-evolving-graph-and-text-memory-for-training-free-multi-hop-question-answering)  
+1. [SERPO: Self-Evolving Rubric Policy Optimization for Open-Ended Test-Time Reinforcement Learning](/202608/03/2607.26873v2-serpo-self-evolving-rubric-policy-optimization-for-open-ended-test-time-reinforcement-learning)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：为问答智能体设计图-文工作记忆同步架构
-3. [MemVLN: Episodic and Procedural Memory for Vision-and-Language Navigation](/202608/02/2607.23504v1-memvln-episodic-and-procedural-memory-for-vision-and-language-navigation)  
+   evidence：测试时强化学习中的自进化rubric策略优化
+2. [Code Is the Body: Agent-Owned Software Bodies for Recursive Evolution and Descent](/202608/03/2607.28691v1-code-is-the-body-agent-owned-software-bodies-for-recursive-evolution-and-descent)  
    标签：评分：9.0/10、query:agentic-rl
-   evidence：面向智能体的记忆架构：通过金字塔分辨率管理实现视觉语言导航中的情景与程序记忆
-4. [Collaborative Weighting with Pessimistic Critic for Mitigating Overestimation in Off-Policy Reinforcement Learning](/202608/02/2607.26509v1-collaborative-weighting-with-pessimistic-critic-for-mitigating-overestimation-in-off-policy-reinforcement-learning)  
+   evidence：智能体自有软件实体与受治自演化
+3. [Beyond Retrieval: Analytic Memory for Multimodal Agents](/202608/03/2607.29440v1-beyond-retrieval-analytic-memory-for-multimodal-agents)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：面向多模态智能体的分析记忆抽象
+4. [Self-Play Meets Skill Evolution: Self-Evolving Search Agents that Pose, Solve, and Remember](/202608/03/2607.29468v1-self-play-meets-skill-evolution-self-evolving-search-agents-that-pose-solve-and-remember)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：自我对弈结合技能演化与程序性记忆的智能体自我进化
+5. [Convergence and Regret of the Policy Gradient for Multi-Armed Bandits in Diffusion Environment](/202608/03/2607.29593v1-convergence-and-regret-of-the-policy-gradient-for-multi-armed-bandits-in-diffusion-environment)  
+   标签：评分：9.0/10、query:agentic-rl
+   evidence：策略梯度更新的收敛性与遗憾界分析
+6. [From RLVR to RLSVR: Task Transformation Induces Self-Verifiable Rewards for Open-Ended LLM Self-Improvement](/202608/03/2607.23802v2-from-rlvr-to-rlsvr-task-transformation-induces-self-verifiable-rewards-for-open-ended-llm-self-improvement)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：一种缓解过估计偏差的离策略Actor-Critic强化学习方法
-5. [World Action Planner: Generalizable Decision-Making with Action-Conditioned World Models](/202608/02/2607.27599v1-world-action-planner-generalizable-decision-making-with-action-conditioned-world-models)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：智能体利用世界模型进行规划与迭代优化的决策方法
-6. [From Scoring to Acting: Outcome-Verified Comparative Self-Distillation for LLM Agents](/202608/02/2607.27937v1-from-scoring-to-acting-outcome-verified-comparative-self-distillation-for-llm-agents)  
-   标签：评分：8.0/10、query:agentic-rl
-   evidence：通过结果验证的对比自蒸馏让LLM智能体内化技能，实现自我进化
+   evidence：基于强化学习的LLM自我改进
 
 ### 速读区论文标签
-1. [On-Policy and Off-Policy Learning for Large Action Spaces](/202608/02/2607.28408v1-on-policy-and-off-policy-learning-for-large-action-spaces)  
+1. [Distilling Knowledge from Large Language Models into Lightweight Reinforcement Learning Agents for Autonomous Cyber Operations](/202608/03/2607.28826v1-distilling-knowledge-from-large-language-models-into-lightweight-reinforcement-learning-agents-for-autonomous-cyber-operations)  
    标签：评分：8.0/10、query:agentic-rl
-   evidence：研究大动作空间交互智能体在在线与离线策略范式下的策略学习
-2. [Sparse Gaussian-Mixture-Model Q-Functions via Hadamard Overparametrization for Online Reinforcement Learning](/202608/02/2607.23474v1-sparse-gaussian-mixture-model-q-functions-via-hadamard-overparametrization-for-online-reinforcement-learning)  
+   evidence：面向自主网络防御的强化学习智能体，引入LLM知识蒸馏提升初始决策能力
+2. [Reproducing LightMem: Naive RAG Is Just as Good for Memory Management](/202608/03/2607.29104v1-reproducing-lightmem-naive-rag-is-just-as-good-for-memory-management)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：面向长期对话智能体的记忆管理
+3. [RecHarness: A Bandit-Routed Agentic Harness for Self-Evolving Recommender Systems](/202608/03/2607.29241v1-recharness-a-bandit-routed-agentic-harness-for-self-evolving-recommender-systems)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：自进化推荐系统优化，基于bandit路由的智能体化框架
+4. [Sample Efficient Hierarchical Reinforcement Learning via Best Policy Identification](/202608/03/2607.29294v1-sample-efficient-hierarchical-reinforcement-learning-via-best-policy-identification)  
+   标签：评分：8.0/10、query:agentic-rl
+   evidence：分层强化学习的样本效率与策略学习理论
+5. [Hypergradient-based Bilevel Reinforcement Learning with Improved Sample Complexity](/202608/03/2607.28849v1-hypergradient-based-bilevel-reinforcement-learning-with-improved-sample-complexity)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：提出基于稀疏高斯混合Q函数的在线离策略强化学习框架，可用于训练自主智能体
-3. [Moral Hazard in Multi-Agent Language Models](/202608/02/2607.23982v2-moral-hazard-in-multi-agent-language-models)  
+   evidence：基于超梯度的双层强化学习，改善样本复杂度
+6. [D-VLC: Decentralized Vision-Language Collaboration for Heterogeneous Embodied Multi-Robot Systems in Unknown Environments](/202608/03/2607.29009v1-d-vlc-decentralized-vision-language-collaboration-for-heterogeneous-embodied-multi-robot-systems-in-unknown-environments)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：通过隐藏行动博弈研究多智能体语言模型中的合作与协调失败
-4. [Harness-G: A Graph-Structured Harness for Search Agents](/202608/02/2607.27652v1-harness-g-a-graph-structured-harness-for-search-agents)  
+   evidence：异构多机器人去中心化视觉-语言协作
+7. [Autonomous Repair for Multi-Agent Systems via Monte-Carlo Tree Search](/202608/03/2607.29055v1-autonomous-repair-for-multi-agent-systems-via-monte-carlo-tree-search)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：面向RL搜索智能体的图结构框架，缓解检索等价塌缩问题
-5. [SKIMIX: Multi-Agent Harness-Time Scaling with Skill Mixture for Dynamic Harness Engineering](/202608/02/2607.27994v1-skimix-multi-agent-harness-time-scaling-with-skill-mixture-for-dynamic-harness-engineering)  
+   evidence：基于MCTS的多智能体系统自主修复
+8. [AgentHPOBench: A Benchmark For Evaluating LLM Agents as Sequential Hyperparameter Optimizers](/202608/03/2607.29626v1-agenthpobench-a-benchmark-for-evaluating-llm-agents-as-sequential-hyperparameter-optimizers)  
    标签：评分：7.0/10、query:agentic-rl
-   evidence：多智能体通过技能混合与自适应演化协作改进
-6. [Hierarchical Multilevel Monte Carlo for Order-Optimal Neural Actor-Critic in Average-Reward CMDPs](/202608/02/2607.28390v1-hierarchical-multilevel-monte-carlo-for-order-optimal-neural-actor-critic-in-average-reward-cmdps)  
-   标签：评分：7.0/10、query:agentic-rl
-   evidence：基于分层多级蒙特卡洛的平均奖励约束马尔可夫决策过程神经Actor-Critic算法
-7. [Scaling LLM-Driven Multi-Agent Systems: Design Principles and Architectural Scalability Analysis](/202608/02/2607.27942v1-scaling-llm-driven-multi-agent-systems-design-principles-and-architectural-scalability-analysis)  
+   evidence：评估 LLM 智能体作为序列超参数优化器的基准
+9. [OrchBench: Evaluating Multi-Agent Orchestration Plans in Isolation via Deterministic Simulation](/202608/03/2607.25656v1-orchbench-evaluating-multi-agent-orchestration-plans-in-isolation-via-deterministic-simulation)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：研究LLM多智能体系统的协调与设计，与多智能体环境中的协调学习相关
-8. [Echoverse: Deep, Evolving Environments for Training Computer-Use Agents at Scale](/202608/02/2607.28074v1-echoverse-deep-evolving-environments-for-training-computer-use-agents-at-scale)  
+   evidence：多智能体编排基准与协调评估
+10. [Don't Mix Rewards, Mix Policies: Policy Decomposition and Optimization for Multi-Reward RL](/202608/03/2607.29246v1-dont-mix-rewards-mix-policies-policy-decomposition-and-optimization-for-multi-reward-rl)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：用于计算机操作智能体的训练环境与共演化循环
-9. [OSReward: Instituting Standardized Evaluation for Cross-Platform Computer-Use Reward Models](/202608/02/2607.28609v1-osreward-instituting-standardized-evaluation-for-cross-platform-computer-use-reward-models)  
+   evidence：面向多奖励强化学习的策略空间分解
+11. [LEMUR: Learning to Align with Multi-Objective Reinforcement Learning from Preference Feedback](/202608/03/2607.29559v1-lemur-learning-to-align-with-multi-objective-reinforcement-learning-from-preference-feedback)  
    标签：评分：6.0/10、query:agentic-rl
-   evidence：面向计算机使用智能体强化学习所依赖奖励模型的评测基准
+   evidence：基于偏好反馈的多目标强化学习
 
 
 <div class="dpr-home-promo-card">
