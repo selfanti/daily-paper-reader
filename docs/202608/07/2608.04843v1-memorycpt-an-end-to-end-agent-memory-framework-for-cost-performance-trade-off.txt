@@ -1,0 +1,682 @@
+Title: MemoryCPT: An End-to-End Agent Memory Framework for Cost-Performance Trade-off
+
+URL Source: https://arxiv.org/pdf/2608.04843v1
+
+Published Time: Thu, 06 Aug 2026 00:59:08 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# MemoryCPT: An End-to-End Agent Memory Framework for Cost-Performance Trade-off 
+
+## Songxin Lei 1,2 ∗, Kun Ouyang 2∗, Weilin Ruan 4, Yuqian Wu 3,Zhijiang Guo 1, 3 , Yushi Sun 2†, Fugee Tsung 1
+
+> 1
+
+The Hong Kong University of Science and Technology, Hong Kong SAR, China 
+
+> 2
+
+LIGHTSPEED STUDIOS, Tencent 
+
+> 3
+
+The Hong Kong University of Science and Technology (Guangzhou), Guangzhou, China 
+
+> 4
+
+The Chinese University of Hong Kong, Hong Kong SAR, China slei924@connect.ust.hk, ouyangkun@u.nus.edu, wruan792@connect.hkust-gz.edu.cn, ywu188@connect.hkust-gz.edu.cn, zhijiangguo@hkust-gz.edu.cn, ysunbp@connect.ust.hk, season@ust.hk 
+
+Abstract 
+
+Long-horizon LLM agents require memory systems that re-cover useful evidence from large interaction histories without passing excessive context to downstream models. Existing memory pipelines often rely on hand-crafted heuristics and re-peated LLM calls, which can introduce redundant context and high inference cost. We propose MemoryCPT , an end-to-end trainable agent memory pipeline that spans offline memory construction and online query-conditioned context generation. MemoryCPT consists of two stages: Query-agnostic Distil-lation (QAD) , which distills a modular memory-construction pipeline into a compact model using explicit reasoning traces; and Query-aware Retrieval and Summarization (QAR) ,which combines reciprocal rank fusion (RRF) with a LoRA-based summarizer trained via Group Relative Policy Opti-mization (GRPO) under a cost-aware reward. We further in-troduce Quality per Cost (QPC) to quantify answer qual-ity per unit inference cost. Experiments on LoCoMo and LongMemEval show that MemoryCPT improves the cost-performance trade-off over the evaluated baselines, while ab-lation and sensitivity analyses characterize the contributions of its components and the effects of key design choices. 
+
+## Introduction 
+
+Long-horizon LLM agents are increasingly expected to main-tain persistent memory across extended interactions, includ-ing multi-session conversations, task logs, and evolving per-sonal knowledge (Zhong et al. 2023; Shinn et al. 2023). Un-like short-context question answering, these settings require the agent to recover evidence from a large and continuously growing history before producing a response. A straightfor-ward solution is to feed more history into the downstream LLM, but this quickly becomes impractical: long contexts are expensive, slow, and often noisy (Liu et al. 2023), while useful evidence may occupy only a small fraction of the total tokens. Therefore, an effective agent memory system should 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. Copyright © 2027, Association for the Advancement of Artificial Intelligence (www.aaai.org). All rights reserved. 
+
+not only improve answer quality, but also maximize the in-telligence yielded per unit of inference cost. Existing memory systems have made important progress by improving different parts of the context-management pipeline. Current paradigms generally fall into three cate-gories: compressing raw interaction histories into condensed summaries (Kim et al. 2026a), organizing memories into structured blocks or episodic records (Milosevic 2026), and enhancing retrieval mechanisms via dense, sparse, or hy-brid ranking signals (Nie et al. 2026). While these training-free pipelines offer deployment flexibility, they predomi-nantly rely on hand-crafted prompts, rigid heuristics, or external LLM calls during inference (Jiang et al. 2026). Such over-conservative context selection can substantially increase inference cost without yielding commensurate gains in response quality. This bottleneck motivates an end-to-end trainable memory framework that distills test-time memory operations into model parameters and explicitly optimizes the cost-performance trade-off. However, realizing such a paradigm presents two primary challenges. The first challenge lies in the compression stage : how can a compact model learn to construct high-quality long-term memories from raw histories? Unlike simple summariza-tion (Xu, Dai, and Zhang 2026), a strong memory pipeline must segment raw conversations, generate episodic records, decide whether new events should be merged with existing memories, and extract persistent semantic knowledge (Ji, Li, and Hooi 2026). Directly supervising the student with only final summaries would hide these intermediate decisions and make the learning target too rough (Griot, Scotti, and Abra-ham 2026). Therefore, an end-to-end framework needs a way to decompose the compression process into learnable steps while preserving the teacher’s reasoning behind each mem-ory operation. The second challenge lies in the extraction stage : how can the system retrieve and compress query-relevant memories without sacrificing answer quality? Retrieving more mem-ory records generally improves recall, but it also increases the number of tokens consumed by the final QA model (Du et al. 2025). Conversely, overly aggressive compression re-arXiv:2608.04843v1 [cs.IR] 5 Aug 2026 duces cost but may discard critical evidence. This creates a fundamental tension between answer quality and inference cost. Optimizing accuracy alone encourages large memory contexts, while optimizing cost alone leads to poor sum-maries (Stiennon et al. 2022). Therefore, a practical memory system must learn a query-aware policy that preserves critical evidence while minimizing redundant tokens. To tackle these challenges, we propose MemoryCPT ,an end-to-end trainable agent memory pipeline for cost-performance trade-off optimization. To address the compres-sion challenge, MemoryCPT introduces Query-agnostic Distillation (QAD) , which distills a modular memory pipeline into a compact base model via Low-Rank Adapta-tion (LoRA) supervised fine-tuning (SFT). Instead of learn-ing only final summaries, QAD trains on explicit reasoning traces and structured outputs, enabling the model to internal-ize reusable memory-construction skills. To address the ex-traction challenge, MemoryCPT further introduces Query-aware Retrieval and Summarization (QAR) , which first uses RRF-based retrieval for rough selection and then trains a LoRA-based summarization policy with GRPO. Its reward balances answer quality against token consumption, allow-ing the framework to optimize the cost-performance trade-off rather than raw accuracy alone. Our contributions are summarized as follows: 
+
+• An end-to-end memory pipeline for cost-performance op-timization. We introduce MemoryCPT, which spans the complete memory process from query-agnostic construc-tion to query-aware retrieval and summarization, and ex-plicitly targets the cost-performance trade-off in long-horizon multi-turn dialogue memory. 
+
+• A two-stage post-training algorithm. We develop a se-quential training scheme in which QAD distills modular memory-construction skills from teacher reasoning traces, while QAR trains a query-aware summarization policy with GRPO and a cost-aware reward. This design sepa-rates memory construction from online context optimiza-tion while keeping the downstream answer model frozen. 
+
+• Empirical evaluation of quality and cost. Experiments on LoCoMo and LongMemEval compare MemoryCPT with representative baselines under a unified evaluation pipeline. Main results, component ablations, and sensi-tivity analyses examine the quality-cost trade-off and the effects of the reward coefficient and retrieval depth. 
+
+## Problem Statement 
+
+We formulate long-horizon agent memory from a cost-performance perspective: a memory system should improve answer quality while minimizing inference cost. 
+
+Long-horizon memory QA. Let H = {hi}Ni=1 denote an agent’s historical records and q a user query. Since feeding the full history into an LLM is costly and often noisy, a memory system first derives a compact query-relevant memory mq
+
+and then answers with a fixed QA model: 
+
+mq = fmem (q, H), ˆy = fans (q, m q ), (1) where ˆy is the predicted answer and y∗ is the reference answer. MemoryCPT instantiates fmem with two trainable stages: 
+
+M = fQAD (H), mq = fQAR (q, M), (2) where Query-agnostic Distillation (QAD) constructs reusable episodic and semantic memories M offline, and Query-aware Retrieval and Summarization (QAR) selects and compresses query-relevant memories online. 
+
+Cost and Quality per Cost. To ensure fair comparison, the cost of answering q must account for both online operations and the amortized offline processing. Let n be the total num-ber of queries over the history H. The amortized cost per query is defined as: 
+
+Camortized (n) = CQAD 
+
+n + CQAR+QA , (3) where CQAD represents the offline memory construction cost, and CQAR+QA is the online cost covering memory processing and final QA. We compute the monetary cost for any phase by separately counting input/output tokens for each LLM call: 
+
+C = X
+
+> j∈J
+
+ pin  
+
+> j
+
+T in  
+
+> j
+
++ pout  
+
+> j
+
+T out 
+
+> j
+
+ , (4) where J is the set of model calls for that phase, T in /out 
+
+> j
+
+are token counts, and pin /out  
+
+> j
+
+are token prices. To evaluate memory systems beyond raw quality, we define Quality per Cost (QPC) as quality per unit cost: 
+
+QPC = Q(ˆ y, y ∗)
+
+Camortized (n) . (5) In experiments, Q is token-level F1 and Cost is reported as USD per query multiplied by 10 4:
+
+QPC = F1(ˆ y, y ∗)Cost( q) . (6) A higher QPC indicates that the system obtains more correct answer information under the same amortized budget. 
+
+Optimization objective. Given queries Q, our goal is to learn memory parameters θ that maximize expected QPC: 
+
+θ∗ = arg max  
+
+> θ
+
+Eq∼Q 
+
+" Q fans (q, f mem ,θ (q, H)) , y ∗
+
+Camortized ,θ (n)
+
+#
+
+.
+
+(7) This objective captures the core challenge of MemoryCPT: retaining enough evidence for correct answers while avoiding redundant tokens in both offline construction and expensive online downstream LLM calls. 
+
+## Methodology 
+
+Framework Overview 
+
+MemoryCPT is an end-to-end trainable memory pipeline that maps raw interaction histories to query-conditioned contexts via two sequential stages (Figure 1): 
+
+H fQAD 
+
+−−−→ M , (q, M) fQAR 
+
+−−−→ mq , (q, m q ) fans 
+
+−−→ ˆy. (8) LoCoMo 
+
+> Style
+> Raw Conversation
+> LME
+> Style
+
+Query -agnostic Distillation (Q AD)  Query -aware Summary (QAR) 
+
+Stage 2: Fine -grained Summary 
+
+> State
+> Stopping condition: convergence
+
+Stage 1: RRF -based Retrieval   
+
+> Output: Top -k candidate
+> Teacher Pipeline
+> Model 1
+
+Final Q&A          
+
+> Single Agent
+> Input: Query
+> Memory
+> Tool: write session Tool: update episode
+> Student Pipeline
+> Batch Segmenter
+> Input: raw conversation turns
+> Output: {"episodes":[{"indices":[...],"topic":"..."}]}
+> CoT: topic boundaries
+> Model 3Model 2Model N
+
+Episode  Generator  
+
+> Input: one session
+> Output: {"title","content","keywords","participants"}
+> CoT: identify main event
+> Episode Merger
+
+Semantic Extractor           
+
+> Input: existing memory
+> Output: {knowledge":"<new fact>"}
+> CoT: predict prior belief
+> SFT
+> Base Model:
+> Qwen2.5 -7B/
+> Llama3 -3B
+> -> LoRA -A
+> Merged Model
+> LoRA -A+Base Model
+> -> Merged based -A
+> Memory Store
+> Episodic Memory
+> Semantic Memory
+> Query
+> Dense Retrieval Sparse Retrieval
+> Cost State
+> Transition
+> iterate
+> Action
+> Reward
+> Input: Summarized Content
+> Output: Answer
+> Frozen QA model :
+> Qwen3 -14B
+> Answer
+> Score
+> F1/Judge
+> Ground Truth
+> A1: …
+> A2: …
+> G1:
+> G2:
+> R_cos (qi,mi)
+> embedding distance
+> cosine similarity
+> R_bm (qi,mi)
+> BM25
+> Keyword Matching
+> ෍
+> 𝑟 ∈{𝑑𝑒𝑛 ,𝑠𝑝𝑎𝑟 }
+> 𝑘 𝑅𝑅𝐹 +𝑟𝑎𝑛𝑘 𝑟
+> RRF
+> Fusion
+
+qi “When  did Alice 
+
+> move to Seattle? ”
+
+mi ℳ𝑒𝑝 ∪ ℳ𝑠𝑒𝑚                    
+
+> Base Model:
+> Qwen2.5 -7B/
+> Llama3 -3B
+> -> LoRA -B
+> 𝛼 ⋅F1 ƶ𝑦 ,𝑦 ∗
+> +1−𝛼 ⋅1−ሚ𝐶 𝑞 ,𝑚 𝑞
+> Performance
+> Cost
+> 𝑚 𝑞 𝑝 7B
+> out +𝑝 14B
+> in +ƶ𝑦 𝑝 14B
+> out
+
+𝑚 𝑞 ∼ 𝜋 𝜙  ⋅∣ 𝑠 𝑞         
+
+> Possibility of the
+> summarized sequence
+> 𝑠 𝑞 =𝑞 ,ℳ𝑞
+> RRF One -step Bandit!
+> Psts0,a
+> =1
+> No
+> transition
+> dynamics !
+
+Figure 1: Overview of MemoryCPT. The offline stage, Query-agnostic Distillation (QAD), distills a modular memory pipeline into LoRA-A and constructs a reusable memory store with episodic and semantic memories. The online stage, Query-aware Retrieval and Summarization (QAR), first applies RRF-based retrieval as rough selection and then uses a GRPO-trained LoRA-B summarizer to generate a query-conditional fine summary mq . The final QA model is frozen. Dashed arrows indicate training-time reward feedback. Only Query-agnostic Distillation ( fQAD ) and Query-aware Retrieval and Summarization ( fQAR ) are trainable; the down-stream QA model ( fans ) remains frozen. Specifically, QAD runs offline to distill raw dialogues 
+
+H into reusable episodic and semantic memories M us-ing teacher traces (Ma et al. 2026). Online, QAR processes a user query q by retrieving candidate memories via Re-ciprocal Rank Fusion (RRF) and compressing them into a compact summary mq via a GRPO-trained summarizer. This offline-online separation isolates memory construction from query-specific extraction, reducing the RL action space and amortizing expensive construction costs across queries. 
+
+Query-agnostic Distillation 
+
+QAD distills a teacher’s memory-construction capabilities into a compact student via a modular pipeline (Ma et al. 2026), learning from role-level reasoning traces rather than direct end-to-end mapping. 
+
+Modular Distillation Pipeline. The teacher decom-poses memory construction into four roles: BatchSeg-menter (groups conversation turns), EpisodeGenerator 
+
+(creates episodic records), EpisodeMerger (merges re-lated episodes), and SemanticExtractor (extracts persistent knowledge). This modularity provides hardness scaffolding, breaking a complex mapping task into self-contained sub-tasks with well-defined intermediate targets. We collect role-specific teacher outputs in ShareGPT for-mat: each sample pairs a prompt xρ with a reasoning trace rρ
+
+and a structured JSON output yρ. The student, Qwen2.5-7B-Instruct (Yang et al. 2024) with a LoRA adapter (LoRA-A), is supervised on these targets. Post-training, LoRA-A is merged into the base model to yield a standalone checkpoint base A.
+
+Reasoning Trace Construction. Teacher responses follow a rationale-then-output format, providing explicit reasoning within <think>...</think> tags before outputting ex-ecutable JSON. This dense supervision teaches the student not just what memory operations to execute, but why . To re-duce inference overhead, adjacent teacher calls (e.g., merge decision and content generation) are collapsed into single student predictions. The target concatenates the reasoning and output ( zρ = rρ ⊕ yρ), optimized via standard causal language modeling: 
+
+LQAD = −E(x,r,y )∼D QAD 
+
+> |z|
+
+X
+
+> t=1
+
+log pθ (zt | z<t , x ), z = r⊕y, 
+
+(9) where θ denotes the LoRA-A parameters over a frozen base model. 
+
+Memory Operations as Structured Actions. The stu-dent’s structured JSON outputs serve as discrete operations executed by an external runtime, which handles database management. This abstracts the final memory store into 
+
+M = Mep ∪ M sem (episodic and semantic memories), en-suring the model learns explicit decision-making—when to create, merge, or abstract events—rather than generating a monolithic unstructured text summary. 
+
+Query-aware Retrieval and Summarization 
+
+QAR is the online component of MemoryCPT. Given a query 
+
+q and memory store M, it performs rough retrieval to bound the candidate set, then compresses these candidates into a query-aware summary mq , reducing search space and opti-mizing the content-cost trade-off. 
+
+RRF-based Retrieval. Retrieval uses dense (embedding) and sparse (BM25) signals over episodic and semantic mem-ories. To reconcile their different score scales, we fuse ranks via Reciprocal Rank Fusion (RRF) (Rackauckas 2024): 
+
+sRRF (m; q) = X
+
+> r∈{ dense ,sparse }
+
+1
+
+krrf + rank r (m | q) , (10) where rank r is the retriever rank and krrf is a smoothing constant. RRF is applied separately to episodic and semantic indices, concatenating top candidates to form MRRF  
+
+> q
+
+. This rough selection bounds the input, sparing the summarizer from attending to the entire store and significantly reducing the effective action space. 
+
+Policy, State, and Action. We formulate QAR training as a contextual bandit problem. The state pairs the query with RRF-selected candidates: 
+
+sq = ( q, MRRF  
+
+> q
+
+). (11) The action is the summary token sequence mq generated in one autoregressive rollout: 
+
+mq ∼ πϕ(· | sq ), (12) where πϕ uses base A equipped with a trainable LoRA-B adapter ( ϕ). The frozen QA model then consumes (q, m q ) to output ˆy. We optimize LoRA-B via Group Relative Policy Optimization (GRPO) (Shao et al. 2024): 
+
+max  
+
+> ϕ
+
+Eq Emq ∼πϕ(·| sq ) [R(q, m q )] − βD KL (πϕ∥πref ) , (13) where R(q, m q ) is the reward. GRPO normalizes rollout rewards against a sampled group mean to compute relative advantage. 
+
+Cost Modeling. The reward utilizes a training-time proxy for variable online marginal costs. Given summary mq and answer ˆy, the variable online cost is: 
+
+C(q, m q ) = |mq |  pout 7B + pin 14B 
+
+ + |ˆy|pout 14B , (14) where |mq | and |ˆy| are token counts, and p denotes respec-tive token prices. Fixed costs (e.g., database retrieval) are ex-cluded from this training proxy as they cancel during GRPO advantage estimation. We normalize the training proxy cost to [0 , 1] via clipping: 
+
+eC(q, m q ) = min 
+
+
+
+1, C(q, m q )
+
+Cref 
+
+
+
+. (15) This bounds the proxy and aligns its scale with F1. 
+
+Reward Design. The reward combines F1 quality (com-puted via the frozen QA model against gold answer y∗) and cost saving: 
+
+R(q, m q ) = α·F1(ˆ y, y ∗)+(1 −α)·
+
+
+
+1 − eC(q, m q )
+
+
+
+, (16) where α ∈ [0 , 1] balances quality and cost. We use token-level F1 rather than an LLM judge for training because it is continuous and locally computable, offering dense feedback. Instead of directly optimizing the potentially unstable ratio 
+
+QPC = F1 /Cost , we use this weighted-sum surrogate. Both terms are bounded in [0 , 1] , ensuring stable reward magni-tudes. 
+
+End-to-end Memory Pipeline 
+
+Two-stage Training Phase. MemoryCPT is trained with two LoRA adapters that serve different purposes. LoRA-A 
+
+is trained first with QAD. The base Qwen2.5-7B-Instruct model is frozen, and only LoRA-A is updated using the SFT objective in Equation 9. After training, LoRA-A is merged into the base model to produce base A, a standalone model that can build the memory store offline. 
+
+LoRA-B is then trained on top of base A for QAR. For each training query, we run RRF-based retrieval over the memory store to obtain MRRF  
+
+> q
+
+, use (q, MRRF  
+
+> q
+
+) as the pol-icy input, and optimize LoRA-B with GRPO using the re-ward in Equation 16. LoRA-B is newly initialized rather than continued from LoRA-A; base A remains frozen dur-ing GRPO. Thus, LoRA-A encodes query-agnostic memory-construction skills, while LoRA-B learns query-aware cost-performance optimization. The full training flow is as follows. First, the teacher pipeline produces role-level reasoning traces and structured JSON outputs. Second, these outputs are converted into single-turn SFT data and used to train LoRA-A. Third, LoRA-A is merged into the base model to obtain base A,which constructs the episodic and semantic memory store. Finally, RRF retrieves candidate memories for each train-ing query, and LoRA-B is trained with GRPO to generate cost-aware query summaries. 
+
+Inference Phase. At inference time, QAD has already been completed offline. The online pipeline therefore contains only three steps: 
+
+MRRF  
+
+> q
+
+= RRF( q, M),mq ∼ πϕ(· | q, MRRF  
+
+> q
+
+),
+
+ˆy = fans (q, m q ).
+
+(17) First, RRF retrieves a bounded set of episodic and seman-tic candidates from the pre-built memory store. Second, the LoRA-B summarizer generates a single query-aware sum-mary. Third, the frozen QA model reads the query and sum-mary to produce the final answer. Unlike training, inference does not sample multiple rollouts, does not use gold answers, and does not invoke the reward model. For evaluation, we compare ˆy with the gold answer y∗ to compute token-level F1, invoke an LLM judge for semantic correctness, and log token counts across all inference-time model calls to compute Cost and QPC. These evaluation components are not part of the deployed inference loop. 
+
+## Experiments 
+
+We evaluate MemoryCPT from a cost-performance perspec-tive. Our main question is whether an end-to-end trainable Dataset Train Val Test Avg. Context         
+
+> LoCoMo 8 convs –314 QAs 8.27K tokens LongMemEval-S 150 QAs 98 QAs 105 QAs 9.37K tokens
+
+Table 1: Dataset statistics. LoCoMo is evaluated on Cat1– Cat4 questions from conv-49/50. memory pipeline spanning offline construction and online query-conditioned summarization can improve answer qual-ity while reducing inference-time cost. 
+
+Experimental Settings 
+
+Datasets & Evaluation Metrics. We evaluate on two long-horizon dialogue memory benchmarks, LoCoMo (Maharana et al. 2024) and LongMemEval (Wu et al. 2025). Following our memory-focused setting, we evaluate on Cat1–Cat4 and exclude Cat5. We use conv-49 and conv-50 as the test split, resulting in 314 test questions, and use the remaining eight conversations for training the online memory policy. Since LongMemEval is released as a test-only benchmark, we con-struct a stratified split with 150/98/105 questions for train/-validation/test, preserving the distribution of its six memory categories. We then report four metrics: (i) F1 (Maharana et al. 2024);(ii) LLM-as-Judge(Judge) ; (iii) Cost measures the average inference-time monetary cost per question. It cov-ers all inference-time LLM calls in memory construction, retrieval, summary, and final QA, distinguishes input and output tokens, and uses a unified price table for all methods. For readability, we report Cost as USD per question multi-plied by 10 4. Finally, we define Quality per Cost (QPC) 
+
+as 
+
+QPC = F1 Cost , (18) where Cost is the reported value in USD per question mul-tiplied by 10 4. QPC therefore measures the answer quality obtained per unit inference cost; higher values indicate a better cost-performance trade-off. 
+
+Baselines. We compare MemoryCPT with five baselines. 
+
+No-Memory uses Qwen3-14B to directly read the raw multi-session conversation truncated to the context limit, with-out memory extraction, retrieval, or summarization. Light-Mem (Fang et al. 2026) is a lightweight training-free memory pipeline that stores and retrieves compact turn-level memo-ries. MemoryOS (Kang et al. 2025) organizes long-term conversation histories into hierarchical memory blocks with structured read/write operations. BudgetMem (Zhang et al. 2026) is a budget-aware training-based memory pipeline that dynamically allocates LLM computation for memory pro-cessing and QA. Memory-R1 (Yan et al. 2025) is a reinforce-ment learning framework that equips LLMs with specialized agents for adaptive memory management and reasoning. For the baselines we implement, we use the same final QA model, Qwen3-14B, with temperature 0 and the same prompt template. Specifically for BudgetMem, due to its inherent architectural design that prevents substituting its base model, we directly utilize the Qwen-2.5-72B API to execute its intermediate memory management operations. We also use the same Qwen2.5-72B-Instruct judge, the same test questions, and the same tokenizer and price table for cost accounting. This protocol allows us to compare memory systems by the same downstream objective: answer quality per unit inference cost. 
+
+Implementation Details. All experiments run on a single node with 4 NVIDIA H20 GPUs. We use LLaMA-Factory for LoRA SFT and vLLM for high-throughput inference. MemoryCPT uses Qwen2.5-7B-Instruct and Llama-3.2-3B for memory operations and Qwen3-14B for final QA. The LLM judge is Qwen2.5-72B-Instruct. MemoryCPT is trained in two stages. In Stage 1, Query-agnostic Distillation (QAD) distills memory extraction traces into a LoRA adapter on top of Qwen2.5-7B-Instruct. The training data contains 1185/257 train/validation exam-ples for LoCoMo and 4766/239 train/validation examples for LongMemEval. We train LoRA-A with rank 16, alpha 32, dropout 0.05, learning rate 1 × 10 −4, cutoff length 8192, and select the checkpoint with the best validation loss. After training, LoRA-A is merged into the base model to obtain 
+
+base_A . In Stage 2, Query-aware Retrieval and Summa-rization (QAR) first performs an RRF-based rough selec-tion, and then applies Fine Summary (FS) , a GRPO-trained LoRA-B on top of base_A , to produce query-conditional summaries. We set the main reward coefficient to α = 0 .8
+
+and defer the full alpha sweep to a later experiment. At inference time, a query first retrieves memory chunks via reciprocal rank fusion over dense Qwen3-Embedding retrieval and sparse BM25 retrieval. We retrieve top-20 episodic memories and top-50 semantic memories before fusion. The retrieved memories are then compressed by 
+
+base_A +LoRA-B into a short query-aware summary, which is finally read by Qwen3-14B for answer generation. 
+
+Model Comparison 
+
+Table 2 shows that MemoryCPT achieves the strongest cost-performance trade-off. Using Qwen-2.5-7B as the base model, compared with BudgetMem„ MemoryCPT improves LoCoMo F1 from 0.373 to 0.479 and Judge from 0.640 to 0.755, while reducing Cost from 24.11 to 3.46. This cor-responds to around 28% relative F1 improvement, 7 times lower inference cost, and over 9 times higher QPC. These results show that end-to-end memory training can jointly improve answer quality and inference efficiency, rather than trading one for the other. The comparison also reveals the cost-quality bottlenecks of existing memory pipelines. On LoCoMo, LightMem, MemoryOS, and BudgetMem improve F1 over the No-Memory baseline from 0.319 to the range of 0.312 to 0.433, but their inference cost drastically increases from 11.11 to 25.23 due to expensive intermediate context processing. Con-versely, while the RL-based Memory-R1 successfully re-stricts cost, it yields lower answer quality. MemoryCPT con-sistently avoids this compromise across both base model ar-chitectures, delivering superior F1 scores while maintaining minimal inference costs. QPC makes this efficiency gap explicit. On LoCoMo LoCoMo LongMemEval Avg. Model F1 ↑ Judge ↑ Cost ↓ QPC ↑ F1 ↑ Judge ↑ Cost ↓ QPC ↑ F1 ↑ Judge ↑ Cost ↓ QPC ↑                                                                                                                          
+
+> Reference open-source algorithms (not bolded)
+> Qwen-3-14B (no memory) 0.319 0.557 11.11 0.029 0.118 0.162 11.11 0.011 0.219 0.360 11.11 0.020 Budgetmem (Zhang et al. 2026) 0.373 0.640 24.11 0.015 0.358 0.467 18.1 0.020 0.366 0.554 21.10 0.018 Qwen-2.5-7B (Base) (Qwen et al. 2025) + LightMem (Fang et al. 2026) 0.433 0.755 19.80 0.022 0.334 0.457 63.02 0.005 0.384 0.606 41.41 0.009 + MemoryOS (Kang et al. 2025) 0.354 0.573 25.23 0.014 0.386 0.486 396.31 0.001 0.370 0.530 210.77 0.002 + Memory-R1 (Yan et al. 2025) 0.372 0.592 3.78 0.098 0.231 0.267 5.96 0.039 0.302 0.430 4.87 0.062 + MemoryCPT (Ours) ⋆0.479 0.755 4.31 0.111 0.485 0.533 5.72 0.085 0.482 0.644 5.02 0.096
+> Llama-3.2-3B (Base) (Meta 2024) + LightMem (Fang et al. 2026) 0.372 0.640 11.73 0.032 0.293 0.391 43.06 0.007 0.333 0.516 27.40 0.012 + MemoryOS (Kang et al. 2025) 0.312 0.538 10.63 0.029 0.276 0.290 159.07 0.002 0.294 0.414 84.85 0.003 + Memory-R1 (Yan et al. 2025) 0.326 0.576 3.70 0.082 0.131 0.165 5.23 0.025 0.229 0.371 4.47 0.051 + MemoryCPT (Ours) ⋆0.474 0.742 4.23 0.112 0.181 0.219 4.76 0.038 0.328 0.481 4.50 0.073
+
+Table 2: Main results on LoCoMo and LongMemEval. Methods are grouped by the base model used for memory processing (Qwen-2.5-7B or Llama-3.2-3B). F1 and Judge measure answer quality; Cost denotes the average inference cost per query, reported as USD ×10 4; QPC = F1 / Cost measures quality per unit cost. Best results are in bold. with the Qwen-2.5-7B base model, MemoryCPT reaches an QPC of 0.138, whereas No-Memory, LightMem, Memo-ryOS, and BudgetMem achieve only 0.029, 0.022, 0.014, and 0.015, respectively. While the efficiency-optimized Memory-R1 reaches an QPC of 0.105, it still trails behind our method. This robust advantage persists when switching to the Llama-3.2-3B base model, supporting our central claim that long-horizon memory systems should be evaluated by the intelli-gence yielded per unit cost, not just raw accuracy. 
+
+Ablation Study 
+
+Table 3 verifies the contribution of each component on two datasets. 
+
+Effects of Query-agnostic Distillation (QAD). Removing QAD means replacing our offline-distilled memory extrac-tor with a vanilla 7B model. This reduces Cost from 3.46 to 2.21, but also drops F1 from 0.479 to 0.370 and Judge from 0.755 to 0.583. Consequently, QPC decreases from 0.138 to 0.131. This indicates that QAD acts as a quality amplifier: it introduces a small amount of additional memory-processing cost, but this cost is outweighed by substantially better down-stream memory quality. 
+
+Effects of Query-aware Retrieval and Summarization (w/o QAR). Removing QAR disables the query-aware stage after memory construction. In this case, the QA model reads a much larger retrieved memory context without query-aware compression. The result is a large increase in Cost, from 3.46 to 11.10, while F1 and Judge also fall to 0.426 and 0.745. QPC therefore collapses from 0.138 to 0.038. This confirms that QAR is essential for cost control: the rough top-k selection and subsequent query-aware compres-sion prevent memories from being passed to the QA model. 
+
+Effects of Fine Summary (w/o FS). Finally, removing FS keeps the rough RRF-based retrieval stage but removes the GRPO-trained fine summarizer. This variant maintains a Judge score close to the full model, and even slightly higher in this run, but its Cost rises from 3.46 to 8.35 and its QPC drops from 0.138 to 0.053. We therefore do not claim that Mem-oryCPT is best on every individual quality metric. Instead, the key observation is that FS preserves semantic correctness while greatly improving cost efficiency. Across all ablations, only the full MemoryCPT obtains both high answer quality and the best quality-per-cost trade-off. 
+
+Cost-Performance Trade-off Analytics 
+
+We finally analyze how the reward coefficient α in Equa-tion 16 governs the cost-performance trade-off, and justify our default choice α = 0 .8. Recall that QPC is defined as 
+
+F1 /Cost , where Cost aggregates all inference-time model calls. To further isolate the effect of summary length on the dominant downstream expense, we additionally report QPC (QA) , which keeps the same F1 but restricts Cost to the fi-nal QA call only, i.e., the token cost of feeding (q, m q ) into the frozen QA model and generating ˆy. A higher QPC (QA) indicates that the summarizer delivers more answer quality per token actually consumed downstream. We vary α ∈ { 0.2, 0.4, 0.6, 0.8, 1.0} and retrain LoRA-B on both datasets. Fig. 2 reports two views: the bar charts show QPC (QA) as a function of α, and the Pareto plots show the resulting F1 against total cost per query. As shown in Fig. 2 , QPC (QA) is maximized at α = 0 .8 on both LoCoMo (59.5) and LongMemEval (56.5), forming a clear peak over neighboring settings. We attribute this to two opposing effects: a) When α → 1.0, the reward almost ig-nores cost, so the policy tends to produce longer summaries; F1 improves only marginally while cost rises, dragging QPC (QA) down. b) When α is small , the cost term dominates and the policy over-compresses, discarding answer-critical evidence and sharply reducing F1. The Pareto plots confirm Model LoCoMo LongMemEval Avg. 
+
+F1 ↑ Judge ↑ Cost ↓ QPC ↑ F1 ↑ Judge ↑ Cost ↓ QPC ↑ F1 ↑ Judge ↑ Cost ↓ QPC ↑
+
+Qwen3-14B (Base) 0.319 0.557 11.11 0.029 0.118 0.162 11.11 0.011 0.219 0.360 11.11 0.020 w/o QAD 0.370 0.583 2.21 0.131 0.349 0.457 9.22 0.038 0.360 0.520 5.72 0.063 w/o QAR 0.426 0.745 11.10 0.038 0.192 0.248 11.10 0.017 0.309 0.497 11.10 0.028 w/o FS 0.446 0.759 8.35 0.053 0.403 0.524 11.71 0.034 0.425 0.642 10.03 0.042 MemoryCPT (Ours) ⋆ 0.479 0.755 4.31 0.111 0.485 0.533 5.72 0.085 0.482 0.644 5.02 0.096 
+
+Table 3: Ablation study on LoCoMo and LongMemEval. QAD denotes Query-agnostic Distillation. QAR denotes Query-aware Retrieval and Summarization, consisting of RRF-based rough selection and FS. FS denotes Fine Summary, implemented by the GRPO-trained LoRA-B after RRF retrieval. Best results are in bold. 
+
+Figure 2: Cost-Performance Trade-off Analytics. this pattern: α = 1 .0 sits at the high-cost end with little F1 gain, whereas aggressive compression collapses F1 at com-parable cost. In contrast, α = 0 .8 lies on the upper-left of the frontier, achieving near-best F1 at low cost, which is why we adopt it as the default trade-off in all main experiments. 
+
+Retrieval Depth Analytics 
+
+We study how the retrieval depth k in RRF-based rough selection affects downstream quality, and justify our default top-20 episodic / top-50 semantic candidates. A small k risks dropping answer-critical evidence before summarization, whereas a large k enlarges the candidate set, inflating input to-kens and diluting the summarizer with irrelevant memories. We therefore sweep k ∈ { 2/5, 4/10 , 8/20 , 20 /50 , 32 /80 }
+
+(episodic/semantic) and report both F1 and LLM-Judge qual-ity on the two datasets. As shown in Fig. 3 , both datasets exhibit the same pattern. Quality rises quickly at small k and shows a knee around 
+
+8/20 , which already recovers about 96% of the peak F1 at only 42 –44% of the candidate cost. Quality then peaks at 
+
+20 /50 (F1 0.478 /Judge 0.755 on LoCoMo, F1 0.485 /Judge 
+
+0.533 on LongMemEval). Beyond this point, enlarging k to 
+
+32 /80 slightly degrades both metrics on both datasets, since the additional low-ranked memories introduce noise rather 
+
+Figure 3: Retrieval Depth Analytics. than new evidence. We therefore adopt 20 /50 as the default depth: it attains the best quality just before the declining regime, while keeping the candidate set compact enough for cost-efficient summarization. 
+
+## Related Work 
+
+Existing work typically improves upstream context manage-ment from three perspectives: (i) memory compression (Xu et al. 2026; Liu et al. 2026; Hu et al. 2026) by condens-ing raw histories, memory organization (Kang et al. 2025; Wu et al. 2026a; Kim et al. 2026b) by maintaining struc-tured states (e.g., episodic records) via explicit read/write operations, and (ii) memory retrieval (Huang et al. 2026; Wu et al. 2026b; Yu et al. 2026; Ma et al. 2026) by fusing sparse signals to enhance context relevance. However, these training-free systems fail to internalize intermediate memory operations into model parameters. Distilling these test-time procedures into an end-to-end trainable framework is there-fore a natural direction, yet it remains non-trivial due to two main challenges. First, memory construction inherently re-quires complex history-dependent operations (e.g., segmen-tation and merging). Second, memory extraction must strictly balance retrieval recall against the token consumption of downstream models . To address these issues, MemoryCPT introduces a two-stage trainable paradigm. We first distill modular memory-construction skills via structured reason-ing traces, then employ a cost-aware optimization policy to generate fine-grained, query-conditioned summaries. 
+
+## Conclusion and Future Work 
+
+In this paper, we introduce MemoryCPT , an end-to-end trainable agent memory pipeline for optimizing the cost-performance trade-off in long-horizon multi-turn di-alogue. MemoryCPT combines query-agnostic distillation with query-aware retrieval and summarization to construct reusable episodic and semantic memories, retrieve query-relevant evidence, and compress it into cost-efficient contexts for downstream QA. We further introduce Quality per Cost (QPC) to evaluate answer quality per unit inference cost. Ex-periments on LoCoMo and LongMemEval show that Mem-oryCPT achieves a favorable quality-cost trade-off under our unified evaluation protocol, while component ablations and sensitivity analyses characterize the effects of its main de-sign choices. In future work, we aim to extend MemoryCPT to broader memory sources and explore continual memory updates under dynamic cost budgets. 
+
+## References 
+
+Du, Y.; Tian, M.; Ronanki, S.; Rongali, S.; Bodapati, S.; Gal-styan, A.; Wells, A.; Schwartz, R.; Huerta, E. A.; and Peng, H. 2025. Context Length Alone Hurts LLM Performance Despite Perfect Retrieval. arXiv:2510.05381. Fang, J.; Deng, X.; Xu, H.; Jiang, Z.; Tang, Y.; Xu, Z.; Deng, S.; Yao, Y.; Wang, M.; Qiao, S.; Chen, H.; and Zhang, N. 2026. LightMem: Lightweight and Efficient Memory-Augmented Generation. arXiv:2510.18866. Griot, M.; Scotti, P. S.; and Abraham, T. M. 2026. Compress-Distill: Reasoning Trace Compression for Efficient Knowl-edge Distillation. arXiv:2606.05988. Hu, Z.; Zhu, Q.; Zhao, R.; Liang, D.; Yan, H.; He, Y.; and Gui, L. 2026. Beyond RAG for Agent Memory: Retrieval by Decoupling and Aggregation. arXiv:2602.02007. Huang, Z.; Liu, W.; Tian, Z.; Chen, W.; Chen, J.; Wu, Y.; Zhang, F.; Guo, Q.; and Zhou, X. 2026. M 3 Exam: Bench-marking Multimodal Memory for Realistic User-Agent In-teractions. arXiv preprint arXiv:2606.07402 .Ji, S.; Li, Y.; and Hooi, B. 2026. Memory is Recon-structed, Not Retrieved: Graph Memory for LLM Agents. arXiv:2606.06036. Jiang, D.; Li, Y.; Wei, S.; Yang, J.; Kishore, A.; Zhao, A.; Kang, D.; Hu, X.; Chen, F.; Li, Q.; and Li, B. 2026. Anatomy of Agentic Memory: Taxonomy and Empirical Analysis of Evaluation and System Limitations. arXiv:2602.19320. Kang, J.; Ji, M.; Zhao, Z.; and Bai, T. 2025. Memory OS of AI Agent. arXiv:2506.06326. Kim, M.; Baek, J.; Jeong, S.; and Hwang, S. J. 2026a. Mem-Refine: LLM-Guided Compression for Long-Term Agent Memory. arXiv:2606.13177. Kim, M.; Baek, J.; Jeong, S.; and Hwang, S. J. 2026b. Mem-Refine: LLM-Guided Compression for Long-Term Agent Memory. arXiv:2606.13177. Liu, J.; Su, Y.; Xia, P.; Han, S.; Zheng, Z.; Xie, C.; Ding, M.; and Yao, H. 2026. SimpleMem: Efficient Lifelong Memory for LLM Agents. arXiv preprint arXiv:2601.02553 .Liu, N. F.; Lin, K.; Hewitt, J.; Paranjape, A.; Bevilacqua, M.; Petroni, F.; and Liang, P. 2023. Lost in the Middle: How Language Models Use Long Contexts. arXiv:2307.03172. Ma, W.; Nan, J.; Wu, W.; and Chen, Y. 2026. What Deserves Memory: Adaptive Memory Distillation for LLM Agents. arXiv:2508.03341. Maharana, A.; Lee, D.-H.; Tulyakov, S.; Bansal, M.; Barbieri, F.; and Fang, Y. 2024. Evaluating Very Long-Term Conver-sational Memory of LLM Agents. arXiv:2402.17753. Meta. 2024. The Llama 3 Herd of Models. https://ai.meta. com/research/publications/the-llama-3-herd-of-models/. Milosevic, N. 2026. Episodic-Semantic Memory Architec-ture for Long-Horizon Scientific Agents. arXiv:2605.17625. Nie, C.; Fu, C.; Feng, J.; and Shan, C. 2026. EvoEmbedding: Evolvable Representations for Long-Context Retrieval and Agentic Memory. arXiv:2606.21649. Qwen; :; Yang, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Li, C.; Liu, D.; Huang, F.; Wei, H.; Lin, H.; Yang, J.; Tu, J.; Zhang, J.; Yang, J.; Yang, J.; Zhou, J.; Lin, J.; Dang, K.; Lu, K.; Bao, K.; Yang, K.; Yu, L.; Li, M.; Xue, M.; Zhang, P.; Zhu, Q.; Men, R.; Lin, R.; Li, T.; Tang, T.; Xia, T.; Ren, X.; Ren, X.; Fan, Y.; Su, Y.; Zhang, Y.; Wan, Y.; Liu, Y.; Cui, Z.; Zhang, Z.; and Qiu, Z. 2025. Qwen2.5 Technical Report. arXiv:2412.15115. Rackauckas, Z. 2024. Rag-Fusion: A New Take on Retrieval Augmented Generation. International Journal on Natural Language Computing , 13(1): 37–47. Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y. K.; Wu, Y.; and Guo, D. 2024. DeepSeekMath: Pushing the Limits of Mathematical Rea-soning in Open Language Models. arXiv:2402.03300. Shinn, N.; Cassano, F.; Berman, E.; Gopinath, A.; Narasimhan, K.; and Yao, S. 2023. Reflexion: Lan-guage Agents with Verbal Reinforcement Learning. arXiv:2303.11366. Stiennon, N.; Ouyang, L.; Wu, J.; Ziegler, D. M.; Lowe, R.; Voss, C.; Radford, A.; Amodei, D.; and Christiano, P. 2022. Learning to summarize from human feedback. arXiv:2009.01325. Wu, D.; Wang, H.; Yu, W.; Zhang, Y.; Chang, K.-W.; and Yu, D. 2025. LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory. arXiv:2410.10813. Wu, Y.; Chen, W.; Huang, Z.; Chen, J.; Liu, Q.; Wang, K.; Zhou, X.; and Liang, Y. 2026a. Back to basics: Let conver-sational agents remember with just retrieval and generation. 
+
+arXiv preprint arXiv:2604.11628 .Wu, Y.; Deng, Z.; Chen, W.; Li, J.; Jiang, Y.; Chen, J.; Huang, Z.; Liu, Q.; Tang, J.; Wei, J.; et al. 2026b. LifeSide: Bench-marking Agents as Lifelong Digital Companions. arXiv preprint arXiv:2606.04660 .Xu, B.; Dai, X.; and Zhang, K. 2026. Contextual Agentic Memory is a Memo, Not True Memory. arXiv:2604.27707. Xu, W.; Liang, Z.; Mei, K.; Gao, H.; Tan, J.; and Zhang, Y. 2026. A-mem: Agentic memory for llm agents. Advances in Neural Information Processing Systems , 38: 17577–17604. Yan, S.; Yang, X.; Huang, Z.; Nie, E.; Ding, Z.; Li, Z.; Ma, X.; Schütze, H.; Tresp, V.; and Ma, Y. 2025. Memory-R1: Enhancing Large Language Model Agents to Manage and Utilize Memories via Reinforcement Learning. arXiv preprint arXiv:2508.19828 .Yang, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Li, C.; Liu, D.; Huang, F.; Wei, H.; et al. 2024. Qwen2.5 Technical Report. arXiv preprint arXiv:2412.15115 .Yu, Y.; Yao, L.; Xie, Y.; Tan, Q.; Feng, J.; Li, Y.; and Wu, L. 2026. Agentic Memory: Learning Unified Long-Term and Short-Term Memory Management for Large Language Model Agents. arXiv:2601.01885. Zhang, H.; Yue, H.; Feng, T.; Long, Q.; Bao, J.; Jin, B.; Zhang, W.; Li, X.; You, J.; Qin, C.; and Wang, W. 2026. Learning Query-Aware Budget-Tier Routing for Runtime Agent Memory. arXiv:2602.06025. Zhong, W.; Guo, L.; Gao, Q.; Ye, H.; and Wang, Y. 2023. MemoryBank: Enhancing Large Language Models with Long-Term Memory. arXiv:2305.10250. 
+
+## Appendix Implementation Details and Hyperparameters 
+
+This section provides complete implementation details, hy-perparameter configurations, prompt definitions, and evalu-ation environments to ensure full reproducibility. 
+
+Data Distillation and Teacher Setup 
+
+Teacher LLM. For Query-agnostic Distillation (QAD) and cold-start summary generation, we em-ploy deepseek-v3 as the teacher model. The teacher generates structured reasoning traces and intermediate memory representations for the modular pipeline, as well as target summaries for cold-start initialization. 
+
+Role Configurations. The four roles in the distillation pipeline (Ma et al. 2026) use the following specific sampling and schema configurations: 
+
+• BatchSegmenter : Evaluates multi-turn dialogues to identify session boundaries. Configured with temperature = 0 .2, max_tokens = 4096 , and outputs structured JSON containing session indices and topics. 
+
+• EpisodeGenerator : Summarizes conversation segments into episodic entries. Uses default temperature = 0 .7,max_tokens = 2000 , and outputs JSON fields for 
+
+title , third-person narrative content , and absolute ISO timestamp .
+
+• EpisodeMerger : Executes a two-stage evaluation for can-didate episodes with cosine similarity above 0.85 among the top-5 neighbors. Uses temperature = 0 .7.
+
+• SemanticExtractor : Operates via direct extraction and prediction-correction patterns to isolate persistent factual knowledge statements, configured with temperature =0.7.During QAD execution with the local student check-point ( base A), decoding uses deterministic greedy sam-pling (do_sample = False, temperature = 0.0) with max_new_tokens = 2048 .                              
+
+> Hyperparameter Value
+> Actor Base Model Qwen2.5-7B-Instruct +LoRA-A (base A)Actor LoRA Learning Rate (lr) 3×10 −5
+> GRPO Group Size ( n)4
+> Total Training Epochs 2(or 30 steps on LongMemEval) Global Train Batch Size 48
+> PPO Mini-Batch Size 12
+> Micro-Batch Size per GPU 4
+> KL Loss Coefficient ( β)0.001 (low_var_kl )Reference Policy ( πref )Cold-started base A(FSDP of-floaded) Rollout Engine vLLM (TP = 1, T= 1 .0)Max Response Length ( |mq|)512 tokens Max Prompt Length 12 ,288 tokens ( 14 ,336 for LME)
+
+Table 4: Hyperparameter settings for GRPO training in QAR. 
+
+GRPO Training Hyperparameters 
+
+The online Query-aware Retrieval and Summarization (QAR) stage trains the LoRA-B adapter ( ϕ) attached to 
+
+base A using Group Relative Policy Optimization (GRPO) via the verl framework (Shao et al. 2024). Key hyperparam-eter choices are listed in Table 4 .
+
+Retrieval, Cost Modeling, and Reward Constants 
+
+Retrieval Parameters. Reciprocal Rank Fusion (RRF) uses a rank-smoothing constant krrf = 60 . Sparse retrieval utilizes Okapi BM25 with standard parameters k1 = 1 .5
+
+and b = 0.75 . Candidates are selected from top-20 or top-50 retrieved indices using 1024-dimensional Sentence-Transformer embeddings. 
+
+Cost Normalization Reference ( Cref ). The cost normal-ization factor Cref maps training rollout costs into [0 , 1] . De-rived from COST SREF = 60 summary tokens, COST AREF =8 answer tokens, and the token unit prices listed in Table 5 :
+
+Cref = 60 · (P out 7B + P in 14B ) + 8 · P out 14B 
+
+10 6
+
+= 60 · (0 .10 + 0 .10) + 8 · 0.24 10 6 = 1 .392 × 10 −5 USD .
+
+(19) The trade-off hyperparameter in the reward function is set to 
+
+α = 0 .8.
+
+Evaluation Prompts and Pricing 
+
+Final QA Model Setup. Answers are generated using local Qwen3-14B via vLLM with thinking mode dis-abled (enable_thinking=False ), greedy decoding (temperature = 0 .0), and a token cap of max_tokens = 32 .The QA prompt template is:                        
+
+> You are aQA assistant. Use ONLY the context below to answer the question. If the context lacks the info, answer with your best guess from it.
+
+Model Role in Pipeline In ($) Out ($) 
+
+Qwen2.5-7B-Instruct Summarizer (fQAR /LoRA-B) 0.04 0.10 Qwen3-14B Frozen Answer Model (fans )0.10 0.24 Qwen2.5-72B-Instruct Judge / Baseline Back-bone 0.36 0.40 
+
+Table 5: API pricing table used for cost estimation (USD per 1M tokens). 
+
+Answer in <=6 words, no explanation. Context: {ctx} Question: {question} Answer: 
+
+LLM-as-a-Judge Prompt. Evaluation accuracy is deter-mined using Qwen2.5-72B-Instruct with structured JSON output. The exact prompt given to the judge model is shown below: 
+
+Your task is to label an answer to aquestion as ’CORRECT’ or ’WRONG’. You will be given a question, a ’gold’ (ground truth) answer, and a generated answer. The point of the question is to ask about something one user should know about the other user based on their prior conversations. The gold answer is usually concise. The generated answer might be longer--be GENEROUS: as long as it touches on the same topic/fact as the gold answer, mark it CORRECT. For time questions, if both refer to the same date/period (even with different formats), mark CORRECT. Question: {question} Gold answer: {gold} Generated answer: {generated} Return ONLY a JSON object: {"label": "CORRECT"} or {"label": "WRONG"}. Do NOT include both. Do NOT add commentary outside the JSON. 
+
+API Pricing Specification. All financial cost evaluations follow standard public pricing API rates, as summarized in 
+
+Table 5 .
+
+Reproducibility and Software Environment 
+
+All data sampling, dataset partitioning, and evaluation se-lection scripts use a fixed random seed of 42 . The software versions across the experimental infrastructure are detailed in Table 6 .
+
+Component / Framework Version / Commit 
+
+PyTorch 2.9.1 
+
+HuggingFace Transformers 4.57.6 
+
+vLLM Inference Engine 0.15.1 (Training) / 0.8.5 
+
+(SFT Merge) verl (RL Framework) v0.8.0 
+
+PEFT 0.18.1 
+
+Sentence-Transformers 5.2.2 
+
+Table 6: Software and framework environment specifica-tions. 
+
+## Detailed Token Usage and Cost Amortization Analysis 
+
+In practical deployment, agent memory pipelines involve a fundamental distinction between offline memory construc-tion and online query answering. This section provides an explicit token and financial cost breakdown, and formalizes how offline construction costs are amortized over long-term multi-query interactions. 
+
+Amortized Cost Model 
+
+Let CQAD denote the total offline cost of distilling a raw interaction history into a structured memory store M. Given a memory store that serves n independent online queries, the effective per-query cost is 
+
+Camortized (n) = CQAD 
+
+n + Conline , (20) where Conline = Csummarize + CQA is the per-query online inference cost incurred by the query-aware summarizer fQAR 
+
+and the downstream answer model fans . The cost reported in the main text corresponds to Camortized (n) evaluated over the entire question set of a conversation store ( n=314 on LoCoMo). 
+
+Offline Construction vs. Online Query Breakdown 
+
+Table 7 details the offline construction and online per-query metrics on LoCoMo. Token counts use the exact tokenizer of base A; financial costs use standard OpenRouter public pricing. As shown in Table 7 , memory store construction requires multiple LLM calls across the four roles (approximately 320 
+
+calls per store). Because this process is performed strictly of-fline once per corpus, its cost is amortized across subsequent queries. 
+
+Online Query Token Specifications 
+
+Table 8 further decomposes Conline into retrieval summa-rization ( fQAR ) and final answer generation ( fans ). A key architectural advantage of MemoryCPT is visible in Table 8 : since the GRPO-trained summarizer produces an ultra-compact summary ( < 9 tokens on average), the input context qa in fed to the downstream 14B QA model shrinks to only ∼ 67 tokens (including prompt template). Conse-quently, the QA cost CQA accounts for less than 2.5% of the Summarizer Dataset CQAD ($) Conline ($/QA) Total ($/QA) LLM Calls Prompt Tokens Tokens (Off/On)                          
+
+> Off On Off On Qwen2.5-7B LoCoMo 0.02542 3.462 ×10 −44.31 ×10 −4326 2454 ,003 8,501 72 ,622 /13 .4
+> Llama-3.2-3B LoCoMo 0.02784 3.459 ×10 −44.23 ×10 −4321 2461 ,527 8,502 93 ,750 /12 .5
+
+Table 7: Overall token and cost breakdown comparing offline construction ( CQAD ) and online single-query inference ( Conline )on LoCoMo ( n=314 ). Total per-QA costs match the main text. “Off” = offline (per store).                         
+
+> Base Model summ in summ out qa in qa out Cretrieval ($/QA) CQA ($/QA) Conline ($/QA) Qwen2.5-7B 8,434 7.867 5.63.398 ×10 −48.04 ×10 −63.462 ×10 −4
+> Llama-3.2-3B 8,434 8.668 3.93.383 ×10 −47.70 ×10 −63.459 ×10 −4
+
+Table 8: Detailed breakdown of online inference tokens and monetary costs per query ( α=0 .8). total online expense, which is overwhelmingly dominated by summarizer reading summ in .
+
+Offline Distillation Usage Details 
+
+Table 9 reports the raw token metrics of building one com-plete LoCoMo memory store during the QAD stage. 
+
+Cost Amortization Across Query Volumes 
+
+To visualize how the offline overhead decays with reuse, 
+
+Table 10 lists Camortized (n) at multiple query volumes. The amortization trajectory reveals three regimes: 1. Single-Query Baseline ( n=1 ): if a constructed memory store is queried only once, the offline construction cost dominates, reaching $0 .026 /QA. 2. Rapid Amortization ( n≥50 ): as n grows to 50 –100 
+
+queries, Camortized drops by over 97% , approaching 
+
+$6 ×10 −4/QA. 3. Asymptotic Steady State ( n→∞ ): for long-running user sessions, Camortized (n) converges to the online lower bound Conline ≈ $3 .46 ×10 −4/QA. This confirms that separating offline construction from online retrieval efficiently amortizes structural indexing costs over continuous agent interactions. 
+
+## Fine-Grained Per-Category Experimental Results 
+
+To provide a granular view of memory performance across diverse interaction scenarios, this section presents sub-category breakdowns on both the LoCoMo ( n=314 ) and LongMemEval ( n=105 ) benchmarks. 
+
+Evaluation Protocol and Metrics 
+
+All memory systems generate their respective memory con-texts or query-conditional summaries, which are then fed into a unified downstream answer model, Qwen3-14B 
+
+(temperature =0 .0, thinking mode disabled). Evaluation met-rics include: 
+
+• Token-level F1 (F1, %) : standard word-level overlap with the ground-truth answer. 
+
+• LLM-as-a-Judge Accuracy (J, %) : binary correctness judged by Qwen2.5-72B-Instruct .
+
+Sub-Category Performance on LoCoMo 
+
+Table 11 breaks down performance on LoCoMo across four question categories: Temporal Reasoning ( n=65 ), Open Do-main ( n=20 ), Multi-Hop ( n=69 ), and Single-Hop ( n=160 ). As shown in Table 11 , MemoryCPT ( α=0 .8) attains the strongest Open-Domain performance ( 48 .8% F1, ver-sus 33 .7% for the second-best Memory-R1) and the highest Multi-Hop Judge accuracy ( 84 .1% ). It also reaches the high-est overall F1 ( 47 .9% ) among all compared systems, indicat-ing that our query-aware summary preserves answer-critical evidence far more efficiently than existing memory pipelines. 
+
+Sub-Category Performance on LongMemEval 
+
+Table 12 evaluates performance on LongMemEval across six sub-categories: Single-Session User (SS-User, n=14 ), Single-Session Assistant (SS-Asst, n=12 ), Single-Session Preference (SS-Pref, n=6 ), Multi-Session Reasoning (Multi-Sess, n=28 ), Knowledge Updates (Know-Upd, n=17 ), and Temporal Reasoning (Temporal, n=28 ). As shown in Table 12 , MemoryCPT delivers consistently strong results on complex multi-session scenarios: 
+
+• Multi-Session Reasoning : MemoryCPT reaches 41 .8% 
+
+F1 and 57 .1% Judge, exceeding the strongest prior method LightMem ( 34 .2% F1) by a large margin. 
+
+• Knowledge Updates : MemoryCPT achieves 51 .4% F1, showing that the QID semantic-abstraction stage effec-tively tracks dynamic user facts across sessions. 
+
+• Temporal Reasoning : MemoryCPT leads with 36 .3% F1 and 32 .1% Judge, well above prior compressed methods (18 .2% –27 .4% F1). Base Model Total Calls Prompt Tokens Tokens Prompt/QA Comp./QA CQAD (Store, $) 
+
+Qwen2.5-7B 326 454 ,003 72 ,622 1,445 .9 231 .3 0.02542 
+
+Llama-3.2-3B 321 461 ,527 93 ,750 1,469 .8 298 .6 0.02784 
+
+Table 9: Measured offline construction metrics ( CQAD ) per complete memory store. 
+
+Base Model n=1 n=5 n=10 n=50 n=100 n=314 (Main) n→∞ (Online) 
+
+Qwen2.5-7B 2.577 ×10 −2 5.430 ×10 −3 2.888 ×10 −3 8.546 ×10 −4 6.004 ×10 −4 4.31 ×10 −4 3.462 ×10 −4
+
+Llama-3.2-3B 2.819 ×10 −2 5.914 ×10 −3 3.130 ×10 −3 9.027 ×10 −4 6.243 ×10 −4 4.23 ×10 −4 3.459 ×10 −4
+
+Table 10: Amortized per-query cost Camortized (n) (USD/QA) across varying query volumes n. n=314 corresponds to the LoCoMo benchmark reported in the main text; n→∞ is the online lower bound Conline .
+
+Method Temporal ( n=65 ) Open Domain ( n=20 ) Multi-Hop ( n=69 ) Single-Hop ( n=160 ) Overall ( n=314 )
+
+F1 (%) Judge (%) F1 (%) Judge (%) F1 (%) Judge (%) F1 (%) Judge (%) F1 (%) Judge (%) BudgetMem 37.0 43.1 26.0 75.0 25.5 63.8 43.9 71.3 37.3 64.0 LightMem 33.6 52.3 28.4 70.0 36.7 82.6 51.9 82.5 43.3 75.5 
+
+MemoryOS 30.1 21.5 22.4 60.0 29.7 69.6 41.7 65.6 35.4 57.0 Memory-R1 41.1 43.1 33.7 65.0 31.4 69.6 38.5 60.6 37.2 59.2 
+
+Ours ( α=0 .8) 48.9 52.3 48.8 70.0 35.2 84.1 52.8 81.9 47.9 75.5 
+
+Table 11: Per-category comparison on the LoCoMo benchmark (base model = Qwen2.5-7B, n=314 ). All overall metrics align with the main comparison table. Bold indicates the top performance across methods.                                                                                           
+
+> Method SS-User (14) SS-Asst (12) SS-Pref (6) Multi-Sess (28) Know-Upd (17) Temporal (28) Overall (105)
+> F1 Judge F1 Judge F1 Judge F1 Judge F1 Judge F1 Judge F1 Judge BudgetMem 75.5 85.7 64.3 75.0 4.2 33.3 18.2 32.1 37.0 58.8 27.4 25.0 35.8 46.7 LightMem 74.4 85.7 5.6 8.3 5.0 33.3 34.2 53.6 46.5 58.8 22.1 28.6 33.4 45.7 MemoryOS 76.1 92.9 62.0 75.0 7.3 16.7 28.4 50.0 44.3 58.8 23.3 14.3 38.6 48.6 Memory-R1 31.8 35.7 55.2 75.0 3.1 16.7 14.0 17.9 23.7 23.5 18.2 14.3 23.1 26.7
+> Ours ( α=0 .8)84.0 92.9 67.9 75.0 6.1 16.7 41.8 57.1 51.4 47.1 36.3 32.1 48.5 53.3
+
+Table 12: Per-category comparison on the LongMemEval benchmark (base model = Qwen2.5-7B, n=105 ). Bold indicates the top performance across methods.

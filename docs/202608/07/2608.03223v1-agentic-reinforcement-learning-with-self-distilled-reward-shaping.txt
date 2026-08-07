@@ -1,0 +1,1313 @@
+Title: Agentic Reinforcement Learning with Self-Distilled Reward Shaping
+
+URL Source: https://arxiv.org/pdf/2608.03223v1
+
+Published Time: Wed, 05 Aug 2026 00:45:04 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Agentic Reinforcement Learning with Self-Distilled Reward Shaping 
+
+## Ranxu Zhang ∗
+
+University of Science and Technology of China Hefei, China 
+
+## Guinan Chen 
+
+University of Science and Technology of China Hefei, China 
+
+## Chenshaodong 
+
+Alibaba Group Hangzhou, China 
+
+## Jinghao Lin 
+
+Alibaba Group Hangzhou, China 
+
+## Xiaozhou Xu 
+
+Alibaba Group Hangzhou, China 
+
+## sunzhe 
+
+Alibaba Group Hangzhou, China 
+
+## Yanyong Zhang 
+
+University of Science and Technology of China Hefei, China 
+
+## Chao Wang †
+
+University of Science and Technology of China Hefei, China 
+
+## Abstract 
+
+Agentic reinforcement learning enables LLM agents to learn through interaction, but sparse trajectory-level rewards reveal success without identifying which intermediate decisions deserve credit. Training-only privileged skills can provide denser super-vision by allowing the same frozen policy snapshot to rescore fixed tokens from skill-free trajectories while conditioned on task-matched procedural skills. Existing methods, however, do not jointly calibrate teacher scores across interaction steps, relate teacher confidence to realized returns, and integrate the resulting signal into native reward-to-advantage construction. We intro-duce Agentic Reinforcement Learning with Self-Distilled Reward 
+
+Shaping (ADRS), a framework for constructing return-associated token-level credit for multi-turn language agents. ADRS centers and normalizes privileged token scores within each step, mod-ulates them with a return-associated Teacher Value Advantage (TVA) gate based on within-group confidence–return association, and incorporates the gated token signal into native RL credit construction. Together, these components determine what the teacher prefers, when that preference is return-relevant, and how it enters the native reinforcement-learning credit path, while keeping rollouts and inference skill-free. Finally, experiments across three interactive benchmarks show that ADRS consistently improves performance on long-horizon tasks, with gains persist-ing across RL backbones, reduced-data settings, unseen tasks, and extended training. Our code is available at the following the link: https://github.com/gitrxh/ADRS-arxiv 
+
+## CCS Concepts 
+
+• Computing methodologies → Reinforcement learning ; Ar-tificial intelligence .
+
+## Keywords 
+
+Agentic Reinforcement Learning, On-Policy Self-Distillation, Large Language Models, Temporal Credit Assignment 
+
+> ∗This work was conducted during an internship at Alibaba Group.
+> †Chao Wang is the corresponding author.
+
+## 1 Introduction 
+
+Language-model agents can solve interactive tasks involving evidence search [9], embodied navigation [25], and web inter-action [38]. However, agentic reinforcement learning typically provides only terminal outcome rewards, which indicate whether a trajectory succeeds but not which intermediate query or action deserves credit. This sparse feedback makes token-level temporal credit assignment difficult even for critic-free group-relative meth-ods such as GRPO [24] and GiGPO [5]. Natural-language skills can provide denser guidance by describing subgoals, action rules, and common failure patterns [15, 29, 32]. We therefore consider a training-only privileged setting in which the same frozen pol-icy snapshot rescores fixed tokens from skill-free rollouts under task-matched skills; skills remain absent at inference. This setting connects knowledge distillation [6] with learning using privileged information [28]. Building on on-policy distilla-tion [1], OPSD [40] established a basic recipe in which the same model uses privileged context to supervise trajectories generated without that context. Recent OPSD+RL methods incorporate this supervision in different ways: GRPO+OPSD directly combines the distillation and policy-optimization objectives; Skill-SD [29] extracts dynamic skills from completed trajectories; RLSD [36] adjusts token-level updates using teacher–student differences; and SDAR [15] introduces retrieved procedural skills with confidence-gated auxiliary distillation. Although these methods enrich the source and weighting of privileged supervision, a central question remains: how can privileged token confidence be associated with realized returns and converted into temporal credit through a single native reward-to-advantage-to-policy path? This question decomposes into three technical challenges as shown in Figure 1: score calibration, reliability estimation, and credit integration. First, raw teacher log-probabilities depend on local context, policy uncertainty, and response composition. Their offsets and scales are therefore not directly comparable across interaction steps. Second, a confident teacher is not necessarily a useful teacher: high token likelihood may reflect linguistic famil-iarity rather than decisions associated with higher environment 
+
+> 1arXiv:2608.03223v1 [cs.LG] 4 Aug 2026
+
+Under Review, 2027, Anonymous Zhang et al. 
+
+Sparse trajectory-level rewards provide limited guidance for assigning credit to intermediate decisions. 
+
+Effective reward utilization = 1 Score calibration + 2 Reliability estimation + 3 Credit integration 
+
+Score Calibration 1
+
+What is comparable across steps?   
+
+> Raw teacher log-probabilities vary in offset and scale across interaction steps.
+> Controlled comparison
+
+𝑞 𝐴,𝑗 = 𝑞 𝐵,𝑗 while 𝑏 𝐵 > 𝑏 𝐴    
+
+> 𝑏 𝑠 : step mean
+> mean teacher log-prob. within step 𝑠
+> 𝑞 𝑠,𝑗 : centered term
+> signed deviation from the step mean
+
+Step A  
+
+> navigate to the microwave
+
+Step B      
+
+> open the microwave
+> log-prob.
+> tokens
+> 𝑏 𝐴
+> ℓ𝑇 𝐴,𝑗 = 𝑏 𝐴 + 𝑞 𝐴,𝑗
+> log-prob.
+> tokens
+> 𝑏 𝐵
+> ℓ𝑇 𝐵,𝑗 = 𝑏 𝐵 + 𝑞 𝐵,𝑗
+> Raw privileged scores are not comparable across steps
+> Within-step normalization yields relative support ̂𝑞
+
+Reliability estimation 2
+
+When should the signal be trusted?   
+
+> Privileged confidence may favor locally canonical decisions that do not determine the final outcome.
+> Confidence–return association
+
+𝑐(𝐴) > 𝑐(𝐵) while 𝑅(𝐴) < 𝑅(𝐵) 
+
+> 𝑐(𝜏 ) : teacher confidence
+> privileged preference for canonical decisions
+> 𝑅(𝜏 ) : realized return
+> trajectory-level task outcome
+
+Trajectory A more canonical         
+
+> go open place heat take ×Failure
+> higher 𝑐(𝐴) 𝑅(𝐴) = 0
+
+Trajectory B less canonical, effective             
+
+> go check place tune serve Success
+> lower 𝑐(𝐵) 𝑅(𝐵) = 1
+> Reliability mismatch
+> Teacher: 𝐴 > 𝐵 Outcome: 𝐵 > 𝐴
+> Teacher confidence ≠teacher reliability
+> Returns determine a scalar gate, not a trajectory reranking.
+
+Credit Integration 3
+
+Where are the two credit paths merged?    
+
+> Privileged guidance should be incorporated into the native reinforcement-learning credit construction.
+> How is token-level credit formed?
+> Existing: separate auxiliary objective
+> Base reward Adv ℬ𝐴 0
+> Teacher guidance 𝑐 𝑡
+
++ Policy update     
+
+> bypasses Adv ℬ
+> Policy coefficient: 𝐴 0+ 𝑐 𝑡
+> 𝑐 𝑡 need not equal the backend-generated Δ𝐴 𝑡
+
+ADRS: pre-advantage reward shaping            
+
+> Base reward
+> Teacher reward
+> Shaped reward Adv ℬ𝐴 0+ Δ𝐴 Policy update
+> Δ𝐴 = Adv ℬ(̃𝑟) − Adv ℬ(𝑟 base )
+> Teacher guidance becomes reward before it becomes policy credit.
+> Auxiliary influence ≠faithful RL credit
+> Native trajectory credit and privileged token modulation should be combined explicitly.
+
+Figure 1: Three challenges for using privileged teacher signals in agentic reinforcement learning. (1) Score calibration: raw teacher scores are not directly comparable across interaction steps. (2) Reliability estimation: teacher confidence may not align with realized returns. (3) Credit integration: privileged signals should be incorporated into native RL credit construction rather than a separate auxiliary objective. 
+
+returns. Third, a separate distillation objective places privileged supervision outside the backbone’s reward-to-advantage computa-tion and may misalign token-level updates with the group-relative advantages constructed by GRPO or GiGPO. Addressing these challenges requires a mechanism that calibrates teacher scores across steps, estimates their association with realized returns, and injects the resulting token signal before advantage construction. To this end, we introduce ADRS, a self-distilled reward-shaping framework that transforms task-matched procedural skills into token-level training rewards while keeping agent rollouts and inference skill-free. ADRS addresses the three challenges through three coupled designs. First, it re-scores student-generated tokens under the same behavior-policy snapshot with privileged skill context, then applies within-step centering and scale normal-ization to retain relative token preferences while suppressing step-dependent drift. Second, a selected-level return-associated Teacher Value Advantage (TVA) gate modulates the normalized signal using the within-group association between privileged confidence and realized return, rather than assuming uniform teacher reliability. Third, the gated signal is added to the base token rewards before the configured advantage operator, keeping privileged guidance within a single reward-to-advantage-to-policy path rather than a separate auxiliary objective. Together, these components determine what the privileged teacher prefers, when that preference is return-relevant, and how it enters the native reinforcement-learning credit path. Our contributions are: 
+
+• We propose ADRS, which converts task-matched procedural skills into return-associated token rewards through within-step score calibration and TVA gating, while keeping rollouts and inference skill-free. For the centered L2/L3 variants, we further establish a stepwise zero-sum structure. 
+
+• We formulate the gated signal as pre-advantage reward shap-ing, integrating privileged guidance into the native reward-to-advantage-to-policy path rather than a separate auxiliary objec-tive. We characterize its compatibility with GRPO/GiGPO-style credit operators and its local first-order connection to sampled-token auxiliary updates. 
+
+• Experiments across three interactive benchmarks show that ADRS delivers consistent performance gains on long-horizon tasks across RL backbones, remains effective with reduced training data, generalizes to unseen tasks, and sustains its gains over extended training. 
+
+## 2 Related Work 2.1 Reinforcement Learning for LLMs 
+
+Reinforcement learning provides the optimization backbone for training LLMs from environment feedback. PPO [23] uses a clipped policy objective, whereas GRPO [24] removes the critic through within-group outcome normalization. For multi-turn interaction, LOOP [3] develops value-free training for interactive tasks, while RAGEN [31] examines instability and degeneracy during optimiza-tion. As interaction horizons grow, localizing outcome feedback becomes increasingly important. GiGPO [5] introduces episode-and step-level relative advantages, while Agent Lightning [16] de-composes trajectories into trainable transitions. These methods im-prove temporal credit assignment but remain driven by sparse out-comes. ADRS supplements them with privileged token-level guid-ance before advantage computation. 
+
+## 2.2 Privileged Self-Distillation 
+
+Privileged self-distillation combines teacher–student transfer with information available only during training. Knowledge 
+
+2Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous 
+
+distillation transfers teacher knowledge to a student [6], while privileged-information learning provides additional training-only supervision [28]. On-policy distillation, DAgger-style learner-distribution supervision, and context distillation extend these ideas to student-generated states and richer contexts [1, 22, 26]. OPSD [40] brings them together by constructing teacher and student views from the same model under different contexts. Recent methods combine distillation with reward-based learn-ing through SDPO [8] and KDRL [33], or stabilize and selectively apply supervision through TCOD [30], HDPO [4], and TIP [34]. OPCD [39] instead focuses on internalizing enriched context along student-generated trajectories. In language-agent set-tings, Skill-SD [29] uses trajectory-derived skills, RLSD [36] uses teacher–student differences to modulate token updates, and SDAR [15] uses gated retrieved skills. The differences between SDAR and ADRS are summarized in Table 1. Self-Distilled Policy Gradient [14], Rebellious Student [11], and CRAFT [18] further investigate full-vocabulary supervision, reversed teacher signals, and coun-terfactual credit from sibling rollouts, respectively. In contrast, ADRS converts calibrated, return-associated teacher scores into token rewards before native advantage construction. 
+
+## 2.3 Reward Shaping and Credit Assignment 
+
+Reward shaping supplements sparse feedback with denser signals. Potential-based shaping can preserve optimal policies when based on a fixed Markov potential [19], while RUDDER [2] redistributes delayed returns toward outcome-relevant decisions. Process re-ward models supervise intermediate reasoning steps [13], but require a separately trained verifier and process-level supervision. Unlike separate reward models or auxiliary distillation objectives, ADRS derives token-level rewards from a privileged policy branch and injects them before advantage construction. 
+
+## 3 Problem Formulation 
+
+In multi-turn language-agent reinforcement learning, each task 
+
+𝑥 𝑖 ∼ 𝒟 induces a partially observed interaction with an envi-ronment. Without privileged text, a behavior-policy snapshot 𝜋 𝜃 𝑏 
+
+samples 𝐾 trajectories {𝜏 𝑖,𝑘 }𝐾 𝑘=1 for each task. At step 𝑠 , the history 
+
+ℎ𝑖,𝑘,𝑠 contains the task, observation, and prior actions, and the pol-icy emits 𝑦 𝑖,𝑘,𝑠 = (𝑦 𝑖,𝑘,𝑠,1 , … , 𝑦 𝑖,𝑘,𝑠,𝐿 𝑖,𝑘,𝑠 ) with valid token set 𝒱 𝑖,𝑘,𝑠 .Environment feedback is mapped to base token rewards 𝑟 base un-der the same valid-token mask used by teacher scoring, advantage estimation, and the actor loss. For ℬ ∈ { GRPO , GiGPO } [5, 24], let 𝐴 ℬ = Adv ℬ(𝑟 base ) denote the native token-aligned advantage, including the backbone’s aggregation, discounting, grouping, normalization, and broadcasting rules. In each training iteration, 𝜋 𝜃 𝑏 first performs the ordinary roll-out and receives environment feedback. After the trajectories are fixed, a deterministic provider returns task-matched procedural knowledge 𝜌(𝑥 𝑖 ), and the same frozen snapshot rescores the realized tokens under 𝜌(𝑥 𝑖 ) ⊕ ℎ 𝑖,𝑘,𝑠 . This branch changes only the context: it neither samples another trajectory nor introduces a separate or larger teacher, and privileged text is absent from student rollouts and inference. The paired scores, environment returns, and grouping metadata provide training-only evidence for refining credit among the realized token decisions. Our goal is to use this evidence to assign token-level credit to return-relevant intermediate decisions, thereby improving the skill-free policy 𝜋 𝜃 
+
+while preserving the native GRPO/GiGPO trajectory direction and requiring no privileged input during rollout or inference. 
+
+## 4 Method 
+
+ADRS addresses how to convert training-only privileged guidance into return-associated token credit without changing skill-free roll-out and inference or replacing the underlying RL backbone. As shown in Figure 2, it operates as a credit-construction layer be-tween trajectory collection and actor optimization. In each train-ing iteration, the behavior policy first samples 𝐾 trajectories with-out skill text and receives environment outcomes and base token rewards. Once these trajectories are fixed, the same frozen policy snapshot re-scores the realized tokens under ordinary and privi-leged contexts. The paired scores and observed outcomes provide the evidence needed to determine which tokens receive stronger privileged support, whether that support is associated with return, and how it should affect the subsequent policy update. These three questions map directly to three modules. Module 1, 
+
+Within-Step Relative Privileged Scoring , calibrates privileged token scores within each interaction step to obtain comparable relative preferences. Module 2, Return-Associated TVA Reliability Gating ,uses the raw privileged scores and observed returns to estimate teacher reliability within the selected comparison group. Because Module 2 does not depend on the calibrated output of Module 1, the two modules operate in parallel and meet only in Module 3. Module 3, Teacher-Guided Per-Token Advantage Modulation , uses the reliability estimate to modulate the calibrated token signal and combines the resulting token-level redistribution with the environment-defined trajectory direction. The resulting detached advantage is passed to the standard GRPO/GiGPO actor update, after which the updated actor becomes the behavior policy for the next iteration. Privileged text is used only for post-rollout rescoring and remains absent during rollout and inference. 
+
+## 4.1 Within-Step Relative Privileged Scoring 
+
+ADRS first considers the comparability of privileged scores across interaction steps. Teacher log-probabilities undergo global shifts and scale changes with context length, interaction position, and re-sponse composition. A token with a high raw score in one step can therefore carry less relative support than a token with a lower raw score in another. To obtain a stable token signal, ADRS treats privi-leged scores as relative evidence inside each realized decision step: it removes the within-step offset, normalizes dispersion, and out-puts the signed, scale-controlled score ̂ 𝑞 𝑠,𝑗 . Raw privileged scores are retained for the subsequent return-association estimate. For each sampled token, the ordinary-context and privileged-context behavior-policy scores are                
+
+> ℓ𝑏 𝑠,𝑗 =sg [log 𝜋 𝜃 𝑏 (𝑦 𝑠,𝑗 ∣ ℎ 𝑠 , 𝑦 𝑠,<𝑗 )] , ℓ𝑇 𝑠,𝑗 =sg [log 𝜋 𝜃 𝑏 (𝑦 𝑠,𝑗 ∣ 𝜌(𝑥) ⊕ ℎ 𝑠 , 𝑦 𝑠,<𝑗 )] . (1)
+
+The snapshot 𝜃 𝑏 generates the batch and remains frozen during both rescoring passes. Thus, ℓ𝑇 measures the support that the priv-ileged context assigns to a token sampled by the student policy; all scores are defined on the same realized student trajectory.  
+
+> 3Under Review, 2027, Anonymous Zhang et al.
+
+Table 1: Positioning relative to the closest privileged self-teaching methods. “Backward” refers to the policy update. 
+
+Method Skill source Teacher signal Injection point Policy backward SDAR [15] Retrieved external SkillBank Gated teacher-student token gap Auxiliary distillation loss RL + auxiliary term ADRS (ours) Task-indexed privileged provider Centered teacher token score + TVA Native RL credit construction Single RL objective 
+
+Figure 2: ADRS training flow. A behavior policy samples without privileged text. The same frozen snapshot re-scores those tokens under a task-matched skill. Step-centered scores provide the dense signal, while observed returns calibrate its optional TVA gate. The gated signal is added to the base reward before group-relative backbones such as GRPO and GiGPO estimate advantages; a standard clipped actor update then follows. 
+
+The centered and normalized score is 
+
+𝑏 𝑠 = 1|𝒱 𝑠 | ∑
+
+> 𝑗∈ 𝒱 𝑠
+
+ℓ𝑇 𝑠,𝑗 , 𝑞 𝑠,𝑗 = ℓ 𝑇 𝑠,𝑗 − 𝑏 𝑠 ,𝜎 𝑞 = Std (𝑠 ′,𝑗 ′)∈ 𝒩 (𝑠) (𝑞 𝑠 ′,𝑗 ′ ) ,̂ 𝑞 𝑠,𝑗 = 𝑞 𝑠,𝑗 
+
+𝜎 𝑞 + 𝜖 .
+
+(2) 
+
+Here 𝜖 > 0 and 𝒩 (𝑠) is the chosen normalization scope. The de-nominator is shared within step 𝑠 , giving 
+
+∑
+
+> 𝑗∈ 𝒱 𝑠
+
+̂𝑞 𝑠,𝑗 = 0. (3) 
+
+Within-step centering removes the overall confidence offset spe-cific to an interaction position, while 𝜎 𝑞 makes the strength of teacher guidance robust to changes in score dispersion. A posi-tive ̂ 𝑞 𝑠,𝑗 indicates that a sampled token receives a privileged score above the step average. ADRS therefore identifies which tokens within the same decision step should receive relatively stronger or weaker credit; the next subsection evaluates the consistency of this relative support with environment return. 
+
+## 4.2 Return-Associated TVA Reliability Gate 
+
+ADRS next considers the reliability of privileged confidence. High teacher confidence becomes useful RL guidance when it aligns with observed return in comparable units. To evaluate this align-ment, ADRS compares soft teacher confidence with pre-ADRS return inside a selected group and produces a scalar gate for its tokens. This reliability operation controls teacher influence before the final credit-construction operation. TVA supports two granularities. Completion-level TVA (L2) matches the comparison available in GRPO: trajectories sampled for the same prompt form the group, and each trajectory uses its pre-ADRS base return. Step-level TVA (L3) matches GiGPO’s additional structure: repeated anchor states define comparable interaction steps, and each step uses return-to-go from that state. In this sense, L2 uses prompt-level trajectory information, while L3 uses the anchor-state and step-return information introduced by GiGPO. A training run selects one level. Let 𝒰 denote the units at the selected level and 𝒱 𝑢 the valid tokens of unit 𝑢 . The reliability operation first computes unit con-fidence and a soft high-confidence weight: ̄ℓ𝑇 𝑢 = 1|𝒱 𝑢 | ∑          
+
+> (𝑠,𝑗)∈ 𝒱 𝑢
+> ℓ𝑇 𝑠,𝑗 ,̄ ℓ𝑇
+> batch =1|𝒰 | ∑
+> 𝑢∈ 𝒰 ̄ℓ𝑇 𝑢 ,𝛼 𝑢 = 𝜎(̄ ℓ𝑇 𝑢 −̄ ℓ 𝑇
+> batch
+> 𝑇 ) . (4)
+
+It then contrasts returns on the high- and low-confidence sides:                   
+
+> 𝜇 +𝑔 =∑𝑢∈𝑔 𝛼 𝑢 𝑅 𝑢
+> ∑𝑢∈𝑔 𝛼 𝑢 + 𝜖 ,𝜇 −𝑔 =∑𝑢∈𝑔 (1 − 𝛼 𝑢 )𝑅 𝑢
+> ∑𝑢∈𝑔 (1 − 𝛼 𝑢 ) + 𝜖 ,𝑑 𝑔 = 𝜇 +𝑔 − 𝜇 −𝑔 .(5)
+
+After optional positive scale normalization to ̃ 𝑑 𝑔 , the detached gate is 𝑚 𝑢 = sg [𝜎(𝜏̃ 𝑑 𝑔(𝑢) )] . The gate is broadcast to all tokens in unit 
+
+𝑢 . Positive return association increases it above 0.5 , negative asso-ciation lowers it, undersized groups use 0.5 , and the TVA-off con-figuration uses 𝑚 = 1 .PRoposition 1 (TVA as RetuRn association). Ignoring the nu-merical 𝜖 in Eq. 5, let ̄ 𝛼 𝑔 = 𝔼 𝑔 [𝛼] . For any non-degenerate group, 
+
+𝑑 𝑔 = Cov 𝑔 (𝛼, 𝑅)̄ 𝛼 𝑔 (1 −̄ 𝛼 𝑔 ) . (6)  
+
+> 4Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous
+
+Thus, the sign of TVA agrees with the within-group empirical covari-ance between privileged confidence and return. 
+
+Proposition 1 gives the gate its statistical meaning. Since the denominator is positive, 𝑑 𝑔 increases exactly in the intended di-rection: units with higher privileged confidence also tend to have higher returns inside the comparison group. This explains why ADRS can use a group-level gate while allowing pairwise teacher errors to be absorbed by the group statistic. The proposition is ob-servational and batch-local; finite 𝜖 gives the stabilized implemen-tation. The resulting gate 𝑚 is then combined with the calibrated token score in the final credit-construction operation. 
+
+## 4.3 Teacher-Guided Per-Token Advantage Modulation 
+
+ADRS finally considers how the calibrated and reliability-weighted teacher signal should enter policy credit. The within-step score is zero-sum, so a standard trajectory sum preserves outcome ordering while removing the centered signal. ADRS therefore adopts two complementary paths. The trajectory path carries the environment-defined direction of each sampled completion. The token path saves and whitens the privileged signal so that update strength can vary across tokens within the same trajectory. The teacher reward and shaped token reward are 
+
+𝑟 𝑇 𝑠,𝑗 = 𝜂𝑚 𝑠,𝑗 ̂ 𝑞 𝑠,𝑗 ,̃ 𝑟 𝑠,𝑗 = 𝑟 base  
+
+> 𝑠,𝑗
+
++ 𝑟 𝑇 𝑠,𝑗 , (7) 
+
+where 𝜂 ≥ 0 controls the teacher scale. We keep 𝜂 in 𝑟 𝑇 so that the saved tensor matches the injected reward. For positive global 
+
+𝜂 , whitening removes this global scale from 𝑍 𝑇 , making the outer 
+
+𝜂 in Eq. 10 the effective token-modulation coefficient. PRoposition 2 (Stepwise zeRo-sum RepResentation). If the normalization denominator and gate are shared within interaction step 𝑠 , the teacher reward in Eq. 7 satisfies ∑𝑗∈ 𝒱 𝑠 𝑟 𝑇 𝑠,𝑗 = 0 . For any ordering (𝑗 1, … , 𝑗 𝑛 𝑠 ) of the valid tokens, it admits a sampled-chain representation 𝑟 𝑇 𝑠,𝑗 𝑟 = Φ 𝑠,𝑟+1 − Φ 𝑠,𝑟 with Φ𝑠,1 = Φ 𝑠,𝑛 𝑠 +1 = 0 . This identity is an algebraic representation on the sampled step; policy-invariance would require a fixed Markov potential. 
+
+The proposition explains this two-path credit construction. The teacher reward adds zero step-level mass under the stated shar-ing condition, so trajectory summation keeps the environment or-dering. The same zero-sum identity motivates a token-preserving path for training the privileged structure. ADRS therefore sends ̃ 𝑟 
+
+through the trajectory path and saves 𝑟 𝑇 for token modulation. For GRPO, the trajectory path computes 
+
+𝑆 𝑖,𝑘 = ∑
+
+> 𝑡∈ 𝒱 𝑖,𝑘
+
+̃𝑟 𝑖,𝑘,𝑡 , 𝜇 𝑆 𝑖 = Mean 𝐾 𝑘=1 (𝑆 𝑖,𝑘 ), (𝜎 𝑆 𝑖 )2 = Var 𝐾 𝑘=1 (𝑆 𝑖,𝑘 ), 𝐴 traj  
+
+> 𝑖,𝑘
+
+= 𝑆 𝑖,𝑘 − 𝜇 𝑆 𝑖 
+
+√(𝜎 𝑆 𝑖 )2 + 𝜖 .
+
+(8) 
+
+Because the step-shared teacher reward sums to zero, 𝑆 𝑖,𝑘 equals the base trajectory score in this configuration; 𝐴 traj carries the trajectory-level outcome direction. The token path whitens the saved teacher reward within prompt group 𝑔 :
+
+𝜇 𝑇 𝑔 = Mean 𝑣∈ 𝒱 𝑔 (𝑟 𝑇 𝑣 ), (𝜎 𝑇 𝑔 )2 = Var 𝑣∈ 𝒱 𝑔 (𝑟 𝑇 𝑣 ), 𝑍 𝑇 𝑡 = 𝑟 𝑇 𝑡 − 𝜇 𝑇 𝑔 
+
+√(𝜎 𝑇 𝑔 )2 + 𝜖 , 𝑡 ∈ 𝒱 𝑔 . (9) 
+
+The final token-level advantage is 
+
+𝐴 ADRS  
+
+> 𝑖,𝑘,𝑡
+
+= 𝐴 traj  
+
+> 𝑖,𝑘
+
++ 𝜂𝑍 𝑇 𝑖,𝑘,𝑡 . (10) 
+
+The first term sets trajectory direction; the second redistributes update strength along it. Since 𝑍 𝑇 is standardized, 𝜂 directly con-trols token modulation and recovers the native algorithm at 𝜂 = 0 .For GiGPO, ADRS adds 𝑍 𝑇 to the episode-level advantage while retaining the native step-level branch. For flattened valid token 𝑡 with ordinary context 𝑐 𝑡 , define             
+
+> 𝜔 𝑡 (𝜃) = exp (log 𝜋 𝜃 (𝑦 𝑡 ∣ 𝑐 𝑡 ) − ℓ 𝑏 𝑡 ) ,̄ 𝜔 𝑡 (𝜃) = clip (𝜔 𝑡 (𝜃), 1 − 𝜀 lo , 1 + 𝜀 hi ) . (11)
+
+With detached 𝐴 ADRS , the actor uses 
+
+ℒactor (𝜃) = − 1|𝒱 | ∑
+
+> 𝑡∈ 𝒱
+
+min [𝜔 𝑡 (𝜃)𝐴 ADRS  
+
+> 𝑡
+
+,̄ 𝜔 𝑡 (𝜃)𝐴 ADRS  
+
+> 𝑡
+
+] . (12) 
+
+Thus, privileged information affects learning through the ordinary policy ratio after being converted into detached credit. PRoposition 3 (TRajectoRy pReseRvation and local toKen--gRadient eivalence). Under a step-shared gate, Eq. 7 leaves the GRPO trajectory score, and hence 𝐴 traj , unchanged. If the teacher signal is non-constant within the group, Eq. 10 nevertheless induces nonzero token-level credit. Define 𝐴 0𝑡 = 𝐴 traj  
+
+> 𝑖,𝑘
+
+and Δ𝐴 𝑡 = 𝜂𝑍 𝑇 𝑡 . At the behavior-policy point with clipping inactive,            
+
+> ∇𝜃 𝐽 ADRS |𝜃 𝑏 =1|𝒱 | ∑
+> 𝑡∈ 𝒱
+> (𝐴 0𝑡 + Δ𝐴 𝑡 )∇ 𝜃 log 𝜋 𝜃 (𝑦 𝑡 ∣ 𝑐 𝑡 ). (13)
+
+For a detached sampled-token auxiliary coefficient 𝑎 𝑡 , the correspond-ing local update is 
+
+∇𝜃 𝐽 aux |𝜃 𝑏 = 1|𝒱 | ∑
+
+> 𝑡∈ 𝒱
+
+(𝐴 0𝑡 + 𝑎 𝑡 )∇ 𝜃 log 𝜋 𝜃 (𝑦 𝑡 ∣ 𝑐 𝑡 ). (14) 
+
+Setting 𝑎 𝑡 = Δ𝐴 𝑡 = 𝜂𝑍 𝑇 𝑡 makes the two first-order policy gradients identical at this evaluation point. 
+
+Proposition 3 clarifies the optimization role of ADRS. The trajec-tory path carries the return-defined decision, and the token path contributes a local score-weighted update equivalent to a detached token auxiliary coefficient at the behavior-policy point. The state-ment is local to the sampled batch and unclipped branch; broader objective equivalences require separate assumptions. ADRS then passes 𝐴 ADRS to GRPO/GiGPO, closing the iteration and prepar-ing the next behavior snapshot. 
+
+## 5 Experiments 5.1 Experimental Settings 
+
+Benchmarks. We evaluate ADRS across three complementary language-agent interactions. ALFWorld [25] casts household tasks as text-based embodied control, requiring agents to satisfy ordered preconditions over extended action sequences. Web-Shop [38] evaluates web navigation, where an agent searches, inspects product attributes, retains user constraints, and com-pletes a purchase. Search-based QA follows Search-R1 [9] and tests evidence gathering over seven question-answering datasets using only four tool-use turns. The combination separates long-horizon procedural control from shorter information-seeking  
+
+> 5Under Review, 2027, Anonymous Zhang et al.
+
+interaction, allowing us to test where privileged token credit is most useful. Appendix A.1 provides dataset-level descriptions, split usage, metrics, and interaction limits. 
+
+Baselines. We organize comparisons by supervision source and use. Vanilla and Skill-Prompt test the instruction-tuned policy without or with inference-time skills. GRPO [24], Skill-GRPO, and GiGPO [5] represent outcome-driven reinforcement learning, with GiGPO supplying a step-aware credit backbone. OPSD [40], GRPO+OPSD, Skill-SD [29], RLSD [36], and SDAR [15] provide structured self-distillation or skill-conditioned supervision. These groups distinguish gains from outcome optimization, skill access, auxiliary token supervision, and native RL credit construction. Unless marked by an asterisk, evaluation uses no skill context; ADRS never uses privileged skills during rollout or inference. Appendix A.3 provides details. 
+
+Models, metrics, and protocol. The common 150-step compari-son covers Qwen2.5-3B-Instruct, Qwen2.5-7B-Instruct [21], and Qwen3-1.7B-Instruct [35]. We report ALFWorld task-family and overall success, Search per-dataset exact match and macro-average, and WebShop normalized score and exact success. We extend representative runs to 300 steps, separate GRPO and GiGPO back-bones, inspect action/object token gaps, vary available training data, evaluate unseen transfer, and sweep maximum interaction horizon against SDAR. All experiments follow the SDAR bench-mark and evaluation setup [15], using multiple NVIDIA H100 GPUs. Appendix A provides additional implementation details. 
+
+## 5.2 Overall Performance 
+
+Table 2 reports the common 150-step comparison. Three findings organize the results. 
+
+ADRS establishes new state-of-the-art performance across all three benchmarks with Qwen2.5-3B. With Qwen2.5-3B, ADRS achieves 94.5% overall success on ALFWorld, a 45.0% macro-average on Search-based QA, and a score/success pair of 87.5/76.6 on WebShop. Compared with the strongest baselines, these results yield improvements of 10.1 percentage points on ALFWorld, 0.4 points on Search-based QA, and 2.5/8.6 points on the two WebShop metrics, respectively, establishing new state-of-the-art results across all three benchmarks. 
+
+ADRS delivers consistent ALFWorld gains across model families and scales. ADRS attains the highest ALFWorld overall success in all three model blocks: 94.5% with Qwen2.5-3B, 96.1% with Qwen2.5-7B, and 62.5% with Qwen3-1.7B. These results exceed the strongest corresponding baselines by 10.1, 7.8, and 8.6 percentage points, respectively. With Qwen3-1.7B, ADRS also achieves the highest Search-based QA macro-average of 42.9% and the highest WebShop success rate of 65.6%, improving over the strongest baselines by 0.7 and 7.0 points. These results demon-strate that the effectiveness of ADRS extends across different model families and parameter scales. 
+
+The performance gains do not rely on privileged infor-mation at evaluation time. Skill-Prompt and the starred Skill-GRPO variant provide skills directly to the policy during evalu-ation, whereas ADRS uses only the ordinary interaction history 0 50 100 150 200 250 300                    
+
+> Training Step
+> 20
+> 40
+> 60
+> 80
+> Success Rate (%)
+> (a)
+> 050 100 150 200 250 300
+> Training Step
+> 10
+> 20
+> 30
+> 40
+> 50
+> Episode Length
+> (b)
+> 050 100 150 200 250 300
+> Training Step
+> 50
+> 100
+> 150
+> 200
+> Response Length
+> (c)
+> 050 100 150 200 250 300
+> Training Step
+> 2
+> 4
+> 6
+> 8
+> 10
+> Reward
+> (d)
+> ADRS (ours) SDAR
+
+Figure 3: ALFWorld training dynamics through 300 steps. Curves compare SDAR and ADRS+TVA (GiGPO). 
+
+during rollout and inference. The leading results of ADRS there-fore do not depend on additional test-time skill context. Instead, ADRS converts training-only privileged guidance into a policy that performs effectively under skill-free interaction. Appendix Figures 9–10 shows the training success rate , episode-length, and response-length trajectories. The training curves ex-hibit consistent upward trends across all configurations. 
+
+## 5.3 Long-Horizon Training 
+
+The 150-step table establishes a common-budget comparison but does not show whether the gains persist during later optimization. We therefore continue representative runs to 300 steps and report the best checkpoint, final checkpoint, and mean over the last three evaluations in Table 3. These statistics distinguish an isolated peak from sustained late-training performance. 
+
+ADRS sustains strong late-training performance on the two procedural environments. On ALFWorld, the ADRS-global+entropy/clip run reaches a 97.7% peak and finishes at 96.1%, 9.4 points above the corresponding GRPO final checkpoint. This run maintains a high task success rate. Within the GiGPO sequence, ADRS+TVA improves the final/last-three values from 91.4/93.0% to 94.5/94.3%. On WebShop, an ADRS run reaches an 84.4% peak and final success rate, 5.5 points above the best GRPO checkpoint; the no-TVA run records the strongest last-three average at 80.2%. Figure 3 visualizes the 300-step ALFWorld trajectories. Appen-dix Table 9 reports the complete named-run matrix. 
+
+## 5.4 Ablations on GRPO and GiGPO Backbones 
+
+Figure 4 shows the WebShop training dynamics under the 150-step budget, comparing GRPO with the corresponding ADRS variants. The ADRS variants remain above GRPO over most of training, and the strongest configuration reaches higher final performance at step 150. This complements the endpoint comparison in the main table, showing that the WebShop gain is visible across the training curve rather than only at a single checkpoint.  
+
+> 6Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous
+
+Table 2: Performance Comparison on the representative long-horizon benchmarks (ALFWorld, Search-based QA, and Web-Shop). We report the success rate (%) on ALFWorld, accuracy on search-based QA, and task-completion score/success rate on WebShop. An asterisk (*) denotes validation with skills. The best, second-best, and third-best results are highlighted. ALFWorld Search-based QA WebShop Method Pick Look Clean Heat Cool Pick2 Avg NQ Triv Pop Hotp 2Wk MuS Bam Avg Score Succ. 
+
+Qwen2.5-3B-Instruct 
+
+Vanilla 44.4 11.1 6.2 15.4 28.6 12.5 21.9 24.6 48.1 31.0 26.3 25.3 7.2 59.7 31.7 6.7 0.8 Skill-Prompt* 51.7 66.7 48.4 0.0 4.3 10.0 28.9 23.7 46.2 30.6 24.4 22.1 7.5 12.5 23.9 0.2 0.8 OPSD 48.8 41.7 16.7 0.0 15.8 16.7 28.1 0.1 0.1 0.1 0.0 0.0 0.0 0.0 0.0 11.3 3.1 GRPO 91.2 62.5 96.2 61.9 65.0 47.4 75.0 39.3 60.6 41.1 37.4 34.6 15.4 26.4 36.4 79.8 63.3 Skill-GRPO 88.9 71.4 58.8 70.6 40.7 29.2 60.2 43.5 58.8 43.0 36.8 32.2 11.7 12.5 34.1 77.3 60.9 Skill-GRPO* 94.3 57.1 100.0 66.7 73.1 57.1 80.5 44.3 59.6 44.3 39.0 36.1 14.5 14.9 36.1 76.3 66.4 GRPO+OPSD 100.0 82.4 85.7 75.0 70.0 60.0 81.2 44.9 61.2 45.2 40.4 38.5 16.0 66.1 44.6 77.8 66.4 Skill-SD 88.2 50.0 96.2 52.4 65.0 57.9 73.4 44.4 60.4 44.0 39.5 40.4 15.4 64.9 44.1 75.9 64.0 RLSD 87.9 75.0 90.9 75.0 73.1 68.4 79.7 41.5 58.6 42.3 40.4 40.2 16.8 66.9 43.8 84.4 66.4 SDAR 97.1 62.5 100.0 61.9 75.0 84.2 84.4 44.8 58.1 44.3 38.6 36.2 15.7 66.1 43.4 85.0 68.0 
+
+ADRS (ours) 94.1 75.0 100.0 100.0 90.0 94.7 94.5 44.7 61.4 45.8 39.9 37.3 14.4 64.9 45.0 87.5 76.6 
+
+Qwen2.5-7B-Instruct 
+
+Vanilla 36.1 22.2 3.1 0.0 0.0 0.0 12.5 25.2 50.8 29.5 29.0 29.0 10.4 63.7 33.9 5.9 1.6 Skill-Prompt* 51.7 50.0 32.3 5.3 4.3 0.0 23.4 30.9 52.1 32.7 32.7 27.9 12.7 66.1 36.4 1.7 0.8 OPSD 50.0 60.0 22.7 21.4 17.6 9.5 32.8 8.8 8.6 17.5 2.5 4.2 0.5 1.2 6.2 4.5 2.3 GRPO 91.2 87.5 96.2 81.0 65.0 57.9 81.2 45.1 63.7 44.0 43.6 43.2 16.8 37.6 42.0 80.9 72.6 Skill-GRPO 88.5 66.7 65.2 61.1 57.7 73.1 69.5 45.2 63.7 45.7 43.1 43.3 19.6 21.4 40.3 80.4 71.9 Skill-GRPO* 100.0 83.3 96.4 83.3 75.0 78.9 88.3 44.8 63.0 45.1 43.7 43.7 20.5 71.4 47.5 87.0 81.2 GRPO+OPSD 91.4 61.5 100.0 87.5 76.5 52.2 80.4 47.3 64.5 46.9 43.8 39.3 18.0 69.4 47.0 86.8 76.5 Skill-SD 93.9 93.8 90.9 100.0 69.2 68.4 85.1 47.1 64.5 47.8 44.2 42.1 20.2 69.0 47.8 86.1 76.5 RLSD 100.0 87.5 92.3 58.8 80.0 65.2 82.0 46.8 63.0 44.4 45.5 48.9 21.5 73.0 49.0 87.4 77.3 SDAR 94.7 75.0 100.0 86.7 68.2 78.9 85.9 46.3 63.5 48.2 43.8 48.4 19.6 73.0 49.0 89.4 82.8 ADRS (ours) 100.0 87.5 100.0 95.2 90.0 94.7 96.1 47.5 64.2 46.5 43.6 43.8 18.7 69.4 48.2 88.0 79.7 
+
+Qwen3-1.7B 
+
+Vanilla 25.0 22.2 3.1 0.0 21.4 4.2 12.5 29.4 46.9 37.0 23.5 19.6 6.4 10.5 24.8 46.5 4.7 Skill-Prompt* 10.3 50.0 16.1 0.0 0.0 5.0 9.4 29.4 46.5 36.2 22.9 20.8 4.3 10.1 24.3 23.0 2.3 OPSD 26.3 33.3 9.1 0.0 4.5 5.3 14.1 4.2 8.3 4.6 6.6 15.3 0.7 1.2 5.8 47.4 9.3 GRPO 71.1 41.7 36.4 40.0 31.8 31.6 46.1 40.0 58.9 43.5 35.4 30.3 12.0 65.7 40.8 67.3 38.3 Skill-GRPO 27.6 54.5 22.7 27.3 0.0 19.2 21.1 39.2 58.6 43.9 35.2 28.2 11.5 66.1 40.4 73.4 46.1 Skill-GRPO* 31.4 42.9 51.9 8.3 11.5 7.1 28.1 38.0 58.4 43.9 36.3 29.0 12.5 66.9 40.7 80.4 50.0 GRPO+OPSD 38.2 50.0 30.8 28.6 30.0 21.1 32.0 40.7 58.9 45.0 37.0 34.6 13.3 65.7 42.2 70.7 38.3 Skill-SD 52.9 37.5 69.2 42.9 60.0 36.8 52.3 39.1 57.5 45.4 34.8 34.1 10.7 64.1 40.8 81.8 53.9 RLSD 50.0 37.5 61.5 19.0 50.0 21.1 42.2 38.6 57.3 43.0 34.5 34.1 11.5 65.3 40.6 74.0 50.8 SDAR 73.5 25.0 76.9 33.3 40.0 36.8 53.9 39.7 58.9 45.3 35.9 35.5 12.6 65.3 41.9 76.8 58.6 
+
+ADRS (ours) 86.8 50.0 59.1 73.3 63.6 15.8 62.5 42.7 59.4 47.4 35.7 32.2 12.5 65.7 42.9 77.7 65.6 Table 3: Representative 300-step convergence results. “Best” is the highest observed checkpoint.                             
+
+> Env. Configuration Best Final Last-3 ALF. GRPO 92.2 86.7 86.2 GiGPO 96.9 91.4 93.0 ADRS-global (GRPO) 97.7 96.1 96.1
+> ADRS+TVA (GiGPO) 96.9 94.5 94.3 Web. GRPO 78.9 78.9 75.3 ADRS (no TVA) 82.8 82.8 80.2
+> ADRS-per-seq 84.4 84.4 77.9 ADRS-per-seq+GateNorm 84.4 82.0 78.9
+
+Figure 5 compares GiGPO, ADRS without TVA, and ADRS+TVA on ALFWorld, testing whether ADRS still brings gains when the backbone already provides step-aware credit. The WebShop tra-jectories show that ADRS improves a GRPO backbone under the preferred WebShop normalization during optimization. Appendix Tables 8 and 7 report the matched normalization comparison and teacher-scale sensitivity results. 
+
+ADRS remains beneficial on the GiGPO backbone. At step 150, centered ADRS improves GiGPO from 82.8% to 87.5%, and ADRS+TVA further reaches 89.8%. Their corresponding best check-points are 86.7%, 90.6%, and 93.0%. Across the 300-step runs, TVA increases the peak by 0.8 points and the last-three average by 2.4 points. This comparison supports the complete GiGPO-based sys-tem. Appendix Table 10 preserves the fully named matrix. 
+
+> 7
+
+Under Review, 2027, Anonymous Zhang et al. 0 25 50 75 100 125 150                     
+
+> Training Step
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> Success Rate (%)
+> (a)
+> 025 50 75 100 125 150
+> Training Step
+> 6
+> 8
+> 10
+> 12
+> 14
+> Episode Length
+> (b)
+> 025 50 75 100 125 150
+> Training Step
+> 50
+> 75
+> 100
+> 125
+> 150
+> 175
+> 200
+> Response Length
+> (c)
+> 025 50 75 100 125 150
+> Training Step
+> 0
+> 2
+> 4
+> 6
+> 8
+> Reward
+> (d)
+> ADRS (ours) ADRS (no-TVA) GRPO
+
+Figure 4: WebShop ablation dynamics through 150 steps. Curves compare GRPO with the ADRS variants. 80.0 82.5 85.0 87.5 90.0 92.5 95.0 
+
+Success Rate (%) 
+
+GiGPO 
+
+ADRS (no-TVA) 
+
+ADRS-TVA    
+
+> 82.8 86.7
+> 87.5 90.6
+> 89.8 93.0
+> Best
+> @150 steps
+
+Figure 5: GiGPO-based ALFWorld ablation on Qwen2.5-3B. The chart compares GiGPO, ADRS without TVA, and ADRS with TVA at step 150 and at their best observed checkpoints. 0 50 100 150 200 250 300 
+
+Training Step       
+
+> −1.25
+> −1.00
+> −0.75
+> −0.50
+> −0.25
+> 0.00
+> 0.25
+> 0.50
+> Teacher –Student Gap
+> KT(action)
+> KT(object)
+> KP(style)
+
+Figure 6: Action–object diagnostic over training on four fixed successful ALFWorld trajectories. 𝐾 𝑇 groups task-bearing action and object tokens, whereas 𝐾 𝑃 denotes the residual style-token group. Values are signed teacher– student log-probability gaps. 
+
+## 5.5 Action–Object Mechanism Diagnostic 
+
+To examine how token-level advantage modulation supports long-horizon performance, we probe four fixed successful ALFWorld trajectories: heat, pick-and-place, cool, and look-at-object-in-light. These trajectories contain 32 action-token, 80 object-token, and 20 40 60 80 100        
+
+> Training Data (%)
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> 90
+> 100
+> Success Rate (%)
+> 57.8
+> 27.3
+> 62.5
+> 42.2
+> 78.1
+> 56.3
+> 80.5
+> 58.6
+> 94.5
+> 75.0 ↓>40% Data
+> GRPO
+> ADRS (ours) 50 60 70 80 90 100
+> Success Rate (%)
+> Avg
+> Cool
+> Pick2
+> Heat
+> Clean
+> Pick
+> Look
+> +11.9
+> +22.8
+> +18.1
+> +12.9
+> +7.9
+> +5.0
+> -4.4
+> Gain ADRS (ours) GRPO
+
+Figure 7: Data efficiency and evaluation on the supplied ALF-World unseen split. Left: ADRS trained on five fractions of the available data, with full-data GRPO shown as a reference. Right: category-level success on the unseen evaluation. 
+
+470 style/other-token observations. Figure 6 groups the signed teacher–student gaps into 𝐾 𝑇 action/object terms and a resid-ual 𝐾 𝑃 style term, revealing how privileged rescoring separates task-bearing tokens from generic style tokens over training. At step 150, the action gap reaches −0.8582 and the object gap remains positive at 0.4591 , while the style gap contracts to 0.0085 ,yielding an action-to-style magnitude ratio of 95.3. This separation shows that the token-level ADRS signal increasingly concentrates update contrast on tokens that determine executable actions and object choices, rather than spreading credit uniformly across the generated response. The pattern explains why token-level advan-tage modulation improves long-horizon interaction: it strength-ens learning on the local decisions that carry delayed task conse-quences. After step 250, task success approaches saturation and the policy changes more slowly; the shift in the object term and the smaller final ratio coincide with this later training stage. 
+
+## 5.6 Data Efficiency and Unseen Generalization 
+
+We next evaluate whether ADRS can extract useful token-level credit from smaller training sets and whether the learned behav-ior transfers to the supplied unseen ALFWorld split. 
+
+ADRS surpasses full-data GRPO after using 60% of the training data. Figure 7 (left) evaluates ADRS with 20%, 40%, 60%, 80%, and 100% of the available ALFWorld training data. ADRS ob-tains 57.8%, 62.5%, 78.1%, 80.5%, and 94.5% success, respectively. The 60%, 80%, and 100% settings exceed the 75.0% full-data GRPO reference, while the 20% and 40% settings remain below it. This trend shows that ADRS benefits from additional training data but can exceed the full-data outcome-only baseline before using the entire training set. 
+
+ADRS transfers to most categories in the supplied unseen split. Figure 7 (right) compares ADRS and GRPO on the unseen ALFWorld split. ADRS improves the average success rate by 11.9 points. The category-level differences are +22.8 on Cool, +18.1 on Pick2, +12.9 on Heat, +7.9 on Clean, +5.0 on Pick, and −4.4 on Look. Thus, ADRS improves five of the six reported categories, with the largest gains on state-changing and multi-object tasks. 
+
+## 5.7 Effect of Maximum Interaction Steps 
+
+Figure 8 compares ADRS and SDAR with maximum episode lengths of 25, 35, and 50 steps. ADRS consistently outperforms SDAR, achieving 85.2%, 85.2%, and 94.5%, respectively, compared with 78.9%, 75.0%, and 84.4% for SDAR. As the interaction budget 
+
+8Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous 25 35 50 
+
+Max Steps per Episode 
+
+> 70
+> 75
+> 80
+> 85
+> 90
+> 95
+> 100
+> Success Rate @150 (%)
+> 78.9
+> 85.2
+> +6.3
+> 75.0
+> 85.2
+> +10.2
+> 84.4
+> 94.5
+> +10.1
+> SDAR
+> ADRS (ours)
+
+Figure 8: Effect of maximum interaction steps on ALFWorld with Qwen2.5-3B at training step 150. 
+
+increases, ADRS maintains its advantage and reaches its strongest result at the 50-step horizon. This result indicates that ADRS can use a longer interaction horizon to improve long-horizon task per-formance while preserving reliable token-level credit assignment across interaction steps. 
+
+## 6 Conclusion 
+
+We presented ADRS, a self-distilled reward-shaping framework for sparse temporal credit in multi-turn language-agent rein-forcement learning. ADRS transforms task-matched procedural guidance into token rewards through within-step calibration, return-associated TVA modulation, and pre-advantage integra-tion. These components determine what the privileged teacher prefers, when that preference is return-relevant, and how it en-ters policy optimization, while keeping rollouts and inference skill-free. Experiments across three interactive benchmarks and multiple training settings demonstrate consistent improvements, particularly on long-horizon tasks. Taken together, these results indicate that training-only procedural knowledge can be con-verted into return-associated token-level credit and incorporated directly into the native reward-to-advantage construction. 
+
+> 9
+
+Under Review, 2027, Anonymous Zhang et al. 
+
+## References 
+
+[1] Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. 2024. On-policy distillation of language models: Learning from self-generated mistakes. In International Con-ference on Learning Representations , Vol. 2024. 21246–21263. [2] Jose A Arjona-Medina, Michael Gillhofer, Michael Widrich, Thomas Unterthiner, Johannes Brandstetter, and Sepp Hochreiter. 2019. Rudder: Return decomposi-tion for delayed rewards. Advances in Neural Information Processing Systems 32 (2019). [3] Kevin Chen, Marco Cusumano-Towner, Brody Huval, Aleksei Petrenko, Jack-son Hamburger, Vladlen Koltun, and Philipp Krähenbühl. 2025. Reinforce-ment Learning for Long-Horizon Interactive LLM Agents. arXiv preprint arXiv:2502.01600 (2025). [4] Ken Ding. 2026. HDPO: Hybrid Distillation Policy Optimization via Privileged Self-Distillation. arXiv preprint arXiv:2603.23871 (2026). [5] Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2026. Group-in-group policy optimization for LLM agent training. Advances in Neural Information Processing Systems 38 (2026), 46375–46408. [6] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. 2015. Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 (2015). [7] Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop qa dataset for comprehensive evaluation of reason-ing steps. In Proceedings of the 28th International Conference on Computational Linguistics . 6609–6625. [8] Jonas Hübotter, Frederike Lübeck, Lejs Behric, Anton Baumann, Marco Bagatella, Daniel Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Carlos Guestrin, et al. 2026. Reinforcement Learning via Self-Distillation. arXiv preprint arXiv:2601.20802 (2026). [9] Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning. arXiv preprint arXiv:2503.09516 (2025). [10] Mandar Joshi, Eunsol Choi, Daniel S Weld, and Luke Zettlemoyer. 2017. Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension. In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 1601–1611. [11] Jeonghye Kim, Jiwon Jeon, Dongsheng Li, and Yuqing Yang. 2026. Rebellious Stu-dent: Reversing Teacher Signals for Reasoning Exploration with Self-Distilled RLVR. arXiv preprint arXiv:2605.10781 (2026). [12] Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redfield, Michael Collins, Ankur Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Kenton Lee, et al. 2019. Natural questions: a benchmark for question answering research. 
+
+Transactions of the Association for Computational Linguistics 7 (2019), 453–466. [13] Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2024. Let’s verify step by step. In International Conference on Learning Representations ,Vol. 2024. 39578–39601. [14] Yifeng Liu, Shiyuan Zhang, Yifan Zhang, and Quanquan Gu. 2026. Self-Distilled Policy Gradient. arXiv preprint arXiv:2606.04036 (2026). [15] Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang, Jinyang Wu, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao, Yueting Zhuang, et al. 2026. Self-distilled agentic reinforcement learning. arXiv preprint arXiv:2605.15155 (2026). [16] Xufang Luo, Yuge Zhang, Zhiyuan He, Zilong Wang, Siyun Zhao, Dongsheng Li, Luna K Qiu, and Yuqing Yang. 2025. Agent Lightning: Train Any AI Agents with Reinforcement Learning. arXiv preprint arXiv:2508.03680 (2025). [17] Alex Mallen, Akari Asai, Victor Zhong, Rajarshi Das, Daniel Khashabi, and Han-naneh Hajishirzi. 2023. When not to trust language models: Investigating effec-tiveness of parametric and non-parametric memories. In Proceedings of the 61st annual meeting of the association for computational linguistics (volume 1: Long papers) . 9802–9822. [18] Zibin Meng and Kani Chen. 2026. CRAFT: Counterfactual Credit Assignment from Free Sibling Rollouts for Self-Distilled Agentic Reinforcement Learning. 
+
+arXiv preprint arXiv:2606.29476 (2026). [19] Andrew Y Ng, Daishi Harada, and Stuart Russell. 1999. Policy invariance un-der reward transformations: Theory and application to reward shaping. In Icml ,Vol. 99. Citeseer, 278–287. [20] Ofir Press, Muru Zhang, Sewon Min, Ludwig Schmidt, Noah A Smith, and Mike Lewis. 2023. Measuring and narrowing the compositionality gap in language models. In Findings of the Association for Computational Linguistics: EMNLP 2023 .5687–5711. [21] Qwen Team. 2025. Qwen2.5 Technical Report. arXiv:2412.15115 [cs.CL] https: //arxiv.org/abs/2412.15115 [22] Stéphane Ross, Geoffrey Gordon, and Drew Bagnell. 2011. A reduction of im-itation learning and structured prediction to no-regret online learning. In Pro-ceedings of the fourteenth international conference on artificial intelligence and statistics . JMLR Workshop and Conference Proceedings, 627–635. [23] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 
+
+(2017). [24] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. 2024. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 (2024). [25] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2020. ALFWorld: Aligning text and em-bodied environments for interactive learning. arXiv preprint arXiv:2010.03768 
+
+(2020). [26] Charlie Snell, Dan Klein, and Ruiqi Zhong. 2022. Learning by distilling context. 
+
+arXiv preprint arXiv:2209.15189 (2022). [27] Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2022. MuSiQue: Multihop Questions via Single-Hop Question Composition. 
+
+Transactions of the Association for Computational Linguistics 10 (2022), 539–554. [28] Vladimir Vapnik and Akshay Vashist. 2009. A new learning paradigm: Learning using privileged information. Neural networks 22, 5-6 (2009), 544–557. [29] Hao Wang, Guozhi Wang, Han Xiao, Yufeng Zhou, Yue Pan, Jichao Wang, Ke Xu, Yafei Wen, Xiaohu Ruan, Xiaoxin Chen, et al. 2026. Skill-SD: Skill-Conditioned Self-Distillation for Multi-Turn LLM Agents. arXiv preprint arXiv:2604.10674 
+
+(2026). [30] Jiaqi Wang, Wenhao Zhang, Weijie Shi, Yaliang Li, and James Cheng. 2026. TCOD: Exploring Temporal Curriculum in On-Policy Distillation for Multi-Turn Autonomous Agents. arXiv preprint arXiv:2604.24005 (2026). [31] Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, et al. 2025. RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn Re-inforcement Learning. arXiv preprint arXiv:2504.20073 (2025). [32] Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu, Kaide Zeng, Yu Wang, Siwei Han, Yiyang Zhou, Xujiang Zhao, Haifeng Chen, et al. 2026. SkillRL: Evolving Agents via Recursive Skill-Augmented Reinforcement Learning. arXiv preprint arXiv:2602.08234 (2026). [33] Hongling Xu, Qi Zhu, Heyuan Deng, Jinpeng Li, Lu Hou, Yasheng Wang, Lifeng Shang, Ruifeng Xu, and Fei Mi. 2025. KDRL: Post-Training Reasoning LLMs via Unified Knowledge Distillation and Reinforcement Learning. arXiv preprint arXiv:2506.02208 (2025). [34] Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. 2026. TIP: Token Importance in On-Policy Distillation. arXiv preprint arXiv:2604.14084 (2026). [35] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 (2025). [36] Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi Wang, and Nan Duan. 2026. Self-Distilled RLVR. 
+
+arXiv preprint arXiv:2604.03128 (2026). [37] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christopher D Manning. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 conference on empirical methods in natural language processing . 2369–2380. [38] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. WebShop: Towards scalable real-world web interaction with grounded language agents. 
+
+Advances in Neural Information Processing Systems 35 (2022), 20744–20757. [39] Tianzhu Ye, Li Dong, Xun Wu, Shaohan Huang, and Furu Wei. 2026. On-policy context distillation for language models. arXiv preprint arXiv:2602.12275 (2026). [40] Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. 2026. Self-Distilled Reasoner: On-Policy Self-Distillation for Large Language Models. arXiv preprint arXiv:2601.18734 (2026). 10 Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous 
+
+## A Experimental and Implementation Details 
+
+This section expands the compact setup in Section 5.1. It describes the benchmark protocols and baseline groups, then documents the skill provider, named configurations, and optimization settings used in our experiments. 
+
+## A.1 Benchmarks 
+
+Our evaluation covers embodied household control, interac-tive web navigation, and search-augmented question answering. Table 4 summarizes the evaluation sets, primary metrics, and maximum interaction horizons. 
+
+ALFWorld. ALFWorld [25] presents household tasks through a text interface derived from embodied environments. Given an in-struction and textual observations, the agent must select admissi-ble actions while satisfying object-state and receptacle precondi-tions. We report success over 128 validation tasks spanning Pick, Look, Clean, Heat, Cool, and Pick2. The 50-turn limit makes ALF-World the longest-horizon benchmark in the primary suite and ex-poses errors in ordering, state tracking, and recovery from invalid actions. 
+
+WebShop. WebShop [38] requires an agent to search a simulated product catalog, inspect candidate attributes, preserve constraints from a natural-language request, and complete a purchase. Each checkpoint evaluates 128 tasks sampled from goals 0–499. The en-vironment reports a normalized task score for partial constraint satisfaction and a binary success measure for exact completion. Its 15-turn interaction budget is shorter than ALFWorld but still re-quires multi-stage search, comparison, and selection. 
+
+Search-based QA. Following Search-R1 [9], the agent issues search queries, reads retrieved evidence, and returns an an-swer within four tool-use turns. The aggregate covers Natural Questions [12], TriviaQA [10], PopQA [17], HotpotQA [37], 2WikiMultihopQA [7], MuSiQue [27], and Bamboogle [20]. These datasets mix direct retrieval and multi-hop evidence synthesis. The primary runs evaluate the full seven-dataset 51K collection every 75 optimizer steps, whereas the 𝜂 sweep uses a 504-example development subset every 15 steps. 
+
+## A.2 Metrics and Reward Construction 
+
+For 𝑁 evaluation tasks and seven Search datasets 𝒟 , the reported aggregates are Succ ALF = 100 𝑁 
+
+> 𝑁
+
+∑
+
+> 𝑛=1
+
+1[task 𝑛 succeeds ], 
+
+EM Search = 1|𝒟 | ∑
+
+> 𝑑∈ 𝒟
+
+100 𝑁 𝑑 𝑁 𝑑 
+
+∑
+
+> 𝑛=1
+
+1[̂𝑎 𝑑,𝑛 = 𝑎 𝑑,𝑛 ], 
+
+Score WS = 100 𝑁 
+
+> 𝑁
+
+∑
+
+> 𝑛=1
+
+taskscore 𝑛 ,
+
+Succ WS = 100 𝑁 
+
+> 𝑁
+
+∑
+
+> 𝑛=1
+
+1[taskscore 𝑛 = 1]. 
+
+ALFWorld also reports success by task family, and Search reports the exact match for each constituent dataset before taking their unweighted macro-average. WebShop score and success are com-plementary: the former preserves partial task completion, whereas the latter requires every purchase constraint to be satisfied. All evaluations use temperature-0.4 sampling. The episode reward manager places accumulated outcome re-ward on the final valid response token before advantage estimation. ALFWorld uses 10 1[won ], WebShop uses 10 1[done ∧ taskscore =1] , and Search uses 1[exact match ]. Invalid-action penalty co-efficients are 0.1 for ALFWorld/WebShop and 0.01 for Search; reference-policy coefficients are 0.01, 0.01, and 0.001, respectively. These terms form 𝑟 base before Eq. 7. 
+
+## A.3 Baselines 
+
+The baselines differ in whether they optimize only terminal out-comes, expose natural-language skills to the acting policy, or use a privileged teacher to supply token-level supervision. 
+
+Prompting and outcome-only reinforcement learning. Vanilla evaluates the original instruction-tuned backbone without post-training. Skill-Prompt uses the same frozen policy but appends a task-relevant skill during evaluation, isolating the benefit of direct inference-time guidance. GRPO [24] samples multiple trajectories per task and derives a group-relative advantage from scalar out-comes. Skill-GRPO retains the GRPO objective while supplying skills during training, and the starred variant also supplies them during evaluation. GiGPO [5] augments outcome-driven learning with step-aware group credit and serves as a stronger backbone in the 150-step component study. 
+
+Privileged self-distillation. OPSD [40] uses ordinary and privi-leged contexts to obtain student and teacher predictions from the same model. GRPO+OPSD combines its auxiliary token objective with outcome-based RL. Skill-SD [29] supplies trajectory-derived skills to the teacher branch, while RLSD [36] uses teacher–student differences to modulate token updates. SDAR [15] introduces re-trieved procedural skills and a confidence-gated auxiliary distilla-tion loss. These methods provide the closest comparison for de-termining whether privileged guidance is more effective when in-jected into the native reward-to-advantage path. 
+
+Comparison setup. All unstarred methods are evaluated without privileged skills. We follow the benchmark, training, and evalua-tion setup of SDAR [15] and use the same interaction protocols across the compared model configurations. 
+
+## A.4 Skill Provider and Memory Construction 
+
+The provider contains 37 general skills and 90 task-specific skills. All 619 source memories come from the designated training splits: 223 for ALFWorld (113 successful and 110 failed), 196 for Search (132/64), and 200 for WebShop (120/80). The skill configuration fol-lows the official SDAR setup [15], which adopts the SkillBank in-troduced by SkillRL [32]. The primary runs use compact skill doc-uments rather than appending individual memory records to the teacher prompt. Selection is deterministic rather than nearest-neighbor retrieval. The provider first selects an environment-level guide and then  
+
+> 11 Under Review, 2027, Anonymous Zhang et al.
+
+Table 4: Benchmark and evaluation details for the three agent environments. 
+
+Benchmark Interaction Development / evaluation use Primary metric Max turns ALFWorld Text household control 128 validation tasks Success (%) 50 WebShop Simulated web shopping 128 tasks/checkpoint from goals 0–499 Score and success (%) 15 Search Search-augmented QA 504-example development; 51K validation Seven-dataset macro EM (%) 4
+
+appends one task-matched file. ALFWorld maps six household task types to five skill files; Search maps metadata to direct-retrieval, multi-hop, entity-attribute, or comparison guidance; WebShop maps the requested product to one of seven categories. Skill text shares the prompt budget (2,048 tokens for ALFWorld and 4,096 for WebShop/Search). The ordinary branch and inference-time policy never receive this text. The teacher prefix is inserted verbatim as [Privileged Skill Information] , followed by a newline, the selected skill, and two newlines before the ordinary environment prompt. ALFWorld and WebShop require reasoning inside <think> tags and one admissible action inside <action> ; Search alternates <search> 
+
+queries with <information> observations and emits either one search query or a final <answer> per turn. 
+
+## A.5 Optimization and Named Configurations 
+
+Tables 5 and 6 collect the archived training configuration. 
+
+Table 5: Common optimization settings. 
+
+Setting Value Learning rate / weight decay 10 −6 / 0.01 LR warmup ratio 0 (Search main 3B: 0.1) PPO epochs / loss reduction 1 / token mean Rollouts per prompt 8Train / validation temperature 1.0 / 0.4 (sampling) Numeric type bfloat16 Gradient checkpointing enabled Actor / reference parameter offload disabled / enabled Teacher baseline / 𝜂 mode step / fixed Teacher temperature 𝑇 / gate 𝜏 1.0 / 2.0 Score-normalization 𝜖 10 −8 
+
+GateNorm default disabled Score normalization global or per-sequence GiGPO 𝛾 / step weight 0.95 / 1.0 GiGPO mode mean normalization Anchor similarity / threshold disabled / 0.95 
+
+All ADRS models are trained on multiple NVIDIA H100 GPUs. We follow the SDAR experimental configuration [15] for the benchmark interface, rollout schedule, and evaluation protocol, while replacing its optimization objective with the proposed reward-shaping framework. 
+
+ADRS-global uses step centering and batch-global scaling; 
+
+ADRS-per-seq changes only score scaling to per-sequence normal-ization in the matched fix3/fix4 comparisons. GateNorm applies Eq. 4.2; ADRS (no TVA) uses the corresponding environment con-figuration with 𝑚 = 1 . The primary ALFWorld row uses GRPO, L2+GateNorm, 𝜂 = 0.1 , entropy coefficient 0.01, asymmetric 
+
+Table 6: Primary optimization and environment settings.                                     
+
+> Setting ALFWorld WebShop Search Train batch 16 16 128 Eval batch 128 128 1024 Max turns 50 15 4Prompt length 2048 4096 4096 Response length 512 512 512 Truncation error error left PPO mini-batch 256 64 256 Micro-batch / GPU 16 816 Invalid-action penalty 0.1 0.1 0.01
+> 𝜂 0.1 0.02 0.05–0.1 KL coefficient 0.01 0.01 0.001
+
+clip bounds 0.2/0.28, and gradient clipping at 1.0. The primary WebShop row uses GRPO, L2 per-sequence normalization, and 
+
+𝜂 = 0.02 . The strongest 3B Search row at step 150 is the global-normalized 𝜂 = 0.05 run. The ALFWorld no-TVA/TVA rows in the component sequence instead share GiGPO and common optimization settings except the gate. 
+
+## A.6 TVA Levels and Non-Return Fallback 
+
+The implementation chooses one available level for an entire run; it does not fall back separately for each undersized group. 
+
+• Step-level TVA (L3): units are repeated GiGPO anchor states, and 𝑅 𝑢 is the pre-ADRS environment return-to-go. 
+
+• Completion-level TVA (L2): units are trajectories sam-pled for the same prompt, and 𝑅 𝑢 is the pre-ADRS comple-tion return. 
+
+• Token fallback (L1): when reference log-probabilities ex-ist but L2/L3 tensors do not, the implementation uses 
+
+𝑚 L1  
+
+> 𝑡
+
+= sg [𝜎(𝜏 (ℓ 𝑇 𝑡 − ℓ ref  
+
+> 𝑡
+
+))] , (15) where ℓref  
+
+> 𝑡
+
+is the detached frozen-reference score without skill text. This fallback contains no return and is not a TVA estimator. At L2/L3, a group with fewer than two units is assigned 𝑑 𝑔 = 0 and hence 𝑚 = 0.5 ; it does not dynamically fall back to another level. Turning TVA off is different: it sets 𝑚 = 1 .
+
+## A.7 Canonical Training Procedure 
+
+Algorithm 1: ADRS training iteration. Input: behavior policy 𝜋 𝜃 𝑏 ,task batch, skill provider 𝜌 , teacher scale 𝜂 , selected gate level, and backbone ℬ. Output: updated actor parameters 𝜃 .(1) Sample 𝐾 ordinary-context trajectories per task from 𝜋 𝜃 𝑏 
+
+and record valid-token masks, environment outcomes, and the backend’s base token rewards. (2) With 𝜃 𝑏 frozen, compute ordinary scores ℓ𝑏 and skill-conditioned scores ℓ𝑇 on the same sampled tokens. Treat  
+
+> 12 Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous
+
+both score tensors and all subsequent teacher-branch quantities as detached. (3) Compute the step-centered and normalized teacher score ̂ 𝑞 
+
+with Eq. 2. (4) If TVA is enabled, compute the selected L2/L3 return con-trast and detached gate with Eqs. 4–4.2; if L1 is selected, use Eq. 15; otherwise set 𝑚 = 1 .(5) Form and save the teacher token reward 𝑟 𝑇 = 𝜂𝑚̂𝑞 , and form the shaped token reward ̃ 𝑟 = 𝑟 base + 𝑟 𝑇 as in Eq. 7. (6) Trajectory path: use the backbone’s native credit construc-tion on ̃ 𝑟 to obtain 𝐴 traj . For the step-shared no-TVA/L2/L3 cases, the teacher reward has zero within-step sum, so this trajectory score equals the base-reward trajectory score. For GiGPO, retain its native step-level credit branch unchanged. (7) Token path: whiten the saved 𝑟 𝑇 over valid tokens within each prompt group 𝑔 to obtain the detached token modula-tion 𝑍 𝑇 𝑡 = (𝑟 𝑇 𝑡 − 𝜇 𝑇 𝑔 )/ √(𝜎 𝑇 𝑔 )2 + 𝜖 .(8) Merge the two paths once at token level, 𝐴 ADRS  
+
+> 𝑖,𝑘,𝑡
+
+= 𝐴 traj  
+
+> 𝑖,𝑘
+
++𝜂𝑍 𝑇 𝑖,𝑘,𝑡 , and detach the combined coefficient. For GiGPO, add 
+
+𝜂𝑍 𝑇 to the episode-level advantage before combining it with the unchanged native step-level credit. (9) Optimize Eq. 12 with the backend’s configured clipping, KL, entropy, and gradient-control terms unchanged. Within the ADRS actor term, only the current actor log-probability re-ceives gradient; native entropy, KL, and other regularizers retain their configured gradients. (10) Commit the updated actor as the behavior policy for the next iteration. 
+
+## B Proofs and Scope of the Identities 
+
+Proof of Proposition 2. By the definition of 𝑏 𝑠 , ∑𝑗∈ 𝒱 𝑠 𝑞 𝑠,𝑗 =∑𝑗 ℓ𝑇 𝑠,𝑗 − | 𝒱 𝑠 |𝑏 𝑠 = 0 . Division by a positive scalar shared within the step preserves the zero sum, as does multiplication by the step-shared 𝜂𝑚 𝑠 ; hence ∑𝑗∈ 𝒱 𝑠 𝑟 𝑇 𝑠,𝑗 = 0 . For any ordering (𝑗 1, … , 𝑗 𝑛 𝑠 ),define Φ𝑠,1 = 0 and Φ𝑠,𝑟+1 = Φ 𝑠,𝑟 + 𝑟 𝑇 𝑠,𝑗 𝑟 . Then 𝑟 𝑇 𝑠,𝑗 𝑟 = Φ 𝑠,𝑟+1 − Φ 𝑠,𝑟 
+
+directly, and the endpoint is Φ𝑠,𝑛 𝑠 +1 = ∑ 𝑛 𝑠  
+
+> 𝑟=1
+
+𝑟 𝑇 𝑠,𝑗 𝑟 = 0 . The claim covers the canonical no-TVA, L2, and L3 cases when the gate is constant over the same valid-token set used for centering. It preserves only the unweighted shaping mass on that sampled step; it is neither a discounted-return guarantee nor a fixed, path-independent Markov potential. 
+
+Proof of Proposition 1. Write ̄ 𝑅 𝑔 = 𝔼 𝑔 [𝑅] . With 𝜖 = 0 ,
+
+𝑑 𝑔 = 𝔼 𝑔 [𝛼𝑅]̄ 𝛼 𝑔 
+
+− 𝔼 𝑔 [(1 − 𝛼)𝑅] 1 −̄ 𝛼 𝑔 
+
+= 𝔼 𝑔 [𝛼𝑅] −̄ 𝛼 𝑔 ̄ 𝑅 𝑔 ̄𝛼 𝑔 (1 −̄ 𝛼 𝑔 ) = Cov 𝑔 (𝛼, 𝑅)̄ 𝛼 𝑔 (1 −̄ 𝛼 𝑔 ) .
+
+The denominator is positive under the stated condition. GateNorm either divides by another positive scalar or leaves 𝑑 𝑔 unchanged, and the sigmoid with 𝜏 > 0 is strictly increasing, proving the sign statement. With finite 𝜖 , the implemented contrast is a stabilized approximation to the covariance identity. Its sign and magnitude approach Eq. 6 when both group-weight sums dominate 𝜖 ; no exact sign equivalence is claimed in the degenerate regime. 
+
+Proof of Proposition 3. Under the exact old-logprob condition 
+
+ℓ𝑏 𝑡 = log 𝜋 𝜃 𝑏 (𝑦 𝑡 ∣ 𝑐 𝑡 ) from Proposition 3, at 𝜃 𝑏 we have 𝜔 𝑡 = 1 
+
+and ∇𝜃 𝜔 𝑡 = 𝜔 𝑡 ∇𝜃 log 𝜋 𝜃 = ∇ 𝜃 log 𝜋 𝜃 . The valid-token reduction, samples, 𝐴 0𝑡 , Δ𝐴 𝑡 , and 𝑎 𝑡 are fixed, so direct differentiation gives Eqs. 13 and 14. Setting 𝑎 𝑡 = Δ𝐴 𝑡 makes their score-weighted gra-dients equal at that evaluation point. The gradient equality is local. Away from the behavior-policy point, the ADRS coefficient is multiplied by 𝜔 𝑡 whereas the auxil-iary log-likelihood coefficient is not, and PPO clipping can separate them further. The result excludes full-vocabulary KL/JSD, repre-sentation matching, non-detached gates, post-combination advan-tage re-normalization, and an entire multi-epoch PPO update. It does not commute 𝑓 through Adv ℬ: ADRS’s coefficient is explic-itly Δ𝐴 = Adv ℬ(𝑟 base + 𝑓 ) − Adv ℬ(𝑟 base ).
+
+## C Supplementary Results C.1 Teacher Scale and Score Normalization 
+
+Table 7 reports the Search development-set sweep over the teacher scale 𝜂 . The best standard-checkpoint and late-training settings differ: 𝜂 = 0.05 is strongest at step 150, whereas 𝜂 = 0.1 reaches the highest observed late checkpoint. The 𝜂 = 0.005 run peaks early and falls to 9.6 at step 150, showing that an excessively weak teacher coefficient can produce unstable checkpoint be-havior rather than a smooth reduction toward the outcome-only baseline. 
+
+Table 7: Search development-set sensitivity to 𝜂 for ADRS-global+GateNorm. 
+
+𝜂 Step 150 Peak Peak step Behavior 0.10 36.8 42.1 285 Strong late rise 0.05 36.9 38.1 135 Best at standard point 0.02 35.2 40.3 270 Slower late rise 0.005 9.6 38.3 90 Early peak, collapse 
+
+Table 8 compares global and per-sequence score normalization in matched fix3/fix4 pairs. Global normalization is stronger on ALFWorld and full Search, while per-sequence normalization is stronger on WebShop. This environment dependence explains why the main table uses benchmark-specific ADRS configurations rather than one universally selected normalization rule. 
+
+Table 8: Best observed percentages for matched global (fix3) versus per-sequence (fix4) normalization runs. Each pair changes only normalize_mode .             
+
+> Environment / setting Global Per-seq Higher ALFWorld 90.6 82.8 Global WebShop 79.7 82.0 Per-seq Search, full 40.5 38.4 Global
+> 13 Under Review, 2027, Anonymous Zhang et al.
+
+## C.2 Complete Long-Horizon and Ablation Matrices 
+
+Table 9 expands the representative 300-step results in the main text to every named variant. Best, final, and last-three values dis-tinguish peak attainment from late-training persistence. Table 10 similarly separates fixed-step comparisons from peak and trajec-tory summaries, clarifying the contributions of ADRS, TVA, and the underlying backbone. 
+
+Optimization dynamics. The selected ALFWorld ADRS curve crosses 70% at approximately step 70, while the published SDAR curve crosses that threshold near step 130, corresponding to a 1.9 ×
+
+faster rise in terms of optimizer steps. Entropy trajectories also distinguish stable and aggressive variants: ADRS-global remains near 0.6 and ADRS+TVA ends near 0.34, whereas the entropy/clip variant rises to 8.63 and becomes unstable. 
+
+## C.3 Action–Object Token Diagnostic 
+
+Table 11 provides the exact values underlying Figure 6. The action-to-other magnitude ratio rises from 1.6 at initialization to 95.3 at step 150 and remains high at step 250. After this stage, task perfor-mance approaches saturation and the policy changes more slowly, which explains the shift in the object term and the smaller ratio at the final checkpoint. 
+
+## C.4 Training Dynamics across Models and Domains 
+
+Figures 9–10 show the full 3 ×3 grid across Qwen2.5-3B, Qwen2.5-7B, and Qwen3-1.7B on ALFWorld, Search, and WebShop. Success generally rises over training, but the interaction statistics differ by environment: ALFWorld and WebShop often shorten episodes as success improves, whereas Search remains constrained to a small number of tool turns. Together, these trajectories show consistent optimization progress across model families and agentic domains. 
+
+> 14
+
+Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous 
+
+Table 9: Complete 300-step result matrix. “Best” is the highest observed checkpoint of the named run; Search uses the full 51K evaluation at step 300. Rows characterize named variants rather than one universal configuration. 
+
+Environment Configuration Best Final Last-3 Interpretation ALFWorld GRPO 92.2 86.7 86.2 Local outcome-only baseline GiGPO 96.9 91.4 93.0 Strong step-level baseline ADRS (no TVA), GiGPO 96.1 92.2 91.9 Fixed teacher scale ADRS+TVA, GiGPO 96.9 94.5 94.3 Stronger reported late checkpoints ADRS-global+GateNorm, GRPO 96.1 89.8 90.6 Primary step-150 system ADRS-global+entropy/clip, GRPO 97.7 96.1 96.1 Strongest late-stage run WebShop GRPO 78.9 78.9 75.3 Local outcome-only baseline ADRS (no TVA) 82.8 82.8 80.2 Fixed teacher scale ADRS-per-seq (primary) 82.0 78.9 77.3 Step-150 primary run ADRS-per-seq (late) 84.4 84.4 77.9 Highest final checkpoint ADRS-per-seq+GateNorm 84.4 82.0 78.9 Peak at step 275 
+
+Table 10: Complete ablation and backbone matrix. Last-3 is the mean of the final three reported checkpoints. 
+
+Environment Evaluation Factor Reference Ref. Variant Delta 
+
+Fixed-step local comparisons 
+
+ALFWorld Step 150 ADRS on GiGPO GiGPO 82.8 ADRS+TVA 89.8 +7.0 ALFWorld Step 150 Centered ADRS GiGPO 82.8 ADRS (no TVA) 87.5 +4.7 ALFWorld Step 150 TVA ADRS (no TVA) 87.5 ADRS+TVA 89.8 +2.3 ALFWorld Step 150 Primary system Local GRPO 84.4 Primary ADRS 94.5 +10.1 WebShop Step 150 ADRS system GRPO 63.3 ADRS-per-seq 76.6 +13.3 Search Step 150 ADRS GRPO 38.4 ADRS-global 38.3 -0.1 
+
+Descriptive peak and trajectory summaries 
+
+ALFWorld Peak Backbone GRPO 92.2 GiGPO 96.9 +4.7 ALFWorld Peak ADRS on GRPO GRPO 92.2 ADRS-entropy/clip 97.7 +5.5 ALFWorld Peak TVA ADRS (no TVA) 96.1 ADRS+TVA 96.9 +0.8 ALFWorld Last-3 TVA ADRS (no TVA) 91.9 ADRS+TVA 94.3 +2.4 WebShop Peak ADRS GRPO 78.9 ADRS (no TVA) 82.8 +3.9 WebShop Peak GateNorm ADRS-per-seq 82.0 +GateNorm 84.4 +2.4 Search Step 300 ADRS-global GRPO 40.2 ADRS-global 40.5 +0.3 
+
+Table 11: Theory-oriented token diagnostic on four fixed ALFWorld trajectories. Values are signed log-probability differences, not KL terms. 
+
+Step Action Object Other |Action |/| Other |
+
+0 -0.2509 0.3089 0.1552 1.6 50 -0.5155 0.4150 0.1037 5.0 100 -0.5563 0.2354 0.0539 10.3 150 -0.8582 0.4591 0.0085 95.3 200 -0.9665 0.3516 0.0373 26.1 250 -0.9089 0.4475 0.0229 39.5 300 -1.3105 -0.3664 0.5108 2.6 
+
+15 Under Review, 2027, Anonymous Zhang et al. 0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Success Rate (%)
+
+72% 
+
+ALFWorld 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60 
+
+70 
+
+49% 
+
+Search 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+61% 
+
+WebShop 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Success Rate (%)
+
+72% 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60 
+
+70 
+
+54% 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+68% 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Success Rate (%)
+
+49% 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+60 
+
+70 
+
+47% 
+
+0 25 50 75 100 125 150 
+
+Step 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+56% 
+
+> Qwen2.5-3B Qwen2.5-7B Qwen3-1.7B
+
+Figure 9: ADRS success-rate dynamics across three environments and three model configurations. Light lines are checkpoint traces and dark lines are smoothed trends. 
+
+> 16
+
+Agentic Reinforcement Learning with Self-Distilled Reward Shaping Under Review, 2027, Anonymous 0 50 100 150 
+
+Step 
+
+20 
+
+30 
+
+40 
+
+> Episode Length
+
+ALFWorld 
+
+0 50 100 150 
+
+Step 
+
+2.25 
+
+2.50 
+
+2.75 
+
+3.00 
+
+3.25 
+
+Search 
+
+0 50 100 150 
+
+Step 
+
+6
+
+8
+
+10 
+
+12 
+
+14 
+
+WebShop 
+
+0 50 100 150 
+
+Step 
+
+20 
+
+30 
+
+40 
+
+> Episode Length
+
+0 50 100 150 
+
+Step 
+
+2.0 
+
+2.2 
+
+2.4 
+
+2.6 
+
+2.8 
+
+3.0 
+
+0 50 100 150 
+
+Step 
+
+6
+
+8
+
+10 
+
+12 
+
+14 
+
+0 50 100 150 
+
+Step 
+
+20 
+
+30 
+
+40 
+
+50 
+
+> Episode Length
+
+0 50 100 150 
+
+Step 
+
+2.1 
+
+2.2 
+
+2.3 
+
+2.4 
+
+2.5 
+
+2.6 
+
+0 50 100 150 
+
+Step 
+
+7
+
+8
+
+9
+
+10 
+
+11 
+
+50 
+
+75 
+
+100 
+
+125 
+
+150 
+
+80 
+
+100 
+
+120 
+
+140 
+
+120 
+
+140 
+
+160 
+
+180 
+
+> Response Length
+
+50 
+
+100 
+
+150 
+
+200 
+
+90 
+
+95 
+
+100 
+
+105 
+
+140 
+
+160 
+
+180 
+
+200 
+
+> Response Length
+
+90 
+
+100 
+
+110 
+
+120 
+
+130 
+
+50 
+
+60 
+
+70 
+
+80 
+
+160 
+
+180 
+
+200 
+
+220 
+
+240 
+
+> Response Length
+> Qwen2.5-3B Qwen2.5-7B Qwen3-1.7B
+
+Episode Length Response Length 
+
+Figure 10: Episode- and response-length dynamics across three environments and three model configurations. Top: mean episode length. Bottom: mean response length. Light lines show checkpoint traces, and dark lines show smoothed trends. 
+
+17

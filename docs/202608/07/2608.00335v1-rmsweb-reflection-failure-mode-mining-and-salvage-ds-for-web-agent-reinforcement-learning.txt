@@ -1,0 +1,683 @@
+Title: RMSWeb: Reflection, Failure-Mode Mining, and Salvage-DS for Web Agent Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.00335v1
+
+Published Time: Tue, 04 Aug 2026 00:18:10 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# RMSWeb: Reflection, Failure-Mode Mining, and Salvage-DS for Web Agent Reinforcement Learning 
+
+Chengbo Liu 1∗, Lifang Zhou 1∗, Ruijie Yan 1∗, Pei Tan 1, Ao Sun 2,Haojun Huang 1, Guichun Hua 1, Sining Wei 1, Yining Chen 1, Yingying He 1†, Yutao Xie 1†
+
+> 1
+
+Microsoft, Beijing, China 
+
+> 2
+
+Southeast University, Nanjing, China chengboliu@microsoft.com, yingyhe@microsoft.com, yutaoxie@microsoft.com 
+
+Abstract 
+
+Compact web agents can reduce deployment cost, but training them poses challenges in both data collection and post-SFT reinforcement learning (RL). Successful trajectories are ex-pensive to collect and often contain inefficient detours. After supervised fine-tuning (SFT), full trajectory corpora are dom-inated by routine states; moreover, when group-relative RL is applied to web actions, inadequately designed action-level rewards can yield weak or misleading relative updates, while groups rejected as unsuitable for such updates receive no fall-back learning signal. We present RMSWeb, a three-part recipe for Qwen3-VL-Instruct at 8B and 32B. Reflection-conditioned retries increase collection yield and shorten successful tra-jectories; failure-mode mining concentrates offline RL on critical states exposed by the SFT policy; and Salvage-DS combines an action-semantic polarized reward, contrast-and-competence-gated dynamic sampling, and action-only anchor for rejected groups. Policies trained with reflection-collected data use up to 19.7% fewer action steps on solved tasks. On WebVoyager, Online-Mind2Web, and WebTailBench, RM-SWeb improves over SFT by 2.4–7.0 points at 8B and 1.2–7.7 points at 32B. Our 8B model also achieves the strongest re-ported Online-Mind2Web result among similarly sized open-weight models in our comparison and a leading reported accuracy–cost trade-off on WebVoyager and WebTailBench, with the caveat that external evaluation protocols differ. 
+
+Introduction 
+
+Web agents use language or vision-language models to inter-pret browser observations—screenshots, DOM/HTML, and accessibility trees—and emit structured actions such as click-ing or typing into page elements, scrolling, switching tabs, and navigating to URLs (Zhang et al. 2024; Nguyen et al. 2025). Large proprietary agents can be capable but expen-sive: repeated inference over long interaction traces and mul-tiple attempts raises cost and latency, motivating compact open-weight alternatives. Training compact agents exposes two broad challenges. First, successful multi-step trajectories are expensive to col-lect and often contain avoidable detours, so training data must improve both success yield and step efficiency (Nakano et al. 2021; Gur et al. 2024; Lù et al. 2024). Second, improv-ing a strong SFT policy through offline RL requires effective 
+
+> ∗
+
+These authors contributed equally. 
+
+> †
+
+Corresponding author. 
+
+data selection and optimization. Most trajectory states may already be routine for the policy, while supervised action-level rewards and group-relative updates can provide weak or unreliable guidance on the remaining failures. We study these challenges through a shared Browser Use interface for collection, training-data generation, and live-web evaluation (Browser Use Contributors 2024). RMSWeb addresses the data challenge through reflection-conditioned collection and failure-mode mining, and the opti-mization challenge through Salvage-DS. Reflection improves collection yield and shortens successful trajectories; mining selects critical states exposed by the SFT policy; and Salvage-DS admits relative RL only for groups with reward contrast and a competent rollout while routing rejected groups to action-only supervision. We train offline by scoring sampled actions against veri-fied targets. RMSWeb improves over SFT on WebVoyager, Online-Mind2Web, and WebTailBench at both model scales, while reflection-collected data reduces action steps under matched decoding. Under our fixed live-web evaluation pro-tocol, the 8B model achieves 86.39% on WebVoyager and 57.74% on WebTailBench; in the source-reported accuracy– cost comparison of Figure 1, these results place it on the leading frontier. Together, these results support three contributions: 1. A reflective, multi-round data-collection pipeline that, for seed tasks, yields more successful trajectories and more step-efficient ones — so the trained policy completes tasks in up to 19.7% fewer action steps under matched decod-ing. 2. A failure-mode-guided miner that turns the SFT model’s own failures into a small, targeted RL corpus of failure-critical steps (with ground-truth actions), instead of run-ning RL over the full dataset. 3. Salvage-DS, a step-level RL algorithm whose three com-ponents fix the ways group-relative RL stalls on a strong SFT policy: a polarized high-variance reward, a contrast-and-competence-gated dynamic sampler, and a salvage anchor that turns the groups the sampler rejects from RL into supervised teaching on hard states and anti-forgetting on solved ones, all in one objective. arXiv:2608.00335v1 [cs.AI] 31 Jul 2026 $0.01 $0.1 $1 
+
+Cost / task (USD, log) 
+
+> 60
+> 70
+> 80
+> 90
+> 100
+> Task success (%)
+
+(a) WebVoyager    
+
+> $0.02 $0.1 $1 $5
+
+Cost / task (USD, log) 
+
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+
+(b) WebTailBench  
+
+> Ours 8B
+> Fara-7B
+> UI-TARS-1.5-7B
+> GLM-4.1V-9B-Thinking
+> OpenAI computer-use-preview
+> SoM Agent (GPT-5)
+> SoM Agent (o3) Open-weight
+> Proprietary/API
+
+Figure 1: Pass@ k accuracy–inference-cost trade-offs on WebVoyager and WebTailBench. Curves show independent-rollout pass@1/2/3. Our 8B model uses token-accounted single-run costs; external single-run accuracies and costs are reported by Fara-7B, with pass@2/3 accuracies reconstructed from its figures. All repeated-rollout costs use the nominal budget Ck = kC 1
+
+without early stopping. Evaluation protocols differ across sources. 
+
+Related Work 
+
+Web and GUI agents. Web agents specialize (M)LLM-driven GUI agents for browser observation, grounding, and action (Zhang et al. 2024; Nguyen et al. 2025). Interfaces range from HTML/DOM to screenshots with Set-of-Mark or learned visual grounding (Yang et al. 2023; Cheng et al. 2024; Gou et al. 2025); systems such as SeeAct and UI-TARS integrate these capabilities end to end (Zheng et al. 2024; Qin et al. 2025). Test-time methods instead improve a fixed policy through reasoning, reflection, search, or workflow memory (Yao et al. 2023; Shinn et al. 2023; Koh et al. 2024a; Gu et al. 2024; Wang et al. 2024). We use reflection only to collect training data, update the weights, and retain single-rollout de-ployment through Browser Use (Browser Use Contributors 2024). 
+
+Training data: collection, synthesis, and curation. Hu-man demonstrations are costly, motivating trajectory synthe-sis from indirect knowledge or tutorials (Ou et al. 2024; Xu et al. 2025), reverse task synthesis (Sun et al. 2025), and environment exploration (Murty et al. 2025; Pahuja et al. 2025). Related systems generate curricula, tasks, or inter-action data for self-improvement (Qi et al. 2025; Bai et al. 2024; Putta et al. 2024; He et al. 2024a; Zhou et al. 2024b; Su et al. 2025). These methods primarily expand data cover-age or volume; RMSWeb instead uses reflection to increase yield while shortening successful trajectories, then mines the current SFT policy’s failures into a compact critical-state curriculum. 
+
+Learning web-agent policies. Demonstration-based SFT underlies WebGPT, WebAgent/HTML-T5, and WebLINX (Nakano et al. 2021; Gur et al. 2024; Lù et al. 2024), although WebGPT also uses rejection sampling against a human-preference reward model. Beyond imitation, AutoWebGLM bootstraps with rejection sampling and RL (Lai et al. 2024), and WebAgent-R1 applies end-to-end multi-turn RL (Wei et al. 2025); data-centric RL systems are summarized above. Our offline objective is closest to step-level action-reward methods: GUI-R1 uses verifiable rewards over GUI action components, while SRL provides dense similarity-based re-wards from expert step trajectories (Luo et al. 2025; Deng et al. 2026). We adopt action matching rather than claim it as new; our contribution is competence-aware routing and action-only salvage, building on PPO, GRPO, and DAPO (Schulman et al. 2017; Shao et al. 2024; Yu et al. 2025). 
+
+Benchmarks and evaluation. Evaluation spans offline action prediction (Mind2Web), self-hosted execution (We-bArena and VisualWebArena), live-web tasks (WebVoy-ager and Online-Mind2Web), and full-OS control (OSWorld) (Deng et al. 2023; Zhou et al. 2024a; Koh et al. 2024b; He et al. 2024b; Xue et al. 2025; Xie et al. 2024). BrowserGym unifies many environments (de Chezelles et al. 2024). We use three live-web benchmarks and treat externally reported computer-use systems only as protocol-qualified reference points (Awadallah et al. 2025). 
+
+Reflective Collection and Failure-Critical Data Mining 
+
+Naive trajectory collection has two shortcomings: indepen-dent teacher attempts often fail, and even successful runs can contain avoidable detours. We therefore condition each retry on a reflection distilled from the preceding attempt. This turns prior experience into recovery guidance, increas-ing the yield of usable successful trajectories while steering the teacher toward shorter paths for SFT. RL data pose a different problem: most trajectory steps are routine states already mastered by SFT, so training on the full corpus dilutes the sparse decisions where the policy still fails. We therefore contrast same-task executions and mine critical steps where a successful trajectory and a failed/inefficient trajectory diverge. The resulting compact curriculum uses successful executions to specify what action to learn, while failed or inefficient executions identify where RL training should be concentrated. 
+
+Seed tasks and reflective trajectory collection 
+
+Starting from a pool of seed tasks, this pipeline builds an SFT corpus covering 5K+ tasks through seed generation, reflection-conditioned collection, and quality filtering. Rel-ative to otherwise identical non-reflective collection, reflec-tion raises usable-success yield and shortens collected trajec-tories; the reflective-collection yield analysis in the appendix quantifies the yield, and the reflection ablation (Table 3) shows the shorter trajectories carrying through to fewer ac-tion steps in the trained policy. 
+
+Seed-task generation. We sample anonymized user search queries from a commercial web search platform, with-out manual curation or difficulty filtering, and use an LLM to transform them into executable web-agent tasks with explicit websites, objectives, and constraints. 
+
+Reflection-conditioned collection. Our teacher model, GPT-5.1, produces a trajectory τN ; a reflection handler then summarizes its failures and recovery strategy, together with the previous reflection, into ρN ; the full prompt appears in the appendix. The next round conditions every state on this reflection: 
+
+τN = ( sN 
+
+> 1
+
+, a N 
+
+> 1
+
+, . . . , s NTN , a NTN , done) ,ρN = R(τN , ρ N −1),
+
+˜sN +1  
+
+> t
+
+= sN +1  
+
+> t
+
+⊕ ρN .
+
+where sNt and aNt denote the observation and structured teacher action at step t of round N ; TN is the trajectory length and ρ0 = ∅. Here ˜sN +1  
+
+> t
+
+is the reflection-conditioned observation and ⊕ denotes context concatenation. Figure 2 illustrates this loop, which stops after two successes or five rounds. Reflection guides only collection: we discard ρN
+
+when constructing SFT records and retain the raw (sNt , a Nt )
+
+pairs from successful trajectories. 
+
+Quality filtering. We retain successful trajectories with complete, valid step records, no stalled action loops, and 3– 30 effective steps, thereby excluding trivial or pathologically long runs. 
+
+Corpus and flattening. The appendix reports the retained trajectories’ distribution across eleven top-level activity cat-egories. Flattening the trajectories produces 150k+ per-step action and extraction samples for SFT. 
+
+Failure-mode-guided critical-step mining 
+
+The full trajectory distribution is a poor RL curriculum be-cause routine transitions dominate the comparatively few failure-critical decisions. We instead compare executions of the same task to find the last state-aligned action divergence whose surrounding evidence matches an assigned failure mode, then retain only the successful-side decision. Figure 3 illustrates the critical step identification process. 
+
+Validation-derived failure prior. We analyze the frozen SFT policy on a held-out development split containing nei-ther benchmark tasks nor benchmark-specific action rules, yielding the task-agnostic taxonomy reported in the ap-pendix. For each same-task contrast, an LLM judge assigns a category and confidence from the task, actions, and termi-nal summaries. This label acts only as a soft search prior, favoring local windows where the successful branch avoids the failure mode and the localization branch exhibits it. 
+
+Divergence search. The mining pool augments the SFT collection with unsuccessful runs that SFT filtering discards. We primarily pair a verified success τ + with an unsuccessful execution τ loc of the same task; as a secondary signal, we pair the shortest success with longer successes to expose detours. We enumerate non-terminal step pairs from late to early and require comparable pre-action states—measured by URL/path, visible DOM elements, agent memory, and normalized progress—but different ensuing actions. After removing search-only and wait/scroll/back-only differences, we rank candidates by state alignment, action contrast, and local failure-mode evidence, retaining the highest-scoring pair that passes validity, visual-context, and progress gates. This alignment supports trajectories with different lengths and navigation routes; the appendix gives the scoring details. 
+
+Quality control. We remove malformed, low-scoring, trivial, or visually unusable pairs, balance categories and do-mains, apply stricter gates to runtime/evaluation failures, and cap technical obstructions at 10%. This yields 4.5k critical-state examples. For the selected divergence (i∗, j ∗), only 
+
+(s+ 
+
+> i∗
+
+, a + 
+
+> i∗
+
+) enters RL: GRPO samples actions conditioned on 
+
+s+ 
+
+> i∗
+
+and scores them against the verified a+ 
+
+> i∗
+
+. The localization branch is only for data generation, not used in the RL stage. 
+
+The Salvage-DS RL Algorithm 
+
+We first SFT Qwen3-VL-8B-Instruct and Qwen3-VL-32B-Instruct on the successful trajectories, then initialize RL from the best SFT checkpoints. Training details are in the ap-pendix. Training is offline: at each mined state, the policy samples actions and is scored against a verified target without live-browser execution. Online outcome-based RL is left to future work. Because web actions are structured, exact matching can erase meaningful near-misses, while generic text similarity can reward a wrong element, value, or URL. We therefore use a polarized action-semantic reward tailored to web interac-tion; the appendix gives the action-specific rules. Salvage-DS combines this reward with contrast-and-competence-gated dynamic sampling, which rejects uninformative or untrust-worthy groups from relative RL, and an action-only salvage anchor for retained rejected groups. The complete objective below gives the joint objective. Figure 4 maps each compo-nent to the pathology it repairs; Figure 5 shows the complete training flow. 
+
+Group-relative optimization pathologies 
+
+Our SFT model already achieves pass@3 ≫ pass@1, so a natural goal of RL is to convert multi-sample competence into single-run reliability. For a group of K rollouts, GRPO Live website · round N 
+
+> Task
+> Complete a multi -step interaction on the target site
+> Teacher trajectory ×
+> Failure / Detour
+
+× Task failed or redundant steps   
+
+> What failed?
+> Blocked path, missed constraint, ...
+> Reflection handler
+> Distill from previous runs
+> How to recover?
+> Task -specific execution guidance
+> √
+> Live website · round N + 1
+> Task with reflection
+> Injected into every browser state
+> Conditioned trajectory √
+> Successful path
+
+√    
+
+> Quality Control
+> Success · 3 -30 steps · No loops
+> Successful
+> Quality filter
+> SFT corpus
+> Raw state –action pairs
+> Flatten
+> is never added to corpus
+> Learn from
+> failure
+> Condition
+> retry
+> Retain
+> success
+> Reflection loop —stop after 2 successes or 5 rounds, whichever comes first
+> Illustrative example only; success is not guaranteed
+
+Figure 2: Reflective trajectory collection. A reflection handler distills current trajectory τN and the previous reflection into a task-specific guidance, which is injected into every browser state of the next round, but never added to the final corpus. Success 
+
+Failure   
+
+> Similar states Different actions
+> Local evidence : failure pr ior is avoided
+> Local evidence : failure prior is proved
+> Se arch direction
+
+Figure 3: Failure-mode-guided RL data generation. For the same task, a verified successful trajectory τ + is contrasted with a localization trajectory τ loc that fails or takes a detour. We search the last critical divergence, where the two steps have comparable states, different actions, and local evidence that explains the failure. uses the relative advantage ˆAi = ( ri − μg )/σ g , which ex-poses three optimization pathologies in web-agent training: 
+
+(i) Unfaithful reward contrast gives missing or mislead-ing feedback. Exact matching maps distinct near-misses to the same score, eliminating relative signal; generic similarity can instead rank a semantically wrong web action too high. Even with a faithful reward, uniform policy samples retain no contrast (Yu et al. 2025; Deng et al. 2026). 
+
+(ii) No competent rollout gives no trustworthy positive. 
+
+If every action is wrong but rewards differ, the highest-reward wrong action still receives positive relative advantage. 
+
+(iii) Rejected groups lack a fallback signal. Without salvage, unsolved groups receive no correction and mastered groups receive no retention, so the former remain unlearned while the latter can drift under shared updates. Salvage-DS therefore accepts relative RL only when a group has both reward contrast and a competent rollout; re-jected groups receive ground-truth action supervision, cor-recting hard states and anchoring mastered ones. Salvage-DS component Optimization pathology       
+
+> (1) Polarized reward
+> faithful web-action contrast
+> (2) Contrast + competence DS
+> reject if σg< ϵ σor max irg,i <rcomp
+> (3) Salvage anchor
+> GT supervision on rejected groups
+> F1
+> missing / misleading contrast
+> F2
+> no competent rollout
+> F3
+> no fallback after rejection
+
+Figure 4: Salvage-DS maps each optimization pathology to the component that repairs it. (1) A web-action-semantic po-larized reward restores faithful contrast when generic rewards erase or misrank action differences (F1). (2) Contrast-and-competence-gated dynamic sampling rejects residual low-contrast groups (F1) and groups with no competent rollout (F2), rather than reinforcing an untrustworthy positive. (3) 
+
+The salvage anchor supplies a fallback gradient to retained rejected groups—correcting unsolved states and anchoring mastered ones (F3). 
+
+Polarized step-level reward 
+
+Binary exact matching aliases near-misses with failures, whereas generic string similarity can reward semantically wrong actions (e.g., adjacent click indices or a nearly iden-tical URL with the wrong date). We instead use a polarized, action-semantic reward: action-specific rules map outputs to 1.0 (exact), 0.7 (core-correct), 0.3 (right action type but wrong key parameter), or 0.0 (invalid/wrong action). This preserves meaningful contrast without relying on surface similarity; the full rubric and spacing analysis are in the appendix. 
+
+Contrast- and competence-gated Dynamic Sampling 
+
+DS admits relative feedback only when it is both informative 
+
+and trustworthy . For rewards {rg,i }Ki=1 , the std gate requires within-group contrast ( σg ≥ ϵσ ), while the competence gate Figure 5: Salvage-DS training flow. For each failure-critical state, the policy samples K actions, applies the polarized reward, and computes group std σg and maximum reward mg = max i rg,i . Groups passing both gates are accepted into relative RL; rejection by either gate routes the group to the action-only salvage anchor. Refill supplies exactly 64 accepted groups, whereas the salvage branch retains up to 64 rejected groups, rounded down to a multiple of 16. The relative-RL, salvage, and KL terms form the joint update, after which the updated policy is sampled again. requires at least one competent rollout ( max i rg,i ≥ rcomp ): 
+
+kg = 1[σg ≥ ϵσ ]
+
+| {z }
+
+> std gate
+
+· 1[max i rg,i ≥ rcomp ]
+
+| {z }
+
+> competence gate
+
+,
+
+ˆAg,i = kg (rg,i − μg )/(σg + ε).
+
+(1) Here σg is the Bessel-corrected sample standard deviation and ε = 10 −6 stabilizes normalization. A group rejected by either gate can have nonzero raw normalized advantages, but the mask sets every gated ˆAg,i to zero; it contributes neither relative-RL loss nor gradient. Refill generates until 64 groups are accepted; up to 64 rejected groups are retained for salvage (see the configuration in the appendix). Unlike binary-count filtering in DAPO (Yu et al. 2025), the graded std gate detects uniform intermediate outcomes, and the competence gate supplies an absolute correctness bar. Both use raw, KL-free rewards. 
+
+The salvage anchor on rejected groups 
+
+For retained rejected samples Drej , the salvage anchor applies ground-truth NLL only over the action span Ai:
+
+Lsalv (θ) = − Ei∈D rej 
+
+h 1
+
+> |Ai|
+
+X
+
+> t∈Ai
+
+log πθ
+
+ aGT  
+
+> i,t
+
+| · i
+
+.
+
+This term is weighted by λsalvage in the joint objective. Its cross-entropy gradient strongly teaches hard states whose target action is unlikely, but is naturally small on confident mastered states, where it anchors against forgetting. The full reasoning-plus-action response remains in context, but only action tokens receive loss, correcting the decision without imposing the teacher’s reasoning style. The routing anal-ysis in the appendix gives the resulting teach-while-doing dynamics and per-group gradient. 
+
+Complete objective 
+
+Collecting the polarized reward R, dynamic-sampling ad-vantage ˆA, and salvage anchor Lsalv , the actor minimizes 
+
+L(θ) = − Ei∈A , t 
+
+h
+
+min  ρi,t ˆAi, ρ clip  
+
+> i,t
+
+ˆAi
+
+i
+
++ λsalvage Lsalv (θ) + β KL( πθ ∥πref ),
+
+(2) where ρi,t = πθ (oi,t )/π θold (oi,t ) is the importance ratio, 
+
+ρclip  
+
+> i,t
+
+= clip( ρi,t , 1−ϵlo , 1+ ϵhi ) its clipped form with asym-metric range [ϵlo , ϵ hi ] = [0 .2, 0.32] . The dynamic-sampling acceptance mask kg (Eq. 1) partitions the sampled rollouts into the accepted set A = {i : kg(i)=1 } (informative groups, whose gated advantage ˆAi drives the first term) and the re-jected set Drej = {i : kg(i)=0 } (the same set salvaged by 
+
+Lsalv ). Here πref is the frozen SFT policy. Thus each roll-out contributes to either the GRPO/PPO-clip surrogate or the salvage anchor, with a standard KL brake. The corresponding per-group gradient is derived in the appendix. We apply this objective to the mined corpus at both model scales. Standard stabilizers and all hyper-parameters are de-tailed in the appendix. 
+
+Experiments 
+
+Setup and evaluation protocol 
+
+We evaluate on WebVoyager (He et al. 2024b), Online-Mind2Web (Xue et al. 2025), and WebTailBench (Awadal-lah et al. 2025), three complementary live-web benchmarks, and report LLM-judged task success (%), primarily pass@1; pass@ k denotes success in at least one of k attempts. No training task matches a benchmark task under our lexical-overlap tests. Dataset definitions, contamination checks, ag-gregation, and task-retention details are in the appendix. We compare, at both 8B and 32B, the untuned Qwen3-VL-Instruct base, the SFT model, and our full SFT + RL model (with the ablations reported below). Table 1 also includes representative proprietary, open-weight, and larger-scale sys-tems reported in their source papers. The full protocol for Model / System Size / Access Tasks (WV / OM2W / WTB) WV OM2W WTB                                                                                           
+
+> Proprietary / API
+> SoM Agent (o3) (Awadallah et al. 2025) Closed F595 / 300 / 609 79.3 55.4 52.7 SoM Agent (GPT-5) (Awadallah et al. 2025) Closed F595 / 300 / 609 90.6 57.7 60.4 OpenAI computer-use-preview (Awadallah et al. 2025) Closed F595 / 300 / 609 70.9 42.9 25.7 Gemini CUA preview (Gupta et al. 2026) Closed F595 / 300 / 609 88.6 †57.3 ‡63.0 †
+> Claude Sonnet 4 (Yan et al. 2026) Closed 12 sites / 291 / — 80.5 ‡67.7 ‡—
+> Open-weight models
+> UI-TARS-1.5-7B (Awadallah et al. 2025) 7B F595 / 300 / 609 66.4 31.3 19.5 GLM-4.1V-9B-Thinking (Awadallah et al. 2025) 9B F595 / 300 / 609 66.8 33.9 22.4 Fara-7B (Awadallah et al. 2025) 7B F595 / 300 / 609 73.5 34.1 38.4 MolmoWeb-8B (Gupta et al. 2026) 8B F595 / 300 / 609 78.2 †35.3 †49.5 †
+> Weblica-8B (Kar et al. 2026) 8B — / 300 / NR —39.2 33.5 GUI-Owl-1.5-8B-Thinking (Xu et al. 2026) 8B NR / 300 / — 78.1 ‡48.6 ‡—Qwen3-VL-235B-A22B-Thinking (Yang et al. 2026) 235B MoE (22B active) F595 / 300 / — 66.4 ‡63.7 ‡—
+> Ours (same evaluation harness)
+> Qwen3-VL-8B-Instruct (base) 8B 588 / 300 / 609 51.13 36.56 23.31 + SFT 8B 588 / 300 / 609 82.65 59.44 55.39 + SFT + RL 8B 588 / 300 / 609 86.39 66.44 57.74
+> Qwen3-VL-32B-Instruct (base) 32B 588 / 300 / 609 75.68 53.67 39.57 + SFT 32B 588 / 300 / 609 86.45 66.11 51.62 + SFT + RL 32B 588 / 300 / 609 87.64 68.11 59.28
+
+Table 1: Task success (%) on WebVoyager (WV), Online-Mind2Web (OM2W), and WebTailBench (WTB). Our results are means over three independent Pass@1 evaluations under one shared protocol; bold marks the best result within each of our model sizes. External results follow source protocols. † denotes a reported mean over 3–5 evaluations; ‡ denotes a reported Pass@1 result for which repeated-run averaging is not reported. NR and dashes denote unreported task counts and results, respectively. our runs — the fixed Browser Use harness, per-benchmark judges, live-site freshness and task exclusions, and the decod-ing configuration — is detailed in the appendix. WebVoyager task counts differ by source: F595 is Fara’s LLM-verified sub-set of the original 643 tasks, while our Browser Use-based retained set contains 588 tasks after excluding 55 outdated or unverifiable task IDs. For WebTailBench, we use the same DOM-aware judge pipeline as for WebVoyager, as also done by MolmoWeb (Gupta et al. 2026), rather than Fara’s native precomputed-rubric verifier. The latter reads success evi-dence primarily from screenshots, whereas our policy acts on a combined screenshot + DOM observation. Evaluation details are in the appendix. 
+
+Main results 
+
+Table 1 reports task success rate on the three benchmarks. SFT already lifts the 8B base substantially, and RL on the failure-mode-mined corpus adds a further consistent gain across all three benchmarks, giving our best 8B model. Failure-mode-mined RL improves all three benchmarks at both scales. Over SFT, it adds 3.7 / 7.0 / 2.4 points at 8B and 1.2 / 2.0 / 7.7 points at 32B on WebVoyager / Online-Mind2Web / WebTailBench, indicating that the recipe scales with model size. On Online-Mind2Web, our 8B and 32B models reach 66.44 and 68.11 under our evaluation harness. Source-reported external values use different harnesses; for context, Claude Sonnet 4 reports 67.7 and Qwen3-VL-235B reports 63.7. On WebVoyager and WebTailBench, GPT-5-/Gemini-based agents reach higher absolute pass@1, but at much higher inference cost; Figure 1 shows our 8B agent on the best accuracy–cost frontier on both, matching or exceeding those systems per dollar and, with a few repeated attempts, reaching their accuracy at a fraction of the cost. (The Fara-7B numbers are quoted from its paper (Awadallah et al. 2025) under a different evaluation harness and serve only as an external reference point; see the evaluation protocol in the appendix.) We run the ablations in the ablation subsection on the 8B model. 
+
+Ablation studies 
+
+RL recipe. Table 2 compares the full 8B recipe with three controls. Full-corpus RL replaces the mined curricu-lum with the full SFT-style dataset; anchor-free RL sets 
+
+salvage_weight to zero. DAPO uses the same mined data, polarized reward, and KL brake, but removes the com-petence gate and salvage anchor and uses DAPO-style Clip-Higher. Full-corpus RL trails by 2.0 / 5.7 / 4.8 points on Web-Voyager / Online-Mind2Web / WebTailBench, showing that targeted mining matters beyond additional RL. Removing only the salvage anchor costs 1.7 / 5.9 / 1.0 points. DAPO trails by 1.5 / 3.8 / 3.0 points despite sharing the mined data and reward, supporting the combined benefit of competence-aware routing and salvage. The dual corrective and retention roles of the anchor are detailed in the Salvage-DS routing analysis in the appendix. Variant Change vs. full recipe WebVoyager Online-Mind2Web WebTailBench Ours (full recipe) — 86.39 66.44 57.74 
+
+Full-corpus RL No failure-mode mining 84.41 60.78 52.99 Anchor-free RL salvage_weight = 0 84.69 60.56 56.71 DAPO No competence gate or salvage anchor 84.92 62.67 54.74 Table 2: Ablation of the RL recipe (task success rate, %).                        
+
+> WebVoyager Online-Mind2Web WebTailBench 8B SFT training data Acc Avg. steps (succ.) Acc Avg. steps (succ.) Acc Avg. steps (succ.) With reflection 82.65 9.57 59.44 15.96 55.39 14.83
+> Without reflection 83.28 10.99 60.78 19.42 50.14 18.47 Steps saved 12.9% 17.8% 19.7%
+
+Table 3: Reflection ablation for 8B SFT. The two models use the same training recipe and decoding settings, differing only in whether reflection is used during trajectory collection. Steps are averaged over successfully completed tasks; steps saved is 
+
+1 − steps with /steps without .
+
+Reflection-conditioned collection. Holding the 8B SFT recipe fixed, we vary only whether its trajectories were col-lected with reflection. Under the same evaluation settings (Table 3), reflection leaves accuracy essentially unchanged on WebVoyager and Online-Mind2Web and improves Web-TailBench by +5 .3 points, while reducing success-task steps by 12.9–19.7% across all three benchmarks. This mirrors the shorter training trajectories reflection collects (13.7 vs. 16.2 steps). Reflection’s separate effect on collection yield is reported in the reflective-collection yield analysis in the ap-pendix. We therefore adopt reflection as our default: it buys step efficiency and a clear WebTailBench gain at no accu-racy cost on the shorter-horizon WebVoyager and Online-Mind2Web. 
+
+Training behavior 
+
+Logged reward-gate, action log-probability, KL, clipping, and rollout-perplexity metrics reveal consistent behavior at both scales. The fixed mined curriculum progressively moves from no-competence rejection toward mastered-state rejec-tion, while the policy reverses its initial preference for plau-sible but wrong actions by raising the correct action’s likeli-hood. KL, clipping, and rollout perplexity remain bounded, indicating learning rather than unstable self-sharpening. Full training-dynamics analysis is reported in the appendix. 
+
+Conclusion 
+
+We presented RMSWeb, a three-part recipe — reflective multi-round data collection, failure-mode mining after SFT, and Salvage-DS offline RL — for training vision-language web agents at 8B and 32B. In our post-SFT offline RL set-ting, the results show complementary benefits from select-ing failure-critical states and retaining supervision when a sampled group is unsuitable for a relative update. Failure-mode mining identifies the critical states, while Salvage-DS combines an action-semantic polarized reward, competence-aware dynamic sampling, action-only anchoring, and a KL brake. Across the three benchmarks, RMSWeb improves over SFT by 2.4–7.0 points at 8B and 1.2–7.7 points at 32B. Ab-lations show that the full method outperforms RL on the full corpus, anchor-free RL, and a DAPO baseline using the same mined data and polarized reward. We will release the trained model weights and inference framework. The training data are undergoing compliance review and will also be released if approved. 
+
+Limitations and future work. Our RL is offline: rewards come from step-level matching against ground-truth actions, not from executing the agent in a live environment. This is simpler and cheaper but caps the ceiling — the reward is a proxy for task success rather than success itself, and it cannot credit novel-but-valid strategies that diverge from the ground truth. The most promising next step is online RL in a real browser with outcome-based rewards, where the training signal is the evaluation metric; the cost is a live, re-settable environment with its latency, non-determinism, and safety concerns. Other open items: the failure-mode taxon-omy and local evidence rules are heuristic and LLM-assisted, and learned (process) reward models or trajectory-level ob-jectives could replace hand-specified step matching. 
+
+References 
+
+Awadallah, A.; et al. 2025. Fara-7B: An Efficient Agentic Model for Computer Use. arXiv preprint arXiv:2511.19663 .Bai, H.; et al. 2024. DigiRL: Training In-The-Wild Device-Control Agents with Autonomous Reinforcement Learning. In Advances in Neural Information Processing Systems .Browser Use Contributors. 2024. Browser Use: Make Web-sites Accessible for AI Agents. Open-source software, https: //github.com/browser-use/browser-use. Accessed: 2026-07-20. Cheng, K.; Sun, Q.; Chu, Y.; Xu, F.; YanTao, L.; Zhang, J.; and Wu, Z. 2024. SeeClick: Harnessing GUI Grounding for Advanced Visual GUI Agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 9313–9332. Bangkok, Thailand: Association for Computational Linguistics. de Chezelles, T. L. S.; et al. 2024. The Browser-Gym Ecosystem for Web Agent Research. arXiv preprint arXiv:2412.05467 .Deng, X.; et al. 2023. Mind2Web: Towards a Generalist Agent for the Web. In Advances in Neural Information Pro-cessing Systems .Deng, Y.; et al. 2026. Supervised Reinforcement Learning: From Expert Trajectories to Step-wise Reasoning. In Inter-national Conference on Learning Representations .Gou, B.; et al. 2025. Navigating the Digital World as Hu-mans Do: Universal Visual Grounding for GUI Agents. In 
+
+International Conference on Learning Representations .Gu, Y.; et al. 2024. Is Your LLM Secretly a World Model of the Internet? Model-Based Planning for Web Agents. arXiv preprint arXiv:2411.06559 .Gupta, T.; Wolters, P.; Ma, Z.; Sushko, P.; Pang, R. Y.; Llanes, D.; Yang, Y.; Anderson, T.; Zheng, B.; et al. 2026. Mol-moWeb: Open Visual Web Agent and Open Data for the Open Web. arXiv:2604.08516. Gur, I.; et al. 2024. A Real-World WebAgent with Planning, Long Context Understanding, and Program Synthesis. In 
+
+International Conference on Learning Representations .He, H.; et al. 2024a. OpenWebVoyager: Building Multimodal Web Agents via Iterative Real-World Exploration, Feedback and Optimization. arXiv preprint arXiv:2410.19609 .He, H.; et al. 2024b. WebVoyager: Building an End-to-End Web Agent with Large Multimodal Models. In Annual Meeting of the Association for Computational Linguistics .Kar, O. F.; Bachmann, R.; Gong, Y.; Larsen, A. B. L.; and De-hghan, A. 2026. Weblica: Scalable and Reproducible Train-ing Environments for Visual Web Agents. arXiv:2605.06761. Koh, J. Y.; et al. 2024a. Tree Search for Language Model Agents. arXiv preprint arXiv:2407.01476 .Koh, J. Y.; et al. 2024b. VisualWebArena: Evaluating Mul-timodal Agents on Realistic Visual Web Tasks. In Annual Meeting of the Association for Computational Linguistics .Lai, H.; et al. 2024. AutoWebGLM: A Large Language Model-Based Web Navigating Agent. In ACM SIGKDD Conference on Knowledge Discovery and Data Mining .Lù, X. H.; et al. 2024. WebLINX: Real-World Website Nav-igation with Multi-Turn Dialogue. In International Confer-ence on Machine Learning .Luo, R.; et al. 2025. GUI-R1: A Generalist R1-Style Vision-Language Action Model for GUI Agents. arXiv preprint arXiv:2504.10458 .Murty, S.; Zhu, H.; Bahdanau, D.; and Manning, C. D. 2025. NNetNav: Unsupervised Learning of Browser Agents Through Environment Interaction in the Wild. In ICLR Work-shop on Self-Improving Foundation Models without Human Supervision .Nakano, R.; et al. 2021. WebGPT: Browser-Assisted Question-Answering with Human Feedback. arXiv preprint arXiv:2112.09332 .Nguyen, D.; Chen, J.; Wang, Y.; Wu, G.; Park, N.; Hu, Z.; Lyu, H.; Wu, J.; Aponte, R.; Xia, Y.; Li, X.; Shi, J.; Chen, H.; Lai, V. D.; Xie, Z.; Kim, S.; Zhang, R.; Yu, T.; Tanjim, M.; Ahmed, N. K.; Mathur, P.; Yoon, S.; Yao, L.; Kveton, B.; Kil, J.; Nguyen, T. H.; Bui, T.; Zhou, T.; Rossi, R. A.; and Dernoncourt, F. 2025. GUI Agents: A Survey. In Find-ings of the Association for Computational Linguistics: ACL 2025 , 22522–22538. Vienna, Austria: Association for Com-putational Linguistics. Ou, T.; Xu, F. F.; Madaan, A.; Liu, J.; Lo, R.; Sridhar, A.; Sen-gupta, S.; Roth, D.; Neubig, G.; and Zhou, S. 2024. Synatra: Turning Indirect Knowledge into Direct Demonstrations for Digital Agents at Scale. In Advances in Neural Information Processing Systems .Pahuja, V.; Lu, Y.; Rosset, C.; Gou, B.; Mitra, A.; White-head, S.; Su, Y.; and Awadallah, A. 2025. Explorer: Scal-ing Exploration-Driven Web Trajectory Synthesis for Mul-timodal Web Agents. In Findings of the Association for Computational Linguistics: ACL .Putta, P.; et al. 2024. Agent Q: Advanced Reasoning and Learning for Autonomous AI Agents. arXiv preprint arXiv:2408.07199 .Qi, Z.; et al. 2025. WebRL: Training LLM Web Agents via Self-Evolving Online Curriculum Reinforcement Learning. In International Conference on Learning Representations .Qin, Y.; et al. 2025. UI-TARS: Pioneering Automated GUI Interaction with Native Agents. arXiv preprint arXiv:2501.12326 .Schulman, J.; et al. 2017. Proximal Policy Optimization Algorithms. arXiv preprint arXiv:1707.06347 .Shao, Z.; et al. 2024. DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models. arXiv preprint arXiv:2402.03300 .Shinn, N.; et al. 2023. Reflexion: Language Agents with Verbal Reinforcement Learning. In Advances in Neural In-formation Processing Systems .Su, H.; et al. 2025. Learn-by-Interact: A Data-Centric Framework for Self-Adaptive Agents. arXiv preprint arXiv:2501.10893 .Sun, Q.; Cheng, K.; Ding, Z.; Jin, C.; Wang, Y.; Xu, F.; Wu, Z.; Jia, C.; Chen, L.; Liu, Z.; Kao, B.; Li, G.; He, J.; Qiao, Y.; and Wu, Z. 2025. OS-Genesis: Automating GUI Agent Tra-jectory Construction via Reverse Task Synthesis. In Annual Meeting of the Association for Computational Linguistics .Wang, Z. Z.; et al. 2024. Agent Workflow Memory. arXiv preprint arXiv:2409.07429 .Wei, Z.; et al. 2025. WebAgent-R1: Training Web Agents via End-to-End Multi-Turn Reinforcement Learning. In Confer-ence on Empirical Methods in Natural Language Processing .Xie, T.; et al. 2024. OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environ-ments. In Advances in Neural Information Processing Sys-tems .Xu, H.; Zhang, X.; Liu, H.; Wang, J.; Zhu, Z.; Zhou, S.; Hu, X.; Gao, F.; Cao, J.; et al. 2026. Mobile-Agent-v3.5: Multi-platform Fundamental GUI Agents. arXiv:2602.16855. Xu, Y.; Lu, D.; Shen, Z.; Wang, J.; Wang, Z.; Mao, Y.; Xiong, C.; and Yu, T. 2025. AgentTrek: Agent Trajectory Synthesis via Guiding Replay with Web Tutorials. In International Conference on Learning Representations .Xue, T.; et al. 2025. An Illusion of Progress? Assessing the Current State of Web Agents. In Conference on Language Modeling .Yan, D.; Zhang, H.; Huzhang, G.; Li, Y.; Wang, Y.; Chen, Q.-G.; Xu, Z.; Luo, W.; et al. 2026. M 2: Dual-Memory Augmentation for Long-Horizon Web Agents via Trajectory Summarization and Insight Retrieval. arXiv:2603.00503. Yang, J.; et al. 2023. Set-of-Mark Prompting Unleashes Extraordinary Visual Grounding in GPT-4V. arXiv preprint arXiv:2310.11441 .Yang, R.; Wu, Q.; Chen, Y.; Bai, H.; Yao, W.; Cheng, H.; Peng, B.; Zhang, H.; Zhang, T.; et al. 2026. OpenWebRL: Demystifying Online Multi-turn Reinforcement Learning for Visual Web Agents. arXiv:2606.02031. Yao, S.; et al. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In International Conference on Learning Representations .Yu, Q.; et al. 2025. DAPO: An Open-Source LLM Re-inforcement Learning System at Scale. arXiv preprint arXiv:2503.14476 .Zhang, C.; et al. 2024. Large Language Model-Brained GUI Agents: A Survey. arXiv preprint arXiv:2411.18279 .Zheng, B.; Gou, B.; Kil, J.; Sun, H.; and Su, Y. 2024. GPT-4V(ision) is a Generalist Web Agent, if Grounded. In Pro-ceedings of the 41st International Conference on Machine Learning , volume 235 of Proceedings of Machine Learning Research , 61349–61385. PMLR. Zhou, S.; et al. 2024a. WebArena: A Realistic Web Envi-ronment for Building Autonomous Agents. In International Conference on Learning Representations .Zhou, Y.; et al. 2024b. Proposer-Agent-Evaluator (PAE): Autonomous Skill Discovery for Foundation Model Internet Agents. arXiv preprint arXiv:2412.13194 .
+
+Evaluation protocol details 
+
+Benchmarks. WebVoyager contains 643 open-ended tasks across 15 live websites and uses an LLM outcome judge (He et al. 2024b); our retained live-task set is described below. Online-Mind2Web contains 300 tasks over 136 sites and uses the three-stage WebJudge protocol (Xue et al. 2025). Web-TailBench contains 609 complex tasks spanning 11 types, including transactional, multi-step, compositional, and cross-site workflows (Awadallah et al. 2025). 
+
+Evaluation harness. We fix a single evaluation harness: an instrumented fork of the open-source Browser Use frame-work (Browser Use Contributors 2024). All of our evalua-tions run in a live browser, with the fork driving a real desktop Chrome instance under 16-way concurrency — not an offline replay or sandbox. Every task is run exactly three times. 
+
+Metric. We micro-average judge-determined task success over retained tasks. A run succeeds only when the agent de-clares completion and passes the benchmark-specific check. Pass@ k is success in at least one of k independent attempts; main tables report pass@1. WebVoyager uses the retained 588-task set described below. 
+
+Contamination check. We compare every training task with all tasks in WebVoyager (643), Online-Mind2Web (300), and WebTailBench (609) using exact match, whole-question substring containment, and word-level 3-gram Jac-card/containment. Thresholds are 0.4/0.6 and are tightened by 0.6× for same-domain URLs. No training task passes any threshold. 
+
+Live-site freshness and exclusions. WebVoyager and WebTailBench both contain time-sensitive tasks (e.g., flight and hotel bookings tied to specific dates); for both, we re-fresh the affected prompts to future dates so that the tasks re-main executable on the live sites, applying the identical date-refresh procedure to each. For WebVoyager, our Browser Use-based retained set contains 588 tasks after excluding 55 of the original 643 task IDs as outdated and unrepairable by date edits; we apply this selection consistently and report scores on all 588 tasks. Within these 588, the 43 Cambridge Dictionary tasks are run as a separate pass—without the cus-tom desktop-Chrome user agent, whose presence trips their anti-bot defenses—and merged into the final aggregation. WebTailBench’s task set is used in full (only its date-bound prompts are refreshed, as above), and Online-Mind2Web is used without modification. This reflects an inherent limita-tion of live-web evaluation: absolute scores can drift as sites change, so all models we run are evaluated within the same time window. 
+
+Judges. We adapt each benchmark’s evaluation flow to a common GPT-4o judge served through a load-balanced API deployment. Our WebVoyager evaluation follows the browser-use WebVoyager judge (Browser Use Contribu-tors 2024): a multimodal outcome judge over the final re-sponse and the last four screenshots. Online-Mind2Web is scored with the official OSU-NLP WebJudge implementa-tion unchanged—its three-stage protocol (key-point identifi-cation, screenshot relevance scoring, and final verdict) over up to 30 screenshots—with only the judge model swapped to our common GPT-4o. WebTailBench uses the same We-bVoyager judge pipeline described above, as also done by MolmoWeb (Gupta et al. 2026). We use this shared outcome judge instead of Fara’s native precomputed-rubric verifier, which infers success primarily from screenshots. We justify this choice in the cross-harness check below. 
+
+Cross-harness check under Fara’s native judge 
+
+WebTailBench originates from Fara’s evaluation framework (Awadallah et al. 2025), whose native verifier reads success evidence primarily from screenshots and retains only the top-
+
+K of them. Our policy acts on a combined vision + DOM observation, so the judge’s input can be misaligned with what our policy is optimized against: success evidence our agent reads from the DOM, or from screenshots outside the top-K
+
+window, can be missed by the native verifier. To characterize this misalignment, we re-adjudicated every trajectory the native judge marked as a failure and identified the false negatives among them. These false negatives fall into three categories, whose shares we report from the full re-adjudication: 
+
+• DOM-only evidence ( ≈42%). The screenshots alone are insufficient to confirm success, but the agent’s DOM ob-servation ( browser_state ) contains the key facts that support its final answer. 
+
+• Incomplete screenshot reading (≈37%). The full screenshot sequence already suffices to prove success, but the judge overlooks some of the screenshots or later page states (e.g., evidence beyond the retained top-K window). 
+
+• Judge reasoning error ( ≈21%). The judge fabricates task requirements, misinterprets available evidence, or misapplies its unavailability / technical-block / critical-point policies—e.g., a genuinely valid booking whose search legitimately returns no matches (which Fara’s own rubric scores as success) is marked as a failure. As all three categories inflate the failure count indepen-dently of agent behavior, we score WebTailBench with the WebVoyager-style DOM-aware judge in our common harness rather than Fara’s native verifier, so that our vision + DOM policy is credited for DOM-surfaced success evidence. 
+
+Reflective-collection yield 
+
+Figure 6 compares collection with and without reflection on the round-1 failure tasks (1.5k+). Each round is one teacher-guided retry, and a task stops after two successes or five rounds; since all these tasks fail at round 1, the curves span rounds 2–5. We track solve@2 , the cumulative fraction of tasks that have reached two successful trajectories by each round—a task-level measure of how much usable training data accrues and how fast. Reflection leads at every round, and its solve@2 advantage widens monotonically with each retry, reaching +12 .7 points by round 5 ( 33 .6 vs. 20 .9). This yield advantage is a collection-side measure; the trained-policy step-efficiency effect of reflection is reported sepa-rately in the reflection ablation in the main paper. 
+
+Reflection prompt 
+
+Figure 7 shows the prompt used by the reflection handler 
+
+R(τN , ρ N −1) of the reflective-collection subsection. Given the current-round trajectory τN (rendered as a per-step sum-mary of URL, thinking, goal, and executed-action count) and, when available, the previous-round guide ρN −1, it distills a compact guidance ρN that is injected into every browser state of the next round and discarded when constructing SFT records. 
+
+Task-query set distribution 
+
+Figure 8 summarizes the domain composition of the task-query set used for data collection, aggregated into eleven top-level categories. The distribution is heavy-headed and long-tailed: transactional domains dominate, with E-Commerce (32.7%), Travel & Hospitality (21.0%), and Government (15.1%) together accounting for roughly two-thirds of all tasks, reflecting the everyday shopping, booking, and public-service intents that anchor our anonymized search-log seeds. 2 3 4 5 
+
+> 0
+> 10
+> 20
+> 30
+> 17.1
+> 26.5
+> 8.1
+> 14.8
+> 33.6%
+> 20.9%
+> +12 .7pt in round 5
+> Collection round k
+> Cumulative solve@2 (%)
+> With reflection
+> Without reflection
+
+Figure 6: Reflective-collection yield on round-1 failure tasks. 
+
+solve@2 is the cumulative fraction of tasks reaching two suc-cessful trajectories by round k; collection stops for each task after two successes or five rounds. Blue = with reflection, coral = without. The remaining mass is spread across Entertainment & Gam-ing (5.3%), Health (4.4%), Corporate & Careers (4.3%), Finance (4.0%), Education (3.7%), Real Estate (3.3%), and Local & Home Services (2.4%), with a small Other resid-ual (3.9%) grouping underrepresented micro-domains. This spread keeps the corpus centered on high-frequency web ac-tivities while still exercising a broad range of site types and interaction patterns. 
+
+SFT hyper-parameters 
+
+Shared setup. We fine-tune Qwen3-VL-8B-Instruct and 
+
+Qwen3-VL-32B-Instruct with LoRA (rank 64, α =128 , dropout 0.05, targets = all linear layers), the 
+
+qwen3_vl_nothink chat template, a context window of 12,000 tokens, and an image cap of 262,144 px. Optimiza-tion uses AdamW at learning rate 1 × 10 −4 with a cosine schedule and weight decay 0.01, in bf16 for 3 epochs. Per-device batch size is 1 and the random seed is 42. Both runs train on the reflective-collection dataset. 
+
+8B run. 1 node with 8 GPUs. Gradient accumulation is 4 (effective batch 32) and warmup ratio is 0.03. 
+
+32B run. 2 nodes with 8 GPUs each (16 GPUs total). Gra-dient accumulation is 2 (effective batch 32) and warmup ratio is 0.1. 
+
+Salvage-DS RL configuration 
+
+Backbone and initialization. We tune LoRA of rank 64 and α = 128 (dropout 0.0) on targets linear_qkv and 
+
+linear_proj , initialized from the SFT model with LoRA merged into the base weights. 
+
+Objective and reward. Group-relative advantages with dynamic sampling ( grpo_ds , GRPO + DS). The reward uses the levels in the reward section of the appendix via a Reflection Prompt                          
+
+> You are an expert at analyzing web-automation trajectories and extracting specific task patterns.
+> INPUTS
+> • Example task — Question ⟨TASK ⟩· Start URL ⟨START_URL ⟩· Domain ⟨DOMAIN ⟩· Success ⟨SUCCESS ⟩
+> • Complete trajectory ⟨TRAJECTORY ⟩(per step: URL, thinking, goal, # executed actions) • From round 2 onward — Previous guide ⟨PREVIOUS_GUIDE ⟩; refine it: fix errors, add missing insights, cut redundancy.
+> MISSION
+> Create a guide for the specific task pattern this trajectory represents: specific to ⟨DOMAIN ⟩’s UI, yet general across similar tasks on ⟨DOMAIN ⟩. Examples: “Find Walmart pharmacy near 123 Main St” →“Walmart: Find store services by location” “Search Amazon for Xbox controller under $50” →“Amazon: Search products with filters”
+> REQUIRED OUTPUT FORMAT
+> # TITLE: ⟨DOMAIN ⟩: [pattern in ≤10 words] # DESCRIPTION: [what it helps do, ≤30 words] ## ⟨DOMAIN ⟩-SPECIFIC INSIGHTS — 4–6 bullets ## PITFALLS ON ⟨DOMAIN ⟩— 2–4 bullets ## VERIFICATION — 2–4 bullets
+> STRICT LIMITS
+> • Total guide under 4000 characters • Title “ ⟨DOMAIN ⟩: [≤10 words]” · Description “[≤30 words]” • Concise, task-generalized
+> Angle-bracketed ⟨tokens ⟩are placeholders filled in at collection time.
+
+Figure 7: Reflection prompt used during reflection-conditioned trajectory collection. It turns one round’s trajectory (and, from round two onward, the previous round’s guide) into a compact guidance ρN that conditions the next round; angle-bracketed tokens are placeholders filled in at collection time. custom compute_score . Dynamic sampling uses near-tie tolerance ϵσ = 0 .10 and minimum competent reward 
+
+rcomp = 0 .55 ; the salvage weight is 0.10. The refill loop targets 64 informative groups with at most 16 generation batches per step. 
+
+Stability. Asymmetric PPO clipping [0 .2, 0.32] ; KL brake ( use_kl_loss , coefficient 10 −3, low_var_kl ); no entropy bonus. Learning rate 8 × 10 −6 with 
+
+seq-mean-token-mean loss aggregation. These choices suppress the self-sharpening pattern observed without the brake: the policy increases the positive/negative log-probability gap by suppressing negatives while KL, clipping, and rollout log-perplexity rise despite a reward plateau. No KL term is included in the reward. 
+
+Batching and lengths. Train batch 64, mini-batch 16, dy-namic batching capped at 20,480 tokens per GPU. Roll-outs per prompt n = 8. Sequence lengths: prompt ≤
+
+12 ,000 , response ≤ 2,048 . Refill always supplies 64 ac-cepted groups. If D rejected groups are available, the sal-vage branch retains S = 16 ⌊min( D, 64) /16 ⌋ groups; hence 
+
+S ∈ { 0, 16 , 32 , 48 , 64 } and contains 8S ≤ 512 rollout sam-ples. 
+
+Data. The failure-critical mined corpus contains 4.5k critical-step prompts. 
+
+Salvage-DS reward details 
+
+Table 4 jointly defines the four reward levels and their repre-sentative web-action semantics. Exact matching alone would score a formatting-only text variation like a wholly wrong input, erasing useful contrast. Generic sequence similarity has the opposite failure: click indices 18 and 19 are lexi-cally adjacent but can target different elements, while URLs with the wrong date or values such as “100” and “1000” can remain highly similar. We therefore first align action types, then compare task-critical fields (element, content, destina-tion, or success flag); text similarity is used only within an already aligned semantic field. Multi-action steps aggregate the resulting levels with weighted soft-F1. The polarized levels are spaced by at least 0.3. For a sin-gle action and eight rollouts, a 7-to-1 split between adjacent levels has Bessel-corrected sample std 0.3/√8 ≈ 0.106 ;an 8-to-0 split still has zero std. Thus the spacing exposes semantic disagreements when present but does not manufac-ture them. Uniform groups are handled by DS and the salvage anchor. 
+
+Salvage-DS routing 
+
+A teach-while-doing loop. RL repeatedly samples the same mined states, allowing the anchor and policy gradient to compound. When no rollout is competent, the action-only anchor raises the likelihood of the ground-truth action; the state can subsequently produce a competent rollout and grad-uate to GRPO. On mastered states, the same cross-entropy gradient is small but anchors the shared policy against for-getting. 
+
+Adaptive SFT–RL routing. The mask kg sends informa-tive groups with a competent rollout to GRPO and all other groups to the action-only anchor. Ignoring clipping notation, Other  3.9%           
+
+> Local & Home Services 2.4%
+> Real Estate 3.3%
+> Education 3.7%
+> Finance 4.0%
+> Corporate & Careers 4.3%
+> Health 4.4%
+> Entertainment & Gaming 5.3%
+> Government 15.1%
+> E-Commerce 32.7%
+> Travel & Hospitality 21.0%
+
+Figure 8: Distribution of the task-query set by categories. define 
+
+Gg = kg GRL  
+
+> g
+
++ (1 − kg )λsalvage GSFT  
+
+> g
+
++ βG KL ,GRL  
+
+> g
+
+= −Ei,t ∈g [ ˆAg,i ∇θ log πθ (oi,t )] ,GSFT  
+
+> g
+
+= −Ei,t ∈Ag [∇θ log πθ (aGT  
+
+> i,t
+
+| · )] .
+
+(3) Hence kg = 1 gives relative RL, whereas kg = 0 sup-plies supervised correction. The latter is strong when the ground-truth action is unlikely and naturally weak on confi-dent, mastered states. Thus, Salvage-DS dynamically routes groups between relative RL and action-only supervision dur-ing training. 
+
+Salvage-DS RL training dynamics 
+
+Curriculum progression. On the fixed mined states, the std-gate rejection share rises from ∼ 32% to ∼ 44% at 8B, while competence-gate rejection falls from ∼ 31% to ∼
+
+21% . Concurrently, best-of-8 reward increases ( 0.63 → 0.72 )and within-group std decreases ( 0.19 → 0.14 ). Together these trends indicate that hard states progressively become compe-tent and then mastered; refill maintains 64 accepted groups per update, while rejected groups are routed to salvage. 
+
+Targeted preference repair. At the SFT initialization, the mined states exhibit a negative correct-minus-wrong log-probability gap ( ≈ − 0.23 ). Training raises the correct branch (−0.59 → − 0.37 ), while the wrong branch changes little (−0.36 → − 0.41 ), bringing the gap to ≈ 0.04 . Thus the pol-icy repairs the targeted mis-preference rather than improving solely by suppressing negatives. 
+
+Self-sharpening and stability. Without the KL brake, the policy can increase separation between sampled pos-itive and negative branches much faster than reward im-proves: the log-probability gap and rollout_log_ppl 
+
+grow, while reward improves only gradually and may even temporarily regress. Concurrent sharp rises in ppo_kl and 
+
+pg_clipfrac indicate rapid policy drift and widespread clipping. This joint pattern is the self-sharpening finger-print: confidence and distribution shift outpace task-reward progress. With the KL brake and zero entropy bonus, Fig-ure 9c instead shows bounded KL, clip fraction, and rollout log-perplexity. 
+
+Critical-step mining details 
+
+Failure-label taxonomy. The validation-derived taxonomy contains the eleven operational categories in Table 5. The labels identify where task closure breaks rather than prescribing benchmark-specific behavior. Rule features pro-vide an initial prior from task constraints, action types, nu-meric and temporal cues, terminal behavior, and blocker sig-natures. An LLM judge receives the task, summaries of the two trajectories’ final steps, and these features, then assigns a category and confidence. A second pass reviews labels be-low confidence 0.70 ; when the LLM confidence is very low, the rule-derived category is used instead. In the final corpus, 4,356 labels (95.74%) come from the primary judgment and 194 (4.26%) from this second-pass review. 
+
+Overall candidate score. Every eligible state pair is ranked by the same aggregate score used throughout min-Action 1.0 : exact 0.7 : core-correct 0.3 : right type, wrong key parameter                     
+
+> 0.0 : wrong / invalid
+> click_element_ by_index all parameters match index matches; secondary flag differs index differs wrong action / invalid
+> scroll all parameters match direction and frame match; magnitude differs direction or frame differs wrong action / invalid
+> input_text all parameters match index matches; text similarity high wrong index or dissimilar text wrong action / invalid
+> go_to_url all parameters match host and path match; query may differ same action, wrong destination wrong action / invalid
+> search_engine query exactly matches query similarity high query similarity low wrong action / invalid
+> switch_tab /
+> close_tab
+> tab id matches —tab id differs wrong action / invalid
+> done all parameters match success flag matches; secondary field differs success flag missing success flag mismatches / invalid
+
+Table 4: Polarized reward levels and representative per-action matching rules. For every action, an exact parameter match receives 1.0; 0.7 preserves semantically correct near-misses, 0.3 marks the right action type with a wrong key parameter, and 0.0 denotes a wrong action or invalid output. Rules are illustrative; the full implementation covers all action types. ing: 
+
+Stotal = 0 .50 Sstate + 0 .25 Saction + 0 .25 Scategory .
+
+Here Sstate measures whether the two branches present com-parable browser states, Saction measures whether their next actions form a meaningful decision contrast, and Scategory 
+
+measures whether the local divergence is supported by the as-signed failure label. The following paragraphs describe these components in implementation order. 
+
+State alignment. For each pair of non-terminal pre-action states, the state component compares URL identity and path, overlap between visible DOM elements represented as tag– text tuples, similarity of the agent memories, and normalized progress through the two trajectories. We keep only pairs with a state score of at least 0.60 , different action composi-tions, and at least one non-trivial action. Pairs whose com-bined actions contain only search operations, or only wait ,
+
+scroll , and go_back , are removed. 
+
+Action contrast. The action component increases when the branches choose different action types or materially dif-ferent parameters, and when at least one branch performs a state-changing operation such as clicking, typing, selecting, navigating, extracting, or completing. It decreases for low-information differences dominated by passive navigation or repeated search. This favors divergences that represent con-sequential decisions rather than minor syntactic variation. 
+
+Failure-mode evidence. For the assigned failure category, we inspect a radius-two window around each candidate on both branches. The category component increases when the successful window exhibits the category’s desired closure behavior and the localization window exhibits the corre-sponding violation. It decreases when the localization branch already contains the same positive evidence, since that makes the contrast less diagnostic. The trajectory-level label con-fidence serves as a soft prior, so local behavioral evidence remains necessary even for a confident label. 
+
+Selection and post-filtering. We retain the highest-ranked candidate with Stotal ≥ 0.62 and Scategory ≥ 0.45 , valid model input and output, usable visual context on at least one branch, and a non-trivial successful-side progress ac-tion. Category-aware sampling and a 30% per-domain cap reduce source concentration. Runtime/evaluation examples must satisfy stricter confidence and diagnostic-signal gates, while anti-bot and technical-obstruction examples are down-sampled to at most 10% of the final corpus. 
+
+Qualitative positive/negative contrasts. Table 6 shows retained pairs from the final corpus. In each row the two branches face a comparable local state; the positive and neg-ative examples are the next actions from the successful and localization branches, respectively. Thus, the mined signal is not merely that the task is difficult: it identifies a local decision for which the action changes and nearby trajectory evidence connects that change to task progress or failure. 
+
+Optimization interface. The contrast disappears after mining. For each task, the miner retains only the selected successful-side observation and its verified action as an RL prompt–target pair. GRPO samples candidate actions from that observation and scores them against the verified suc-cessful action. Neither the localization-side observation nor its action appears in the policy-gradient objective; the lo-calization branch remains in intermediate artifacts only for reproducibility and auditing. 0                
+
+> 10
+> 20
+> 30
+> 40
+> 50
+> % of groups rejected
+> (a) Mined curriculum gets solved
+> total rejected
+> std-gate rejection (all)
+> std-gate: consistently solved
+> std-gate: consistently unsolved
+> competence-gate rejection
+> 0.6
+> 0.5
+> 0.4
+> 0.3
+> 0.2
+> 0.1
+> 0.0
+> mean log-prob
+> (b) RL raises P(correct action)
+> pos (correct) log
+> neg (wrong) log
+> pos neg gap
+> 0.000
+> 0.002
+> 0.004
+> 0.006
+> 0.008
+> 0.010
+> ppo_kl / clipfrac
+> (c) Stable: no runaway
+> ppo_kl
+> pg_clipfrac
+> rollout log-ppl
+> 050 100 150 200 250
+> training step
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> % of groups rejected
+> 050 100 150 200 250
+> training step
+> 0.8
+> 0.7
+> 0.6
+> 0.5
+> 0.4
+> 0.3
+> 0.2
+> 0.1
+> 0.0
+> mean log-prob
+> 050 100 150 200 250
+> training step
+> 0.000
+> 0.002
+> 0.004
+> 0.006
+> 0.008
+> 0.010
+> ppo_kl / clipfrac
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> rollout log-ppl
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> rollout log-ppl
+> 8B 32B
+
+Figure 9: Training dynamics at both scales ( top: 8B; bottom: 32B). (a) The std-gate rejection share rises as mined states become mastered, while competence-gate rejection falls. Red shades split std-gate rejections into consistently solved ( max i rg,i ≥ rcomp )and consistently unsolved ( max i rg,i < r comp ) groups. (b) Training raises the correct action’s log-probability and reverses the initial correct-minus-wrong gap. (c) KL, clipping, and rollout log-perplexity remain bounded under the stabilized objective. 
+
+Category Share Explanation Unverifiable evidence, source, or compliance failure 39.80% The conclusion lacks page evidence or relies on a source that does not satisfy the task. Critical action or task endpoint incomplete 18.73% The agent finds the target but does not add, book, authenticate, or reach the required confirmation state. Access, anti-bot, or technical obstruction 9.98% The trajectory stalls behind a CAPTCHA, 403 page, or unavailable control. UI interaction or navigation failure 8.53% A required detail page, tab, date picker, or dropdown is not reached or operated. Runtime or evaluation failure 7.38% The run times out, crashes, or loses an interpretable action trace. Hard constraint, target object, or numeric threshold mismatch 6.02% A selected option violates a required attribute or numeric threshold. Filter/sort/search context not applied 4.53% The trajectory claims a control is active, but the page state does not reflect it. Date/time/availability closure 2.26% A requested date, time, inventory, or recency condition is never verified. Target discovery or search-strategy failure 1.82% Repeated search or navigation choices do not reach the target page. Information extraction, final calculation, or multi-field omission 0.64% A required field, unit, comparison, or derived quantity is omitted. Login, payment, or privacy-boundary error 0.31% The agent stops at the wrong boundary or supplies unsupported sensitive information. 
+
+Table 5: Failure-mode distribution of the final corpus. Task and aligned state Failure mode ( Stotal ) Successful-side action Localization-side action Why the step is critical Toyonaka care-insurance research; both branches are on a blocked search-results page Target discovery or search-strategy failure (0.84) Navigate directly to the official municipal website Issue another query through the blocked search path The direct pivot exits the blocker; repeating search leaves the run stalled. Edit a submitted SEEK application; both branches show the same sign-in panel Critical action or task endpoint incomplete (0.82) Activate the sign-in control Scroll away from the authentication panel Authentication is the immediate prerequisite for reaching submitted applications. Research selling a car through Carvana; both branches see the same Cloudflare block Access, anti-bot, or technical obstruction (0.84) Open an alternative search engine Only write a planning file One action resumes browser progress; the other changes no browser state. Verify current US YouTube Premium prices; both branches see generic, region-mismatched results Hard constraint, target object, or numeric threshold mismatch (0.76) Rewrite the query to target official US support pages and submit it Continue scrolling the generic result set The query rewrite enforces both source and region constraints at the decision point. 
+
+Table 6: Real mined action contrasts from the retained corpus. The successful-side action is the positive training target; the localization-side action is shown only to audit why the selected state is failure-critical.

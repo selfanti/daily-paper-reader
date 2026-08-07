@@ -1,0 +1,1177 @@
+Title: CoEvo-Mem: Co-Evolving Retrieval Policy and Memory Bank for LLM Agents
+
+URL Source: https://arxiv.org/pdf/2608.01739v1
+
+Published Time: Tue, 04 Aug 2026 01:52:08 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# CoEvo-Mem: Co-Evolving Retrieval Policy and Memory Bank for LLM Agents 
+
+## Bowen Ye 1,2 , Yongchao Xu 1,3 , Zhijian Li 1, Xiang Yin 2,Junkai Ma 1∗† , Wenzhao Li 1†,
+
+> 1
+
+Alibaba Group, Hangzhou, China 
+
+> 2
+
+School of Automation and Intelligent Sensing, Shanghai Jiao Tong University, Shanghai 200240, China 
+
+> 3
+
+University of Science and Technology of China, Hefei, China 
+
+Abstract 
+
+As memories accumulate across tasks and sessions, the per-formance of long-term LLM agents depends jointly on query-specific retrieval and continual memory refinement. However, existing methods typically optimize either memory access, through iterative query refinement or adaptive retrieval poli-cies, or memory evolution such as structural update. This separation overlooks a fundamental feedback loop: retrieval determines which memories receive usage signals, while up-dated memory bank reshape future retrieval. We propose 
+
+CoEvo-Mem , a closed-loop framework for co-evolving the retrieval policy and memory bank. For each query, a frozen LLM generates route-specific query rewrites and a routing prior, which a lightweight residual router corrects online. The retrieved context serves as the coupling interface between the two learning processes: task outcomes assign credit to rout-ing decisions, while trajectory-conditioned feedback updates memory values and graph relations. These updates alter how memories are ranked and selected for subsequent queries, thereby closing the feedback loop. To mitigate coupling in-duced non-stationarity, CoEvo-Mem alternates between up-dating the router with the memory bank fixed and evolving the memory bank with the retrieval policy fixed. Across seven di-verse benchmarks, CoEvo-Mem achieves state-of-the-art per-formance, demonstrating the importance of retrieval-memory coevolution. 
+
+## Introduction 
+
+Large language model based agents are increasingly expected to complete long-horizon tasks through sustained interaction with users, tools, and environments (Hu et al. 2025; Zhang et al. 2025). These interactions produce growing histories of observations, actions, feedback, and task outcomes, making it inefficient and often infeasible to retain all past informa-tion within a single context. Effective agents must therefore preserve useful experience beyond the current context and retrieve it when relevant. Memory mechanisms provide this capability by organizing interaction histories into persistent and reusable information that supports reasoning and deci-sion making across tasks and sessions (Park et al. 2023; Shinn et al. 2023; Zhao et al. 2024; Wang et al. 2023a; Packer et al. 2023). As agent trajectories become longer and more com-plex, determining what to store, how to organize it, and how 
+
+> ∗
+
+Corresponding author. 
+
+> †
+
+Project leader. 
+
+Figure 1: Three paradigms of Memory Systems. to retrieve and update it has become a central problem in the design of long-term agent systems. Existing work improves agent memory along two main di-rections. Memory-access methods use RAG, query reformu-lation, and adaptive retrieval to surface relevant experiences for each query (Lewis et al. 2020; Gao et al. 2023; Asai et al. 2024). Memory-centric methods instead improve how expe-riences are updated, organized, or represented, ranging from value-based evolution such as MemQ and MemRL to struc-tured stores and latent memory (Liao et al. 2026; Zhang et al. 2026; Xu et al. 2026b; Wang et al. 2024). These directions are often developed separately, with one component fixed while the other is optimized. Yet memory access and evo-lution are mutually reinforcing: retrieval determines which memories are exposed and receive feedback, while memory updates reshape the values and organization that guide fu-ture retrieval. As illustrated in Fig. 1, updating the memory module or the retriever in isolation can improve memory quality or retrieval effectiveness, respectively, but prevents the fixed counterpart from adapting to the resulting changes. Joint adaptation instead allows the retrieval policy and mem-ory bank to co-evolve within a unified feedback loop, thereby supporting sustained improvements in overall agent perfor-mance. This motivates us to formulate query routing and memory evolution as a coupled learning problem. We propose CoEvo-Mem , a closed-loop framework that co-evolves retrieval policy and memory-bank refinement through interaction feedback. Rather than learning a retrieval policy from scratch, CoEvo-Mem uses a frozen LLM to arXiv:2608.01739v1 [cs.AI] 3 Aug 2026 generate channel-specific query rewrites and a confidence-weighted routing prior, while learning only a lightweight residual correction online. The corrected route weights con-trol a value-aware hybrid retriever that integrates dense sim-ilarity, sparse matching, and learned memory utility. After generation, the interaction trajectory and retrieved memory set guide updates to both memory values and inter-memory relations, while response correctness provides the reward for adapting the residual router. To control the non-stationarity induced by this mutual dependence, CoEvo-Mem alternates between router adaptation and memory evolution. We evaluate CoEvo-Mem on seven diverse benchmarks spanning long-term conversational memory, scientific and multimodal reasoning, code generation, operating-system in-teraction, and tool use. CoEvo-Mem achieves state-of-the-art performance across all benchmarks, empirically demonstrat-ing the advantage of jointly optimizing memory access and memory evolution. Our main contributions are threefold: 
+
+• We identify an underexplored feedback loop between re-trieval and memory evolution in long-term LLM agents. Retrieval determines both the context available for gen-eration and the memories that receive credit from task outcomes; changes in memory utility estimates and rela-tional structure then influence subsequent retrieval. 
+
+• We propose CoEvo-Mem , which coordinates retrieval policy adaptation with relational memory evolution while keeping the answering LLM frozen. It combines query rewrites for dense and sparse retrieval, residual adaptation of an LLM routing prior from task rewards, and memory updates that propagate feedback from interaction trajec-tories across semantic, lexical, and temporal relations. Alternating phases hold the inactive component fixed to limit nonstationarity. 
+
+• Experiments on seven benchmarks show that CoEvo-Mem advances the state of the art in every evaluated set-ting, with improvements of up to 7.50 percentage points 
+
+over the strongest baseline. Ablation studies further vali-date the complementary roles of retrieval adaptation, re-lational memory evolution, and alternating training. 
+
+## Related Work 
+
+Retrieval-Augmented Generation and Adaptive Access 
+
+Retrieval-augmented generation (RAG) (Lewis et al. 2020) grounds LLM outputs in evidence retrieved at inference time. Its retrieval layer has been improved through dense semantic matching (Karpukhin et al. 2020; Khattab and Zaharia 2020; Santhanam et al. 2022), sparse lexical matching (Robert-son and Zaragoza 2009; Formal, Piwowarski, and Clin-chant 2021), and rank-level fusion (Cormack, Clarke, and Buettcher 2009). Self-RAG learns when to retrieve and cri-tique evidence during generation (Asai et al. 2024), while MiniRAG (Fan et al. 2025) and LightRAG (Guo et al. 2024) develop efficient retrieval pipelines for accessing distributed evidence. Adaptive retrieval further improves memory access at the query and policy levels. HyDE (Gao et al. 2023) gener-ates hypothetical documents for dense retrieval, and RAG-Fusion (Rackauckas 2024) retrieves from multiple query variants. Search-R1 (Jin et al. 2025) optimizes multi-step search through reinforcement learning. These methods im-prove evidence selection, but generally retrieve from a fixed or independently maintained collection. CoEvo-Mem cou-ples adaptive retrieval routing with memory evolution, so that retrieval decisions and memory updates can inform one another over time. 
+
+Memory Representation and Evolution 
+
+Agent memory is commonly implemented as either an ed-itable external store or a trainable model-integrated repre-sentation. Among external systems, MemoryBank maintains personalized memories with a forgetting mechanism (Zhong et al. 2024), while Mem0 extracts and consolidates salient conversational facts (Chhikara et al. 2025). MemP represents reusable procedural experience (Fang et al. 2026), Lang-Mem supports persistent memory extraction and manage-ment (LangChain AI 2024), and MemoryOS organizes long-term experience through a hierarchical memory architec-ture (Kang et al. 2025). Structured approaches further model dependencies among memories: A-MEM dynamically up-dates memory attributes and links (Xu et al. 2026b); Mem0 g ,Zep, Memobase, and StructMem maintain graph-based, tem-poral, or consolidated memory structures (Chhikara et al. 2025; Rasmussen et al. 2025; memodb-io 2024; Xu et al. 2026a). Model-integrated methods learn memory representations or interfaces within the neural computation process. Long-Mem accesses cached representations through a trainable side network (Wang et al. 2023b), MemoryLLM maintains a self-updatable latent memory pool (Wang et al. 2024), and AutoCompressor learns compact context representa-tions (Chevalier et al. 2023). MemGen, M+, and ElasticMem further explore generated, persistent, or dynamically allo-cated latent memory (Zhang, Fu, and Yan 2025; Wang et al. 2025; Feng et al. 2026). Meanwhile, MemRL and MemQ learn the utility of external memories from task feedback and use it to guide subsequent selection (Zhang et al. 2026; Liao et al. 2026). These methods advance memory represen-tation, organization, or valuation, while the retrieval policy is typically predefined or optimized separately. CoEvo-Mem instead co-adapts retrieval routing, memory values, and inter-memory relations within a unified feedback loop. 
+
+## CoEvo-Mem Framework 
+
+Coupled Retrieval–Memory Learning 
+
+Long-term memory creates a feedback loop that is absent from retrieval over a static corpus. The retrieval policy deter-mines both the context supplied to the model and the mem-ories eligible for task feedback, while updates to memory utilities and relations reshape the retrieval state encountered by subsequent queries. Optimizing either component against a permanently fixed counterpart can therefore leave it mis-matched with the updated state of the other. CoEvo-Mem Large Language Model 
+
+User Query 
+
+Input Query Rewrite 
+
+Memory Library  
+
+> 𝑄 !𝑄 "
+
+Prior -guided 
+
+Residual Router 
+
+⋯
+
+> Dense
+> Query
+> Reward -driven Router Update
+> Sparse
+> Query
+
+⋯  
+
+> Initial Weight
+> 𝑤 !
+> 𝑤 "
+> Residual
+> Weight
+> 𝑤 !
+> #𝑤 "
+> #
+
+⋯𝑄 !
+
+⋯𝑄 " BM 25       
+
+> Dense Candidates
+> Sparse Candidates
+> Initial Top -k
+> Memories
+> ⋯
+> Temporal Graph
+> Expansion
+> Final Retrieved
+> Memories
+> ⋯
+> Alternating Co -evolution
+> Router Phase
+> update router
+> freeze memory
+> Memory Phase
+> freeze router
+> update memory
+> Typed Relational Memory Graph
+> (Graph -based Memory Bank)
+> Dense
+> Sparse
+> Time
+> Edge Types
+> Memory
+> Construction
+> Graph TD
+> Valuation
+> Metedata
+> Refresh
+> Trajectory -conditioned
+> Memory Update
+> content description keywords Q (value)
+> Embedding
+> Q-weighted
+> Hybrid Retriever
+
+𝑞 !      
+
+> 𝑞 !
+> A!
+> Frozen LLM Query
+> Answer 𝑦 !Evaluator
+> Trajectory 𝜏 !
+> Reward 𝑅 !
+
+Retrieval Strategy Figure 2: Overview of CoEvo-Mem . Route-specialized retrieval and relational memory evolution form a closed feedback loop and are co-adapted through alternating training phases. addresses this coupled learning problem through phase-wise co-adaptation of retrieval and relational memory, as summa-rized in Figure 2. We consider a training stream Dtr = {(qi, Yi)}Ti=1 , where 
+
+qi is a query and Yi specifies its task-dependent evaluation target. Let r ∈ { 0, . . . , N ph − 1} index training phases and 
+
+t index interactions within a phase. We write (qr,t , Yr,t )
+
+for the t-th visited example and suppress r in interaction-level equations. CoEvo-Mem maintains a retrieval policy 
+
+πθ , implemented by the Prior-Guided Residual Router , and a persistent Typed Relational Memory Graph Gt = ( Vt, Et),while the answering LLM F remains frozen. Each node 
+
+m ∈ V t stores an experience and an estimate Qt(m) of its discounted downstream retrieval utility. Typed edges in 
+
+Et encode semantic, lexical, and temporal relations aligned with the corresponding retrieval channels. Given qt, the frozen LLM produces route-specific rewrites and an initial dense–sparse routing prior, which the residual router adapts into fusion weights. Retrieval returns a bounded exposure set 
+
+( eQdt , eQst , wt) = SRQR F,θ (qt),
+
+At = Retrieve( eQdt , eQst , Gt, wt), |A t| ≤ k. (1) The frozen LLM generates yt ∼ pF (· | qt, At), and a task-specific evaluator returns Rt = Eval( yt; Yt) ∈ [0 , 1] .The trajectory τt = ( qt, At, y t, R t) drives either a Reward-Driven Router Update UR or a Trajectory-Conditioned Mem-ory Update UM, with only one component active in a training phase. The retrieved set At is their coupling interface: it is induced by the router, provides context to F , and identifies the memories eligible for outcome-conditioned credit. We use expected task reward as a system-level training criterion: 
+
+Jtr = E
+
+ 1
+
+Nph T
+
+> Nph −1
+
+X
+
+> r=0
+> T
+
+X
+
+> t=1
+
+Rr,t 
+
+ . (2) The expectation is over trajectories induced by the router, evolving graph, and phase schedule. Rather than differentiat-ing through the discrete, stateful graph, CoEvo-Mem couples reward-adapted route-specialized retrieval with retrieval-aligned relational memory, alternating their updates while holding the other component fixed. 
+
+Route-Specialized Query Rewriting and Retrieval 
+
+Queries often contain both semantic intent and exact lexi-cal cues, but their relative importance varies by task. The 
+
+Self-Routed Query Rewriter (SR-QR) separates these signals before retrieval. Under a fixed routing prompt, F returns 
+
+ot = ( eQdt , eQst , p0 
+
+> t
+
+, ξ 0 
+
+> t
+
+) = Froute (qt). The dense rewrites preserve semantic intent, the sparse rewrites emphasize en-tities and exact terms, p0 
+
+> t
+
+∈ ∆1 is an initial dense–sparse routing prior, and ξ0 
+
+> t
+
+is an auxiliary confidence feature. To adapt this prior from task outcomes, a trainable query encoder ϕψ and policy head fω produce the mean routing policy: 
+
+ct = ϕψ (qt, ot) ∈ Rh,
+
+∆t = fω (ct) ∈ R2,
+
+¯p0 
+
+> t
+
+(a) = p0 
+
+> t
+
+(a) + ε
+
+P 
+
+> a′∈{ d,s }
+
+(p0 
+
+> t
+
+(a′) + ε) , a ∈ { d, s },
+
+πt = softmax  log ¯ p0 
+
+> t
+
++ ∆t
+
+ .
+
+(3) where θ = ( ψ, ω ) and ε > 0 smooths the prior. The final layer of fω is initialized to zero, so πt = ¯ p0 
+
+> t
+
+at initializa-tion. Learning therefore moves the policy toward deviations favored by downstream reward rather than relearning routing from scratch. During a router phase, the memory graph is fixed and CoEvo-Mem explores continuous mixtures of the two routes. Specifically, ζt ∼ Beta( κπ dt , κπ st ) with κ > 0, and retrieval uses wt = ( ζt, 1 − ζt). The conditional mean of wt is πt.Let Bt = (1 − λema )Bt−1 + λema Rt be an exponential moving-average baseline and bAt = Rt − Bt−1. Following the score-function estimator, the router minimizes 
+
+bLrouter ,t (θ) = − sg[ bAt] log pθ (ζt | qt, ot)+ βKL DKL 
+
+ Cat( πt) Cat(¯ p0 
+
+> t
+
+) . (4) Here, pθ is the Beta density above, sg denotes stop-gradient, and βKL controls prior regularization. The score-function term (Williams 1992; Ahmadian et al. 2024) assigns terminal task reward through the non-differentiable retrieval process; the second discourages large departures from the LLM prior. Exploration is disabled during memory phases and inference, where retrieval uses wt = πt.For each rewrite, dense retrieval ranks memories by de-scription embedding similarity, while sparse retrieval ranks them by BM25 over entities and keywords (Robertson and Zaragoza 2009). Let Lt,a,i be the ranked list returned by rewrite i on route a ∈ { d, s }, with Na valid rewrites on that route; their union forms the initial pool P(0)  
+
+> t
+
+. For any candidate pool P, each rewrite score and Qt induce a rank over all candidates in P. The Q-Weighted Hybrid Retriever 
+
+then fuses route relevance with learned memory utility us-ing weighted reciprocal rank fusion (Cormack, Clarke, and Buettcher 2009): 
+
+St(m; P) = X
+
+> a∈{ d,s }
+
+wat
+
+NaNaX
+
+> i=1
+
+1
+
+η + rank ta,i (m; P)+ λQ
+
+η + rank tQ(m; P) .
+
+(5) Here, η > 0 is the RRF constant and λQ ≥ 0 controls the util-ity rank. The 1/N a factor prevents a route with more rewrites from receiving more mass by construction. Let Kt be the top-k candidates under St(·; P(0)  
+
+> t
+
+). The Temporal Graph Ex-pansion step augments the initial pool with the incoming and outgoing Time neighbors of Kt, recomputes all route-specific and utility ranks on the expanded pool, and returns its top k
+
+memories. Thus, unlike a fixed ensemble, route-specialized rewrites define the evidence lists, an outcome-adapted mix-ture controls their exposure, and evolving utilities and tem-poral relations alter subsequent rankings. 
+
+Retrieval-Aligned Relational Memory Evolution 
+
+The memory graph mirrors the evidence channels used by retrieval. A node stores preserved content xm, a dense de-scription dm, sparse keywords Km, temporal metadata sm,source trajectory τm, and utility Qt(m). The relation vo-cabulary is C = {Dense , Sparse , Time }. Dense and sparse edges are reciprocal and encode semantic proximity and lex-ical overlap, respectively; a time edge is directed from an earlier memory to a later continuation. Hence, the fields and relations of Gt directly match the dense, sparse, and temporal operations used by retrieval, rather than forming an auxiliary generic knowledge graph. In a memory phase, the Memory Construction step uses a fixed prompt to distill every training trajectory, regardless of outcome, into a new memory mnew  
+
+> t
+
+. The reward is recorded as provenance rather than used for filtering. Candidate dense and sparse edges are derived from embedding similarity and keyword overlap, while temporal links are verified by the frozen LLM and oriented by timestamp. Both construction and valuation observe only the generated trajectory and scalar task outcome, not the gold target, a corrected answer, or evaluator rationale. During Graph TD Valuation , a fixed utility prompt as-sesses each exposed memory m ∈ A t using the query, com-plete generated trajectory, and scalar outcome, and returns a contribution score ut(m) ∈ [0 , 1] . Because a new memory has no reuse history, its initial utility is inherited from the local context that produced it: 
+
+bQt(mnew  
+
+> t
+
+) = 
+
+|A t|−1 P 
+
+> m∈A t
+
+Qt(m), At̸ = ∅,Qinit , At = ∅, . (6) 
+
+Qinit is a task-independent neutral initialization. We treat the memory distilled from the current interaction as the succes-sor experience for bootstrapping. For each exposed memory, the resulting TD-style utility residual is 
+
+δt(m) = Rt ut(m)+ γ bQt(mnew  
+
+> t
+
+)−Qt(m), m ∈ A t, (7) where γ ∈ [0 , 1) is the discount factor. The immediate term combines task outcome with memory-specific attribution, while the bootstrap term transfers downstream utility from the newly distilled experience to the context that supported its construction. Credit also propagates to related memories. For a path 
+
+p : v ⇝ m of at most D edges, let its strength be the product of relation-specific attenuation factors ρc ∈ [0 , 1] . We retain the strongest valid path, 
+
+c(D) 
+
+> t
+
+(v, m ) = max p:v⇝m
+
+> 1≤| p|≤ D
+
+Y
+
+> e∈p
+
+ρc(e). (8) We set c(D) 
+
+> t
+
+(v, m ) = 0 when no valid path exists. Taking the maximum prevents path multiplicity from mechanically amplifying credit. Let St(v) = {m ∈ A t : c(D) 
+
+> t
+
+(v, m ) > 0}.For St(v)̸ = ∅, define 
+
+¯δt(v) = 1
+
+|S t(v)|
+
+X
+
+> m∈S t(v)
+
+c(D) 
+
+> t
+
+(v, m )δt(m),
+
+∆t(v) = 
+
+
+
+δt(v), v ∈ A t,
+
+¯δt(v), v / ∈ A t, St(v)̸ = ∅
+
+0, otherwise .
+
+(9) The averaging over St(v) controls update scale when a mem-ory is connected to multiple exposed items. Dense and sparse edges can be traversed in both directions. Time edges are tra-versed only from earlier to later memories; thus, along a purely temporal path v ⇝ m, credit from an exposed mem-ory m is assigned to its chronological predecessors. All residuals for nodes present before insertion are com-puted from the same pre-update snapshot and applied syn-chronously: 
+
+Qt+1 (v) = Π [Qmin ,Q max ]
+
+ Qt(v) + αQ∆t(v), v ∈ V t.
+
+(10) Here, αQ > 0 is the update rate and Π projects utility onto the admissible interval [Qmin , Q max ]. The new node is assigned 
+
+bQt(mnew  
+
+> t
+
+) and becomes eligible for value updates from the next interaction. Feedback is thus not confined to the items returned by one query; it also refines related regions while controlling propagation by relation type and path depth. 
+
+Alternating Co-Evolution 
+
+Simultaneously updating the router and memory graph cou-ples two moving processes: routing changes the memory-exposure distribution, while memory evolution changes the retrieval landscape. CoEvo-Mem therefore adopts a phase-wise block update schedule in which only one component is active at a time. Each phase makes one complete pass over 
+
+Dtr , and repeated alternation exposes each component to the latest state of the other without updating both from the same trajectory. Let zr ∈ { Router , Memory } denote the active phase. We define the corresponding full-pass updates as 
+
+θ(r+1) R = Pass R(θ(r); G(r), Dtr )
+
+and 
+
+G(r+1) M = Pass M(G(r); θ(r), Dtr ).
+
+The phase-level state transition is 
+
+(θ(r+1) , G(r+1) ) = 
+
+(
+
+(θ(r+1) R , G(r)), zr = Router ,
+
+(θ(r), G(r+1) M ), zr = Memory .
+
+(11) A router pass keeps the graph read-only throughout the phase. A memory pass instead keeps the router fixed while the graph evolves sequentially over the training interactions. Equation (11) defines the phase-level block update. Each phase makes exactly one complete pass over Dtr . When task histories permit graph initialization, training begins with a Router phase and then alternates between Router and 
+
+Memory phases. If the graph is initially empty, a single 
+
+Memory phase is prepended to bootstrap it before the same alternating schedule is applied. Both phases follow the same interaction pipeline but differ in the component being optimized. A Router phase keeps the graph read-only, samples retrieval mixtures, and updates only 
+
+θ. A Memory phase fixes the router, uses its deterministic mean policy, and updates G sequentially as training examples are processed. Thus, each component is optimized against the latest state of its counterpart while cross-component updates remain separated within a phase. All router and graph updates are confined to the training split. During validation, both components remain fixed, and validation performance is used solely for checkpoint selec-tion. The selected router and memory state are then frozen and evaluated once on the test split using deterministic re-trieval, without consuming test outcomes or modifying the memory graph. Algorithm 1 summarizes the resulting train-ing procedure. Algorithm 1: Phase-wise Training of CoEvo-Mem                                                                                                              
+
+> Input: Training set Dtr , frozen LLM F, initialized router θ,memory graph G= ( V,E), and phase schedule S
+> Output: Trained router θ⋆and memory graph G⋆
+> 1: if V=∅then
+> 2: Prepend Memory to S
+> 3: end if
+> 4: for zr∈Sdo
+> 5: for all (qt,Yt)∈ D tr do
+> 6: ot←Froute (qt);πt←πθ(qt,ot)
+> 7: if zr=Router then
+> 8: ζt∼Beta( κπ dt, κπ st)
+> 9: wt←(ζt,1−ζt)
+> 10: else
+> 11: wt←πt
+> 12: end if
+> 13: At←Retrieve( eQdt,eQst,G,wt)
+> 14: yt∼pF(· | qt,At);Rt←Eval( yt;Yt)
+> 15: τt←(qt,At, y t, R t)
+> 16: if zr=Router then
+> 17: θ← U R(θ;qt,ot, ζ t, R t)
+> 18: else
+> 19: G ← U M(G;At, τ t, F )
+> 20: end if
+> 21: end for
+> 22: end for
+> 23: θ⋆←θ;G⋆← G
+> 24: return (θ⋆,G⋆)
+
+## Experiments 
+
+Experimental Settings 
+
+Benchmarks. We evaluate CoEvo-Mem on seven bench-marks covering operating-system interaction (LLAB (Zheng et al. 2025)), code generation (LiveCodeBench (Jain et al. 2025)), multimodal reasoning (MMMU Pro (Yue et al. 2025)), scientific question answering (GPQA Diamond (Rein et al. 2023)), function calling (BFCL (Patil et al. 2025)), and long-term memory (LoCoMo (Maharana et al. 2024) and LongMemEval (Wu et al. 2024)). For LoCoMo and LongMemEval, we follow the MC-10 protocol of Elas-ticMem (Feng et al. 2026), which casts each query as a 10-way multiple-choice task. We also evaluate LoCoMo un-der its original free-form QA setting to assess open-ended conversational memory. All dataset splits are fixed before optimization, with router and memory updates restricted to the training set and both components frozen during test. 
+
+Baselines. We compare CoEvo-Mem with representative retrieval-augmented, external-memory, structured-memory, and trainable memory methods. Baselines are selected ac-cording to task and backbone compatibility, with No Memory 
+
+and Full Context included as reference configurations. 
+
+Model configurations. We follow the established answer-ing and embedding configurations for each benchmark when-ever available. Our primary embedding models are Qwen3-Embedding-8B and text-embedding-3-small. For LoCoMo free-form QA, we use GPT-4o-mini as the answering back-bone, text-embedding-3-small for retrieval, and DeepSeek-V4-Pro as the response evaluator. Benchmark Model No Mem. RAG Self-RAG Mem0 MemP MemRL MemQ Ours                                                  
+
+> LLAB
+> os interaction 4o-mini 66 .89 ±1.26 68 .89 ±0.38 70 .45 ±0.39 70 .00 ±0.67 71 .11 ±0.38 74 .44 ±1.02 74 .67 ±0.67 76 .00 ±0.82
+> LiveCodeBench
+> coding Gemma-4-E4B-it
+> 44 .76 ±2.29 50 .48 ±1.65 49 .52 ±1.65 47 .62 ±1.65 49 .52 ±1.65 45 .71 ±2.86 51 .43 ±2.86 55 .24 ±1.34
+> MMMU Pro
+> multimodal 48 .46 ±0.76 53 .76 ±1.04 53 .57 ±0.84 49 .90 ±1.37 54 .24 ±1.42 53 .66 ±1.01 54 .43 ±0.88 55 .49 ±1.27
+> GPQA Diamond
+> science qa 47 .50 ±3.01 58 .33 ±3.82 58 .33 ±3.82 58 .33 ±1.18 59 .17 ±1.44 60 .83 ±5.20 60 .83 ±3.82 68 .33 ±3.11
+> BFCL
+> function call
+> Qwen3.5-35B-A3B ∗33 .67 ±3.09 35 .33 ±2.49 38 .00 ±2.83 35 .00 ±2.45 37 .33 ±1.70 39 .00 ±0.00 37 .33 ±2.08 45 .33 ±2.05
+> BFCL
+> function call
+> Qwen3.5-35B-A3B ‡56 .71 ±1.71 55 .45 ±2.62 60 .07 ±2.49 54 .79 ±1.68 61 .39 ±0.99 60 .07 ±2.29 62 .38 ±1.71 64 .69 ±0.93
+
+Table 1: Performance comparison across benchmarks. Results are reported as mean ± standard deviation. The best and second-best mean scores are highlighted in bold and underlined, respectively. ∗ and ‡ denote the non-thinking and thinking settings. 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15      
+
+> Epoch
+> 0.60
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> Accuracy
+> 0.87 0.84
+> Train Val
+> Router Memory Router Memory Router Memory
+
+Figure 3: Training success rate on LoCoMo free-form QA. 
+
+Long-Term Memory Evaluation on Diverse Agent Tasks 
+
+As shown in Table 1, CoEvo-Mem achieves the highest mean score in all six evaluated settings. Compared with the strongest baseline in each row, the average improve-ment is 3.72 percentage points, with individual gains ranging from 1.06 to 7.50 points. The largest improvements occur on GPQA Diamond ( +7 .50 ) and BFCL in the non-thinking setting ( +6 .33 ), followed by LiveCodeBench ( +3 .81 ). No-tably, these three settings span scientific question answering, tool use, and code generation, suggesting that the gains are not concentrated in a single task domain or experience for-mat. Positive improvements on LLAB, MMMU Pro, and BFCL with thinking further show that the advantage per-sists across interaction, multimodal, and different inference settings. Overall, the consistent gains across heterogeneous retrieval demands and memory types support the generality of co-adapting retrieval routing and memory evolution. 
+
+Long-Term Conversational Memory Task 
+
+We evaluate two complementary aspects of long-term con-versational memory. LoCoMo free-form QA evaluates the complete CoEvo-Mem loop, including router adaptation and memory evolution. QA instances are divided into training, validation, and test sets over five independent splits, and gen-erated answers are evaluated by DeepSeek-V4-Pro. Table 2 shows that CoEvo-Mem achieves the highest overall score of 81 .71 , exceeding StructMem by 4.89 percentage points                                                                  
+
+> Method Overall ↑Multi ↑Open ↑Single ↑Temp ↑
+> OpenAI 71.82 69.86 53.12 84.66 45.48 FullContext 73.83 68.79 56.25 86.56 50.16 LightRAG 68.83 66.31 50.00 77.53 53.89 LangMem 58.10 62.23 47.92 71.12 23.43 A-Mem 64.16 56.03 31.25 72.06 60.44 Mem0 66.88 67.13 51.15 72.93 59.19 MemoryOS 58.25 56.74 45.83 67.06 40.19 Zep 75.14 74.11 66.04 79.79 67.71 Memobase 75.78 70.92 46.88 77.17 85.05
+> StructMem 76.82 68.77 46.88 81.09 81.62 Ours 81.71 72.22 71.42 86.44 83.87
+
+Table 2: Performance on LoCoMo QA task. Green , Blue , and Pink denote context and retrieval baselines, external-memory methods, and structured-memory methods, respec-tively. and ranking first or second in every question category. This consistency indicates that the improvement is not driven by a single type of conversational-memory reasoning. Figure 3 further shows that training and validation accuracy increase to 87% and 84% , respectively, suggesting that the gains from alternating co-adaptation generalize to held-out questions. LoCoMo-MC and LongMemEval-MC isolate the retrieval component through conversation-level splits. The router is trained on graphs from the training conversations and eval-uated on fixed graphs constructed from disjoint test con-versations; memory evolution is disabled in this protocol. CoEvo-Mem ranks second in all matched-backbone compar-isons, achieving 63% /56% and 71% /64% with the 3B and 7B backbones, respectively, and performs best among meth-ods that keep model-integrated components frozen. Using GPT-4 as the frozen answering backbone raises the scores to 89% /82% without retraining the memory system, demon-strating that the learned retrieval interface transfers across answering backbones. Benchmark Full w/o SR-QR w/o Memory Evolution Simultaneous Two-Stage                                              
+
+> GPQA Diamond 68 .33 60 .00 58 .33 66 .67 63 .33
+> LiveCodeBench 55 .24 50 .48 47 .62 52 .38 51 .43
+> LLAB 76 .00 74 .00 74 .00 75 .00 74 .00
+> MMMU Pro 55 .49 52 .60 53 .28 53 .95 52 .60
+> BFCL, no-think 45 .33 43 .00 43 .33 44 .33 43 .33
+> BFCL, thinking 64 .69 59 .74 58 .75 61 .39 60 .06
+> LoCoMo-MC ∗71 65 ———LongMemEval-MC ∗64 54 ———LoCoMo 81 .71 77 .29 77 .88 79 .65 78 .76
+
+Table 3: Ablation study of CoEvo-Mem across different benchmarks. Results from repeated runs are reported as mean. ∗ denotes Qwen2.5-7B-Instruct. Memory-evolution and schedule ablations are not applicable to the two fixed-memory MC protocols.                                           
+
+> Model Method LoCoMo-MC LongMemEval-MC Qwen2.5-3B-Instruct  A-MEM 39 45 Mem0 33 33 MemoryOS 33 40 MemP 26 41 LangMem 40 28 MemGen 60 55 AutoCompressor 47 44 ElasticMem 74 68
+> Ours 63 56
+> Qwen2.5-7B-Instruct  A-MEM 42 50 Mem0 38 48 MemoryOS 42 53 MemP 22 48 LangMem 35 42 MemGen 68 63 AutoCompressor 55 51 ElasticMem 84 76
+> Ours 71 64
+> GPT-4 Ours 89 82
+
+Table 4: Multiple-choice accuracy on LoCoMo-MC and LongMemEval-MC under fixed-memory evaluation. Purple marks trainable model-integrated methods, and Peach marks CoEvo-Mem. GPT-4 is a stronger-backbone reference. 
+
+Ablation Study 
+
+We conduct four controlled ablations to evaluate the two core components of CoEvo-Mem and their optimization sched-ule. w/o SR-QR removes route-specific query rewriting and prior-guided residual routing, using the original query with fixed dense and sparse fusion weights. w/o Memory Evolu-tion represents memories as independent items and retains only direct item-level updates, removing typed relations and graph-based value propagation. Simultaneous updates both components within each training round, while Two-Stage 
+
+optimizes them in two consecutive phases. The schedule vari-ants use the same task order and component-update budget. Table 3 shows that removing SR-QR and memory evo-lution reduces the macro-average score by 4.24 and 4.80 
+
+percentage points, respectively. SR-QR produces substan-tial gains on GPQA Diamond and reduces the error on LoCoMo-MC and LongMemEval-MC by 6.00 and 10 .00 
+
+points. Since the MC protocols use fixed memory graphs, these improvements directly reflect better query formulation and retrieval routing. Memory evolution contributes most strongly to GPQA Diamond, LiveCodeBench, and BFCL in the thinking setting, where its removal causes drops of 10 .00 ,
+
+7.62 , and 5.94 points. This confirms that typed relations and value propagation improve memory reuse beyond indepen-dent item-level updates. The schedule comparison further isolates how the two components should be coordinated. Simultaneous training is consistently the second-best variant, while two-stage train-ing produces a larger degradation. Alternating optimization outperforms them by 1.92 and 3.33 percentage points on av-erage, respectively. Updating each component against a fixed counterpart within a phase, followed by repeated switching, provides more effective coordination between retrieval rout-ing and memory evolution. 
+
+## Conclusion 
+
+We presented CoEvo-Mem , a framework that co-adapts re-trieval routing and relational memory while keeping the base LLM frozen. Its SR-QR module rewrites queries for dense and sparse retrieval and learns a reward-adapted correction to the LLM routing prior. Its retrieval-aligned memory graph organizes experiences through semantic, lexical, and tempo-ral relations, enabling outcome-conditioned utility updates and relational credit propagation. These components are co-ordinated through alternating full-pass phases that update one component while holding the other fixed. Across seven benchmarks, CoEvo-Mem achieves state-of-the-art performance in the reported settings. Compar-isons and ablations demonstrate the contributions of route-specialized retrieval, relational memory evolution, and phase-wise co-adaptation across heterogeneous tasks and memory types. These results highlight the importance of jointly designing how experiences are retrieved, evaluated, and evolved in long-term memory systems. Future work will explore multi-agent memory sharing and theoretical guaran-tees for coupled retrieval–memory optimization. References 
+
+Ahmadian, A.; Cremer, C.; Gallé, M.; Fadaee, M.; Kreutzer, J.; Pietquin, O.; Üstün, A.; and Hooker, S. 2024. Back to ba-sics: Revisiting REINFORCE-style optimization for learning from human feedback in LLMs. In Proceedings of the 62nd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , 12248–12267. Asai, A.; Wu, Z.; Wang, Y.; Sil, A.; and Hajishirzi, H. 2024. Self-rag: Learning to retrieve, generate, and critique through self-reflection. In International conference on learning rep-resentations , volume 2024, 9112–9141. Chevalier, A.; Wettig, A.; Ajith, A.; and Chen, D. 2023. Adapting language models to compress contexts. In Pro-ceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 3829–3846. Chhikara, P.; Khant, D.; Aryan, S.; Singh, T.; and Yadav, D. 2025. Mem0: Building production-ready ai agents with scal-able long-term memory. arXiv preprint arXiv:2504.19413 .Cormack, G. V.; Clarke, C. L.; and Buettcher, S. 2009. Re-ciprocal rank fusion outperforms condorcet and individual rank learning methods. In Proceedings of the 32nd interna-tional ACM SIGIR conference on Research and development in information retrieval , 758–759. Fan, T.; Wang, J.; Ren, X.; and Huang, C. 2025. Minirag: Towards extremely simple retrieval-augmented generation. 
+
+arXiv preprint arXiv:2501.06713 .Fang, R.; Liang, Y.; Wang, X.; Wu, J.; Qiao, S.; Xie, P.; Huang, F.; Chen, H.; and Zhang, N. 2026. Memp: Exploring agent procedural memory. In Findings of the Association for Computational Linguistics: ACL 2026 , 17490–17502. Feng, T.; Ye, C.; Luo, T.; Xu, J.; Xu, X.; Zhang, H.; Liu, G.; and You, J. 2026. ElasticMem: Latent Memory as a Learnable Resource for LLM Agents. arXiv preprint arXiv:2605.30690 .Formal, T.; Piwowarski, B.; and Clinchant, S. 2021. Splade: Sparse lexical and expansion model for first stage ranking. In 
+
+Proceedings of the 44th International ACM SIGIR Confer-ence on Research and Development in Information Retrieval ,2288–2292. Gao, L.; Ma, X.; Lin, J.; and Callan, J. 2023. Precise zero-shot dense retrieval without relevance labels. In Proceedings of the 61st Annual Meeting of the Association for Computa-tional Linguistics (Volume 1: Long Papers) , 1762–1777. Guo, Z.; Xia, L.; Yu, Y.; Ao, T.; and Huang, C. 2024. Ligh-trag: Simple and fast retrieval-augmented generation. arXiv preprint arXiv:2410.05779 , 2(3). Hu, M.; Chen, T.; Chen, Q.; Mu, Y.; Shao, W.; and Luo, P. 2025. Hiagent: Hierarchical working memory manage-ment for solving long-horizon agent tasks with large lan-guage model. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 32779–32798. Jain, N.; Gu, A.; Li, W.-D.; Yan, F.; Zhang, T.; Wang, S.; Solar-Lezama, A.; Sen, K.; and Stoica, I. 2025. Live-codebench: Holistic and contamination free evaluation of large language models for code. In International Conference on Learning Representations , volume 2025, 58791–58831. Jin, B.; Zeng, H.; Yue, Z.; Yoon, J.; Arik, S.; Wang, D.; Zamani, H.; and Han, J. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 .Kang, J.; Ji, M.; Zhao, Z.; and Bai, T. 2025. Memory os of ai agent. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 25972–25981. Karpukhin, V.; Oguz, B.; Min, S.; Lewis, P.; Wu, L.; Edunov, S.; Chen, D.; and Yih, W.-t. 2020. Dense passage retrieval for open-domain question answering. In Proceedings of the 2020 conference on empirical methods in natural language processing (EMNLP) , 6769–6781. Khattab, O.; and Zaharia, M. 2020. Colbert: Efficient and effective passage search via contextualized late interaction over bert. In Proceedings of the 43rd International ACM SI-GIR conference on research and development in Information Retrieval , 39–48. LangChain AI. 2024. LangMem. https://langchain-ai.github. io/langmem/. Accessed: 2024-01-01. Lewis, P.; Perez, E.; Piktus, A.; Petroni, F.; Karpukhin, V.; Goyal, N.; Küttler, H.; Lewis, M.; Yih, W.-t.; Rocktäschel, T.; et al. 2020. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information process-ing systems , 33: 9459–9474. Liao, J.; Shi, H.; Zhou, R.; Wang, J.; Zhang, S.; Zhang, W.; Zhang, W.; Wen, Y.; Li, Z.; Xiong, F.; et al. 2026. MemQ: Integrating Q-Learning into Self-Evolving Memory Agents over Provenance DAGs. arXiv preprint arXiv:2605.08374 .Maharana, A.; Lee, D.-H.; Tulyakov, S.; Bansal, M.; Bar-bieri, F.; and Fang, Y. 2024. Evaluating very long-term conversational memory of llm agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 13851–13870. memodb-io. 2024. Memobase. https://github.com/memodb-io/memobase#get-started. Accessed: 2024-01-01. Packer, C.; Fang, V.; Patil, S.; Lin, K.; Wooders, S.; and Gonzalez, J. 2023. MemGPT: towards LLMs as operating systems. Park, J. S.; O’Brien, J.; Cai, C. J.; Morris, M. R.; Liang, P.; and Bernstein, M. S. 2023. Generative agents: Interac-tive simulacra of human behavior. In Proceedings of the 36th annual acm symposium on user interface software and technology , 1–22. Patil, S. G.; Mao, H.; Yan, F.; Ji, C. C.-J.; Suresh, V.; Stoica, I.; and Gonzalez, J. E. 2025. The berkeley function calling leaderboard (bfcl): From tool use to agentic evaluation of large language models. In Forty-second International Con-ference on Machine Learning .Rackauckas, Z. 2024. Rag-fusion: a new take on retrieval-augmented generation. arXiv preprint arXiv:2402.03367 .Rasmussen, P.; Paliychuk, P.; Beauvais, T.; Ryan, J.; and Chalef, D. 2025. Zep: a temporal knowledge graph architec-ture for agent memory. arXiv preprint arXiv:2501.13956 .Rein, D.; Hou, B. L.; Stickland, A. C.; Petty, J.; Pang, R. Y.; Dirani, J.; Michael, J.; and Bowman, S. R. 2023. Gpqa: A graduate-level google-proof q&a benchmark. arXiv preprint arXiv:2311.12022 .Robertson, S.; and Zaragoza, H. 2009. The probabilistic relevance framework: BM25 and beyond , volume 4. Now Publishers Inc. Santhanam, K.; Khattab, O.; Saad-Falcon, J.; Potts, C.; and Zaharia, M. 2022. Colbertv2: Effective and efficient retrieval via lightweight late interaction. In Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technolo-gies , 3715–3734. Shinn, N.; Cassano, F.; Gopinath, A.; Narasimhan, K.; and Yao, S. 2023. Reflexion: Language agents with verbal re-inforcement learning. Advances in neural information pro-cessing systems , 36: 8634–8652. Wang, G.; Xie, Y.; Jiang, Y.; Mandlekar, A.; Xiao, C.; Zhu, Y.; Fan, L.; and Anandkumar, A. 2023a. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 .Wang, W.; Dong, L.; Cheng, H.; Liu, X.; Yan, X.; Gao, J.; and Wei, F. 2023b. Augmenting language models with long-term memory. Advances in Neural Information Processing Systems , 36: 74530–74543. Wang, Y.; Gao, Y.; Chen, X.; Jiang, H.; Li, S.; Yang, J.; Yin, Q.; Li, Z.; Li, X.; Yin, B.; et al. 2024. Memoryllm: To-wards self-updatable large language models. arXiv preprint arXiv:2402.04624 .Wang, Y.; Krotov, D.; Hu, Y.; Gao, Y.; Zhou, W.; McAuley, J.; Gutfreund, D.; Feris, R.; and He, Z. 2025. M+: Extend-ing MemoryLLM with scalable long-term memory. arXiv preprint arXiv:2502.00592 .Williams, R. J. 1992. Simple statistical gradient-following al-gorithms for connectionist reinforcement learning. Machine learning , 8(3): 229–256. Wu, D.; Wang, H.; Yu, W.; Zhang, Y.; Chang, K.-W.; and Yu, D. 2024. Longmemeval: Benchmarking chat as-sistants on long-term interactive memory. arXiv preprint arXiv:2410.10813 .Xu, B.; Chen, Y.; Fang, J.; Zhong, R.; Yao, Y.; Zhu, Y.; Du, L.; and Deng, S. 2026a. StructMem: Structured Memory for Long-Horizon Behavior in LLMs. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers) , 122–146. Xu, W.; Liang, Z.; Mei, K.; Gao, H.; Tan, J.; and Zhang, Y. 2026b. A-mem: Agentic memory for llm agents. Advances in Neural Information Processing Systems , 38: 17577–17604. Yue, X.; Zheng, T.; Ni, Y.; Wang, Y.; Zhang, K.; Tong, S.; Sun, Y.; Yu, B.; Zhang, G.; Sun, H.; Su, Y.; Chen, W.; and Neubig, G. 2025. MMMU-Pro: A More Robust Multi-discipline Multimodal Understanding Benchmark. In Che, W.; Nabende, J.; Shutova, E.; and Pilehvar, M. T., eds., Pro-ceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 15134– 15186. Vienna, Austria: Association for Computational Lin-guistics. ISBN 979-8-89176-251-0. Zhang, G.; Fu, M.; and Yan, S. 2025. Memgen: Weaving generative latent memory for self-evolving agents. arXiv preprint arXiv:2509.24704 .Zhang, S.; Wang, J.; Zhou, R.; Liao, J.; Feng, Y.; Li, Z.; Zheng, Y.; Zhang, W.; Wen, Y.; Li, Z.; et al. 2026. Memrl: Self-evolving agents via runtime reinforcement learning on episodic memory. arXiv preprint arXiv:2601.03192 .Zhang, Z.; Dai, Q.; Bo, X.; Ma, C.; Li, R.; Chen, X.; Zhu, J.; Dong, Z.; and Wen, J.-R. 2025. A survey on the memory mechanism of large language model-based agents. ACM Transactions on Information Systems , 43(6): 1–47. Zhao, A.; Huang, D.; Xu, Q.; Lin, M.; Liu, Y.-J.; and Huang, G. 2024. Expel: Llm agents are experiential learners. In Pro-ceedings of the AAAI Conference on Artificial Intelligence ,volume 38, 19632–19642. Zheng, J.; Cai, X.; Li, Q.; Zhang, D.; Li, Z.; Zhang, Y.; Song, L.; and Ma, Q. 2025. Lifelongagentbench: Evaluating llm agents as lifelong learners. arXiv preprint arXiv:2505.11942 .Zhong, W.; Guo, L.; Gao, Q.; Ye, H.; and Wang, Y. 2024. Memorybank: Enhancing large language models with long-term memory. In Proceedings of the AAAI conference on artificial intelligence , volume 38, 19724–19731. A Complete Method Specification 
+
+A.1 Interfaces, State, and Notation 
+
+The main text uses F as functional shorthand; here we separate its frozen roles to state the experimental assign-ments without ambiguity. Let Fans denote the answering model, Froute the model queried by SR-QR, and Fmem 
+
+the model used for memory construction, utility attribution, temporal-relation classification, and metadata repair. We use 
+
+Fmem = Fans unless stated otherwise, whereas Froute may be the same frozen model or a different one. Model names in the main result tables identify Fans only; Table 6 reports the answering, memory, embedding, and evaluation assign-ments, while Froute is specified independently for each run. The GPT-4 MC result replaces only Fans ; the frozen SR-QR model and the learned external-memory state remain those of the source run. Let Eval tr and Eval rep denote the training-reward and reporting evaluators. They coincide for executable or exact-match feedback. For LoCoMo OpenQA, they are intentionally different LLM judges. None of the frozen interfaces or evaluators is fine-tuned; the only neu-ral parameters optimized by CoEvo-Mem are those of the residual router. At interaction t, the core retrieval–memory state is st =(qt, Gt, θ t), where qt is the current query, Gt = ( Vt, Et)
+
+is a persistent typed memory graph, and θt parameterizes the residual router. A node m ∈ V t stores preserved mem-ory content xm, a retrieval description dm, sparse key-words Km, temporal metadata sm, source trajectory τm,and a learned retrieval-utility value Qt(m). Edges have type 
+
+c ∈ C = {Dense , Sparse , Time }. Dense and sparse edges are reciprocal; a time edge is directed from an earlier memory to a later update of the same event or state. The forward interaction is 
+
+ot = Froute (qt) =   eQdt , eQst , p0 
+
+> t
+
+, ξ 0
+
+> t
+
+,
+
+wt = πθ (qt, ot),
+
+At = Retrieve( eQdt , eQst , Gt, wt), |A t| ≤ k, yt ∼ pFans (· | qt, At), Rt = Eval tr (yt; Yt) ∈ [0 , 1] .
+
+(12) For interactive benchmarks, yt denotes the complete gener-ated action–observation trace together with its terminal re-sponse; for single-turn benchmarks, it denotes the generated response. Thus the interaction record below has the same task-dependent scope as the “trajectory” in the main text. The interaction record τt = ( qt, At, y t, R t) is consumed ei-ther by a router update or by a memory update. The exposed set At is the coupling interface: routing determines which memories are visible, and memory updates change the state ranked by later routing decisions. 
+
+A.2 Structured SR-QR 
+
+As the implementation instantiation of the main-text tuple, the SR-QR prompt requires Froute to return one strict JSON object with five fields: route_prior , dense_queries ,
+
+sparse_queries , keywords , and confidence . The compact tuple ot in the main text suppresses the auxiliary keyword set Kt, which is parsed from keywords and used only by sparse retrieval. After sanitization, each route con-tains one to three rewrites. If exactly one route is empty, the parser inserts the original query on that route. Dense rewrites preserve semantic intent and vary its expression. Sparse rewrites are short phrases that retain identifiers, proper nouns, error names, versions, numbers, and other exact-match cues. The global keyword list contains at most eight discriminative tokens. The parser removes duplicate rewrites while preserving order, caps each list at three, normalizes nonnegative finite prior values onto the two-dimensional simplex, and clips con-fidence to [0 , 1] . A malformed response, failed call, invalid prior, or pair of empty rewrite lists triggers the deterministic fallback 
+
+p0 
+
+> t
+
+= (0 .5, 0.5) , eQdt = qt ,
+
+eQst = qt , ξ0 
+
+> t
+
+= 0 . (13) The parser records the fallback event for diagnostics. The fallback guarantees a valid retrieval action and introduces no trainable parameters. 
+
+A.3 Residual Router 
+
+Following the parameterization in the main text, the residual router operates on the current query and the structured SR-QR output. Its query encoder and policy head are 
+
+ct = ϕψ (qt, ot) ∈ Rh,
+
+∆t = fω (ct) ∈ R2,
+
+¯p0 
+
+> t
+
+(a) = p0 
+
+> t
+
+(a) + ε
+
+P
+
+> a′∈{ d,s }
+
+(p0 
+
+> t
+
+(a′) + ε) ,
+
+πt = softmax  log ¯ p0 
+
+> t
+
++ ∆t
+
+ .
+
+(14) Here θ = ( ψ, ω ), and ε > 0 smooths the prior. The final layer of fω is initialized to zero, so the initial mean policy exactly recovers the smoothed LLM prior. During router training, 
+
+ζt ∼ Beta( κπ dt , κπ st ), wt = ( ζt, 1 − ζt). (15) During memory phases and evaluation, exploration is dis-abled and wt = πt.Let B be an exponential moving-average baseline with retention μ = 0.9, equivalently λema = 1 − μ = 0.1
+
+in the main-text notation. At interaction t, the advantage is bAt = Rt − Bt−1 and the baseline update is Bt =
+
+μB t−1 + (1 − μ)Rt. Over an optimization minibatch B,the router minimizes 
+
+bLrouter = bLPG + βKL bLKL ,
+
+bLPG = − 1
+
+|B| 
+
+X
+
+> t∈B
+
+sg[ bAt] log pθ (ζt | qt, ot),
+
+bLKL = 1
+
+|B| 
+
+X
+
+> t∈B
+
+DKL 
+
+ Cat( πt) Cat(¯ p0 
+
+> t
+
+) .
+
+(16) The score-function term trains through non-differentiable re-trieval, while the KL term limits unnecessary departure from the frozen prior. A.4 Hybrid Retrieval and Time Expansion 
+
+Every sanitized rewrite creates an independent ranked list. Dense lists use cosine similarity between rewrite and memory-description embeddings. Sparse lists use BM25 over memory keywords; when SR-QR returns an explicit keyword set, the same set is used for all sparse rewrites. As a bounded implementation of the main-text candidate pool, the retriever first requests up to bk = min {N, max(3 k, 10) }
+
+candidates per rewrite, where N is a benchmark-specific can-didate cap fixed by the task configuration. Let Lt,a,i be list i
+
+on route a ∈ { d, s }, and let Na be the number of nonempty lists actually returned on route a. For a candidate pool P, de-fine the normalized route-specific reciprocal-rank score Gt,a 
+
+and fused score St as 
+
+Gt,a (m; P) = 1
+
+NaNaX
+
+> i=1
+
+1
+
+η + rank ta,i (m; P) ,St(m; P) = X
+
+> a∈{ d,s }
+
+wat Gt,a (m; P) + λQ
+
+η + rank tQ(m; P) .
+
+(17) The 1/N a factor prevents a route from gaining mass merely by emitting more rewrites. Equal Q values share the same rank, avoiding arbitrary ordering of cold-start memories. Let P(0)  
+
+> t
+
+be the union of all dense and sparse rewrite lists, and let Kt = TopK k(St(·; P(0)  
+
+> t
+
+)) . The system augments this initial pool with the incoming and outgoing Time neighbors of the seeds: 
+
+N time  
+
+> t
+
+= [
+
+> m∈K t
+
+ N Time  
+
+> in
+
+(m) ∪ N Time  
+
+> out
+
+(m) ,
+
+P(1)  
+
+> t
+
+= P(0)  
+
+> t
+
+∪ N time  
+
+> t
+
+,
+
+At = TopK k
+
+
+
+St(·; P(1)  
+
+> t
+
+)
+
+
+
+.
+
+(18) All route-specific ranks and Q ranks are recomputed on the expanded pool; temporal neighbors therefore compete under the same hybrid score rather than receiving a separate addi-tive bonus. Only the final set At is inserted into the answering context and receives exposure statistics or direct credit. 
+
+A.5 Relational Memory Graph 
+
+During a memory phase, Fmem distills the complete inter-action trajectory, including unsuccessful interactions, into a reusable procedural memory while retaining the source tra-jectory as provenance. Conversation histories are segmented into chronologically ordered user–assistant turn pairs. Other benchmarks produce one candidate memory per task inter-action. No prompt used for memory construction, utility at-tribution, or graph repair receives a gold answer, corrected answer, or evaluator rationale. Let Ec ⊆ E t denote the arcs of type c ∈ C . For a new node m, let em be the embedding of its description. Each accepted dense or sparse pair is closed reciprocally: write 
+
+m c
+
+↔ v when both (m, v ) and (v, m ) belong to Ec. Then 
+
+m d
+
+↔ v ⇐⇒ v ∈ TopK d(m), cos( em, ev ) ≥ τd,m s
+
+↔ v ⇐⇒ Jac( Km, K v ) ≥ τs.
+
+(19) Candidate temporal pairs are drawn from the dense and sparse neighborhoods. Fmem labels each pair Time or None ;accepted edges are oriented from the earlier record to the later continuation or revision. Topical similarity without an update to the same event or state is insufficient. 
+
+A.6 Memory Valuation and Relational Credit 
+
+For every exposed memory m ∈ A t, a deterministic util-ity prompt gives Fmem that memory, the query, the task-dependent generated trace yt, and the scalar terminal reward. It returns one attributed score ut(m) ∈ [0 , 1] . If any required score is invalid, the complete TD update for that interaction is skipped rather than imputed. A newly inserted memory inherits the mean pre-update value of the context that produced it: 
+
+bQt(mnew  
+
+> t
+
+) = 
+
+|A t|−1 P 
+
+> m∈A t
+
+Qt(m), At̸ = ∅,Qinit , At = ∅. (20) The direct TD-style residual for an exposed memory is 
+
+δt(m) = Rtut(m) + γ bQt(mnew  
+
+> t
+
+) − Qt(m). (21) All residuals in one interaction use the same pre-update snap-shot. Credit propagates backward along incoming typed edges. Dense and sparse relations are reciprocal, while a directed time relation propagates credit from a later exposed state to its earlier predecessor. For paths of at most D edges, define the strongest coefficient 
+
+c(D) 
+
+> t
+
+(v, m ) = max p:v⇝m
+
+> 1≤| p|≤ D
+
+Y
+
+> e∈p
+
+ρc(e), (22) with value zero when no valid path exists. If St(v) = {m ∈At : c(D) 
+
+> t
+
+(v, m ) > 0}, the effective residual is 
+
+¯δt(v) = 1
+
+|S t(v)|
+
+X
+
+> m∈S t(v)
+
+c(D) 
+
+> t
+
+(v, m )δt(m),
+
+∆t(v) = 
+
+
+
+δt(v), v ∈ A t,
+
+¯δt(v), v / ∈A t,
+
+> St(v)̸=∅
+
+,
+
+0, otherwise .
+
+(23) Taking a maximum within each exposed-memory traversal and a mean across different exposed memories prevents path multiplicity and graph degree from mechanically increasing update magnitude. The projected update is 
+
+Qt+1 (v) = Π [Qmin ,Q max ] (Qt(v) + αQ∆t(v)) . (24) Equation (24) applies to every v ∈ V t. The newly con-structed node is inserted with Qt+1 (mnew  
+
+> t
+
+) = bQt(mnew  
+
+> t
+
+)
+
+and becomes eligible for retrieval and outcome-conditioned updates from the next interaction onward. 
+
+A.7 Channel-Specific Retrieval-Metadata Repair 
+
+Within the main text’s abstract memory update UM, the im-plementation may additionally repair retrieval metadata from channel-specific terminal-success statistics. These statistics are distinct from the LLM utility scores in Eq. (21). Let ssucc  
+
+> t
+
+∈ { 0, 1} denote the task evaluator’s binary terminal success decision, which is kept separate from a potentially graded reward Rt ∈ [0 , 1] . For channel c ∈ C , let Nt(m, c )
+
+be the number of final-context exposures of m through c, and let Ct(m, c ) be the sum of ssucc  
+
+> t
+
+over those exposures. The empirical correctness ratio is 
+
+Acc t(m, c ) = 
+
+Ct(m, c )/N t(m, c ), Nt(m, c ) > 0,
+
+1, Nt(m, c ) = 0 .
+
+(25) A channel is eligible when Nt(m, c ) ≥ Nmin and 
+
+Acc t(m, c ) < ϑ heal , subject to a per-memory refresh budget. The diagnosis prompt contains the source trajectory, current description and keywords, channel statistics, and all incident typed neighbors. A dense repair regenerates the description and its dense edges; a sparse repair regenerates keywords and sparse edges; a temporal repair revalidates incident time edges. The preserved memory content and its learned Q value are not rewritten. 
+
+A.8 Alternating Co-Adaptation 
+
+In a Router phase, the graph, values, metadata, and exposure statistics are read-only; sampled route mixtures update only 
+
+θ. In a Memory phase, the router is frozen, retrieval uses its deterministic mean, and the graph evolves sequentially. Validation and test run inside a fully frozen evaluation con-text: both states are read-only, and no prediction or evaluator output enters later training. For a co-adaptation run, let Sbase = (z1, . . . , z Nbase )
+
+denote the base schedule, where z1 = Router , zr ∈{Router , Memory }, and zr+1 ̸ = zr . Every phase is one complete pass over Dtr . The executed schedule is 
+
+Sexec =
+
+(Memory boot )∥Sbase , V0 = ∅,
+
+Sbase , V0̸ = ∅. (26) We set Nph = |Sexec |, so the phase count in the main-text objective includes the bootstrap pass whenever it is executed. The subscript “boot” is only a bookkeeping label for an or-dinary Memory update applied to an empty graph, not a third update type. This Appendix uses one-based schedule positions when referring to phase numbers. Thus, an empty-graph task uses phase 1 to construct memory and begins Router optimization in phase 2. A history-initialized task be-gins directly with Router in phase 1. Throughout the paper, 
+
+alternating therefore means strict switching between Router and Memory phases in co-adaptation runs, with each phase holding its counterpart fixed. Table 8 reports each dataset’s complete executed sequence and therefore fixes both order-ing and pass count. The simultaneous ablation uses Joint passes, updating both components on the same training stream. The two-stage ablation performs one contiguous Router block fol-lowed by one Memory block, with no return to Router op-timization. These are experimental comparators and are not branches of the core training algorithm. LoCoMo-MC and LongMemEval-MC use a separate fixed-memory protocol: their history graphs are constructed once, and all training passes update only the router. Algorithm 2 expands the interaction-level computation ab-stracted by the phase-wise training procedure in the main text. Rather than repeating the outer traversal over the phase schedule, it specifies the shared retrieval pipeline and the component-specific state transition induced by one train-ing interaction. The active phase is supplied by Sexec ; a 
+
+Memory boot phase follows the Memory branch below. During a Router phase, Gt is strictly read-only. Each interaction contributes a score-function loss with KL reg-ularization to the router buffer BR. AdamW is applied at the declared optimizer-minibatch boundary, with any resid-ual entries flushed at phase end. Batching therefore changes only the timing of gradient application, not the order in which trajectories are collected. During a Memory or bootstrap phase, the router and EMA state are held fixed and retrieval uses the deterministic mean policy πt. All TD residuals and propagation coefficients are computed from one pre-update graph snapshot, after which existing-node utilities are updated synchronously. The new node is then inserted with its inherited utility and becomes el-igible for retrieval and outcome-conditioned updates from the next interaction. Channel-specific terminal-success statistics may subsequently trigger budget-constrained metadata re-pair; repair preserves the stored memory content and its up-dated utility. Invalid model outputs follow the conservative semantics in Section A.9, preventing partial state mutations. 
+
+A.9 Failure Semantics and State Integrity 
+
+The following implementation contract makes all LLM-assisted state changes fail conservatively. 
+
+• Invalid SR-QR output falls back to the original query on both routes with a uniform prior. 
+
+• Invalid temporal classification is treated as None ; no time edge is created. 
+
+• Invalid or incomplete utility output skips the entire TD update for that interaction. 
+
+• Invalid metadata diagnosis or repair output leaves the stored content, graph structure, and learned utility un-changed. 
+
+• Evaluation freezes both components and never feeds held-out outcomes back into the training state. Algorithm 2: Interaction-Level Retrieval and Component-Specific Updates 
+
+Input: Interaction (qt, Yt); active phase zr ∈ { Router , Memory }; router θ; graph Gt = ( Vt, Et); EMA state Bt−1; router-loss buffer 
+
+BR; optimizer state Ωt; frozen Fans , F route , F mem 
+
+Output: Exposure At, answer yt, reward Rt, and updated (θ+, B t, Gt+1 , BR, Ω+ 
+
+> t
+
+)
+
+Route formation and retrieval 
+
+1: (ot, K t) ← Sanitize( Froute (qt)) 
+
+2: ct ← ϕψ (qt, ot);3: πt ← softmax(log ¯ p0 
+
+> t
+
++ fω (ct)) 
+
+4: if zr = Router then 
+
+5: ζt ∼ Beta( κπ dt , κπ st ); wt ← (ζt, 1 − ζt)
+
+6: else 
+
+7: wt ← πt
+
+8: end if 
+
+9: Form Lt,d,i by description-embedding similarity and Lt,s,i by BM25; truncate every list at bk
+
+10: P(0)  
+
+> t
+
+← S 
+
+> a∈{ d,s },i
+
+Lt,a,i ; Kt ← TopK k (St(·; P(0)  
+
+> t
+
+)) 
+
+11: P(1)  
+
+> t
+
+← P (0)  
+
+> t
+
+∪ [
+
+> m∈K t
+
+ N Time  
+
+> in
+
+(m) ∪ N Time  
+
+> out
+
+(m)
+
+12: Recompute all route and Q ranks on P(1)  
+
+> t
+
+; At ← TopK k (St(·; P(1)  
+
+> t
+
+)) 
+
+13: yt ∼ pFans (· | qt, At); Rt ← Eval tr (yt; Yt); ssucc  
+
+> t
+
+← Success( yt; Yt)
+
+14: τt ← (qt, At, y t, R t)
+
+Component-specific update 
+
+15: if zr = Router then 
+
+16: bAt ← Rt − Bt−1; Bt ← μB t−1 + (1 − μ)Rt
+
+17: ℓt ← − sg[ bAt] log pθ (ζt | qt, ot) + βKL DKL (Cat( πt)∥ Cat(¯ p0 
+
+> t
+
+)) 
+
+18: Append ℓt to BR
+
+19: if at an optimizer-minibatch or pass-end boundary then 
+
+20: (θ+, Ω+ 
+
+> t
+
+) ← AdamW( θ, Ωt; mean( BR)) ; BR ← ∅
+
+21: else 
+
+22: θ+ ← θ; Ω+ 
+
+> t
+
+← Ωt
+
+23: end if 
+
+24: Gt+1 ← G t
+
+25: else 
+
+26: θ+ ← θ; Ω+ 
+
+> t
+
+← Ωt; Bt ← Bt−1
+
+27: mnew  
+
+> t
+
+← Construct Fmem (τt)
+
+28: bQt(mnew  
+
+> t
+
+) ← mean m∈A t Qt(m), or Qinit if At = ∅
+
+29: for all m ∈ A t do 
+
+30: ut(m) ← Attribute Fmem (m, τ t)
+
+31: end for 
+
+32: if all attribution outputs are valid then 
+
+33: δt(m) ← Rtut(m) + γ bQt(mnew  
+
+> t
+
+) − Qt(m) for every m ∈ A t
+
+34: Compute c(D) 
+
+> t
+
+(v, m ) and ∆t(v) on the pre-update graph for every v ∈ V t
+
+35: Synchronously set Qt+1 (v) ← Π[Qmin ,Q max ](Qt(v) + αQ∆t(v)) for every v ∈ V t
+
+36: else 
+
+37: Qt+1 (v) ← Qt(v) for every v ∈ V t
+
+38: end if 
+
+39: Insert mnew  
+
+> t
+
+with value bQt(mnew  
+
+> t
+
+) and provenance τt
+
+40: Add reciprocal Dense /Sparse edges and verified, directed Time edges 41: Update channel-specific statistics of At using ssucc 
+
+> t
+
+42: for all eligible (m, c ) satisfying Nt(m, c ) ≥ Nmin and Acc t(m, c ) < ϑ heal do 
+
+43: Repair metadata channel c using Fmem ; preserve xm and Qt+1 (m)
+
+44: end for 
+
+45: Let Gt+1 be the resulting graph 46: end if 
+
+47: return (At, y t, R t, θ +, B t, Gt+1 , BR, Ω+ 
+
+> t
+
+)B Experimental Protocols 
+
+B.1 Benchmarks and Metrics 
+
+We evaluate seven benchmark families with their task-native interfaces. Each reported unit is held out, and evaluation outcomes never update the router or memory state. 
+
+• LifelongAgentBench (LLAB), OS interaction evalu-ates multi-step operating-system planning across ses-sions. Tasks run in the benchmark environment, with terminal-state success and the MemQ cap of 15 agent steps. 
+
+• LiveCodeBench v6 evaluates competitive-programming generation: one program is executed against the bench-mark tests per problem, and we report Pass@1. 
+
+• MMMU Pro evaluates multiple-choice multimodal rea-soning with exact-choice accuracy. 
+
+• GPQA Diamond evaluates graduate-level physics, chem-istry, and biology questions with exact multiple-choice accuracy. 
+
+• BFCL evaluates multi-turn function calling, including API selection, argument construction, and recovery from tool-side errors. Evaluation uses the benchmark parser and backend-state comparison. 
+
+• LoCoMo is evaluated as both free-form OpenQA and MC-10. OpenQA excludes category 5 adversarial ques-tions before splitting and reports overall, multi-hop, tem-poral, open-domain, and single-hop judged accuracy; MC-10 uses exact-choice accuracy. 
+
+• LongMemEval-MC converts each complete history– question bundle into a 10-choice task scored by exact-choice accuracy. Executable and exact-choice tasks use task-native correct-ness for both reward and reporting. Only LoCoMo OpenQA separates these roles: GPT-4o-mini supplies training rewards, while DeepSeek-V4-Pro judges frozen test predictions and never enters training or memory updates. 
+
+B.2 Dataset Construction and Partitions 
+
+Conversational protocols hold out different units: LoCoMo-MC splits complete conversations, LoCoMo OpenQA splits QA pairs within each conversation, and LongMemEval-MC assigns each complete history–question bundle to one conversation-disjoint partition. The first five task-oriented benchmarks use the counts and valid /test terminology of MemQ Appendix D. Graph initialization is benchmark-specific. LoCoMo-MC and LongMemEval-MC convert each supplied history to a fixed graph before QA, so rewards update only the router. LoCoMo OpenQA initializes a graph from each complete conversation, after which only training questions may update it or the router. The five task-oriented benchmarks instead construct an initially empty memory from training trajecto-ries during Memory phases. Validation selects a checkpoint only when a disjoint test split also exists. A sole held-out split, even if named valid , is reserved for one-time reporting from the final scheduled state; the same rule applies when no validation split exists. The selected state is frozen for held-out evaluation, whose predictions, rewards, and evaluator outputs are never fed back into training. 
+
+B.3 Baselines and Reproduction Controls 
+
+We group baselines by the state exposed to the answering model. Context and retrieval baselines are No Memory, Full Context, RAG (embedding retrieval without learned utility reranking), Self-RAG (relevance, support, and utility critiques), and graph-enhanced LightRAG. Under the MemQ protocol, Self-RAG uses the common frozen answering back-bone rather than a task-specific fine-tuned critique model. 
+
+External and structured memory baselines are Mem0, LangMem, MemoryOS, MemP, A-MEM, Zep, Memobase, and StructMem, each retaining its native memory con-struction and organization. Adaptive and model-integrated baselines are MemRL and MemQ, which learn external-memory utilities with a frozen answering backbone, plus MemGen, AutoCompressor, and ElasticMem, whose state is more directly coupled to that backbone. For LLAB, LiveCodeBench, MMMU Pro, GPQA Dia-mond, and BFCL, we follow the MemQ comparison proto-col: RAG and MemP use the MemRL evaluation-stack im-plementations, Mem0 and MemRL use their official imple-mentations, and Self-RAG uses the frozen-backbone repro-duction above. A matched rerun fixes the benchmark input, answering backbone, evaluator, and decoding while preserv-ing the baseline’s native memory mechanism. Retrieval and context limits are benchmark-specific but fixed within each matched comparison. Imported values are system-level liter-ature references, not paired reruns. Accordingly, the OpenAI and FullContext LoCoMo OpenQA rows retain their reported evaluation settings and are not matched CoEvo-Mem reruns; other published OpenQA systems are interpreted likewise unless marked matched. For MC-10, Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct define the matched-backbone settings, whereas GPT-4 is an answering-backbone transfer reference. The main-text ablations are operationally fixed. w/o SR-QR sends the original question once to each route and fixes fusion to (0 .5, 0.5) . w/o Memory Evolution uses indepen-dent items and direct outcome-conditioned utility updates, disabling typed relations and relational propagation. Simul-taneous and two-stage variants change only the Router/Mem-ory activation order. All four preserve the full run’s example order and component-update budget. 
+
+B.4 Model, Retriever, and Evaluator Assignments 
+
+Main-table model labels denote Fans only. The separately specified, frozen SR-QR model Froute may differ from Fans 
+
+but is fixed within a benchmark run; this protocol choice is not an additional model-comparison experiment. Unless noted, Fmem = Fans . Rewriting and answering may there-fore use different families or scales. They communicate only through structured SR-QR outputs and the trainable residual router, and neither frozen model is fine-tuned. 
+
+Answering-backbone transfer on MC. The MC graph, retrieval metadata, and learned query-side router are external Benchmark Partition unit Train Validation Test                                 
+
+> LLAB OS Interaction OS task 500 (full) –Official held-out LiveCodeBench v6 Programming problem 140 35 –MMMU Pro Multimodal question 1,384 346 –BFCL Function-call task 400 –100 GPQA Diamond Multiple-choice question 158 –40 LoCoMo OpenQA QA pair within each conversation 60% 20% 20% LoCoMo-MC Entire conversation 60% (6) 20% (2) 20% (2) LongMemEval-MC Entire conversation / history–question bundle 60% (300) 20% (100) 20% (100)
+
+Table 5: Dataset partitions and split units. 
+
+A dash indicates that the adopted protocol does not define a separate split with that name. LoCoMo-MC uses a conversation-disjoint 6:2:2 split. LoCoMo OpenQA removes category 5 and then performs a question-type-stratified 60/20/20 split inside every conversation; the main OpenQA result averages five independent within-conversation splits. LongMemEval-MC uses a conversation-disjoint 300/100/100 split (6:2:2), without separating a bundle’s history from its question.                                        
+
+> Benchmark Fans =Fmem Embedding model Training reward Reporting metric/evaluator
+> LLAB GPT-4o-mini text-embedding-3-large ( d= 3072 )Environment success Same LiveCodeBench Gemma-4-E4B-it Qwen3-Embedding-8B Executable tests Pass@1 MMMU Pro Gemma-4-E4B-it Qwen3-Embedding-8B Exact choice Exact choice GPQA Diamond Gemma-4-E4B-it Qwen3-Embedding-8B Exact choice Exact choice BFCL Qwen3.5-35B-A3B Qwen3-Embedding-8B BFCL execution Same LoCoMo OpenQA GPT-4o-mini text-embedding-3-small GPT-4o-mini judge DeepSeek-V4-Pro LoCoMo-MC Qwen2.5-3B/7B-Instruct Qwen3-Embedding-8B Exact choice Exact choice LongMemEval-MC Qwen2.5-3B/7B-Instruct Qwen3-Embedding-8B Exact choice Exact choice
+
+Table 6: Frozen answering, memory, embedding, and evaluation roles used for the main results. The independently specified SR-QR model is not inferred from the answering-backbone label. to the answering backbone. The GPT-4 setting replaces only 
+
+Fans ; the fixed graph, router, Froute , embedding, retrieval, and decoding settings remain those of the source MC run. Because Fmem is not invoked in fixed-graph evaluation, this row is an answering-backbone transfer reference rather than a matched-compute baseline. 
+
+B.5 Optimization, Initialization, and Phase Schedules 
+
+Only the residual router is optimized. AdamW uses zero weight decay and gradient-norm clipping at 1.0; interac-tion losses are applied at each benchmark-specific minibatch boundary, with a partial buffer flushed after a Router phase. EMA retention is μ = 0 .9, i.e., λema = 0 .1 under the main-text update convention. A zero-initialized output layer makes the initial mean policy equal the smoothed frozen SR-QR prior. Defaults are learning rate 3 × 10 −4, minibatch 10, and 5 warmup steps; MMMU Pro uses 10 −3, 20, and 10, respectively. Candidate and final exposure depths are benchmark-specific, reflecting modality, history, and context constraints; no single retained-memory count is imposed across datasets. Within a benchmark the retrieval depth is fixed across matched comparisons, subject only to a smaller candidate pool.                                            
+
+> Routing / retrieval Value Memory / graph Value
+> Residual-logit dimension 2Memory rate αQ0.3
+> Rewrite cap (dense/s-parse)
+> 3/3Bootstrap discount γ0.35
+> Beta concentration κ20 Value interval [−1,5]
+> KL coefficient βKL 0.1Propagation depth D4
+> Gradient-norm clip 1.0Dense threshold τd0.6
+> AdamW weight decay 0Sparse threshold τs0.3
+> EMA retention μ0.9Dense graph candidates 5
+> RRF constant η60 Edge decay (ρd, ρ s, ρ t)(.8, . 5, . 6)
+> Utility-rank weight λQ0.15 New-node utility prior Context mean / neutral
+
+Table 7: Shared optimization, retrieval, and graph-update settings.              
+
+> Benchmark(s) Post-bootstrap passes Executed phase sequence
+> LLAB, LiveCodeBench, GPQA Diamond, BFCL 3Mboot ∥(R, M, R )
+> MMMU Pro 16 Mboot ∥(R, M )×8
+> LoCoMo OpenQA 15 (R, M )×7∥R
+> LoCoMo-MC 3R×3; fixed graph LongMemEval-MC 5R×5; fixed graph
+
+Table 8: Per-benchmark post-bootstrap passes and complete executed phase schedules. R and M are full Router and Memory passes, ∥ de-notes concatenation, and a superscript gives sequence rep-etition. On empty-graph benchmarks, Mboot constructs the graph before the listed alternating schedule, so Router be-gins at phase 2 and the pass count excludes bootstrap. History-initialized co-adaptation begins with Router; the fixed-graph MC protocols instead remain router-only. Mini-batching changes Router-update timing but never interaction order. Metadata repair is restricted to evolving-memory set-tings: LoCoMo OpenQA uses (Nmin , ϑ heal , B refresh ) =(15 , 0.15 , 2) and LLAB, LiveCodeBench, GPQA Diamond, and BFCL use (20 , 0.10 , 1) . It is disabled for MMMU Pro and both fixed-graph MC protocols. Repair may change channel-specific metadata or incident relations, never preserved con-tent or learned utility. 
+
+B.6 Evaluation and Decoding 
+
+All auxiliary LLM calls—SR-QR, memory construction, utility attribution, temporal classification, and metadata repair—are deterministic. Validation and test also disable exploration, use policy mean πt, and generate once per in-stance. Benchmark parsers score choice and executable tasks; unparseable outputs are incorrect. Answer generation is deterministic for LoCoMo, Long-MemEval, BFCL, LiveCodeBench, LLAB, and MMMU. GPQA alone trains with temperature 1.0 and top-p = 0 .95 ,then uses temperature zero for validation and test. Live-CodeBench uses a 10,000-token cap and six-second test time-out; BFCL defaults to its non-thinking template while also evaluating the thinking template. Both LoCoMo OpenQA judges use fixed prompts and structured outputs: the reward judge sees only training ex-amples, whereas the reporting judge sees frozen test pre-dictions and never enters learning. Both MC protocols use exact-choice scoring without an LLM judge. Aggregation follows the main tables: repeated runs with dispersion report mean ± standard deviation, LoCoMo OpenQA aggregates five fixed within-conversation splits, and other entries report the displayed task-level aggregate. 
+
+B.7 Hardware and Reproducibility 
+
+All experiments ran on one server with eight NVIDIA H20 GPUs . Local frozen models used OpenAI-compatible vLLM endpoints; hosted answering, embedding, and judge models used their configured APIs. Gradients are limited to residual-router parameters θ = ( ψ, ω ); memory construction, rela-tion maintenance, value propagation, and metadata repair are nonparametric. Within a run, model interfaces and splits remain fixed. Random state controls training order, router initialization, and Beta sampling; validation and test are deterministic. Graph and router checkpoints are serialized and restored together for held-out evaluation. 
+
+B.8 Limitations and Future Work 
+
+Model-role assignments. Our evaluation adopts a con-trolled model-assignment protocol: within each benchmark, the answering model Fans and the SR-QR model Froute re-main fixed throughout training and evaluation, and their pair-ing is not selected using held-out performance. This design isolates the effect of retrieval–memory co-adaptation from confounding changes in backbone capacity or rewriting qual-ity. Importantly, the two roles are interface-decoupled and may be instantiated by different frozen models: Froute pro-duces structured retrieval queries and routing priors, whereas 
+
+Fans generates the task response from the retrieved context. The present experiments therefore evaluate CoEvo-Mem un-der fixed, reproducible assignments rather than exhaustively optimizing this pairing. Future work may compare a com-pact set of homogeneous and heterogeneous (Fans , F route )
+
+configurations while holding the data splits, prompts, em-bedding model, retrieval budget, training schedule, and eval-uator fixed. Such a study would characterize the resulting accuracy–efficiency trade-offs without conflating model as-signment with the contribution of the proposed learning framework. 
+
+Multi-agent memory sharing. The separation between re-trieval policy and persistent memory also provides a natural foundation for multi-agent memory sharing. Multiple agents could maintain agent-specific routers while reading from and contributing to a shared relational memory graph, allowing useful experiences acquired by one agent to support sub-sequent decisions by others. A principled extension should preserve the provenance and ownership of each memory, dis-tinguish private from shared state, and resolve redundant or conflicting updates before they affect future retrieval. Cross-agent credit assignment is particularly important: task feed-back should update not only the retrieving agent’s policy, but also the shared memories and relations that supported its de-cision, without propagating spurious credit across unrelated agent trajectories. Evaluating such systems would require measuring both positive knowledge transfer and negative in-terference, together with communication, storage, and syn-chronization costs. A complementary theoretical direction is to characterize the stability of the alternating optimization procedure under asynchronous writes, delayed feedback, and multiple concurrently evolving retrieval policies.
