@@ -1,0 +1,687 @@
+Title: Agentic Reinforcement Learning with Observation-Calibrated Self-Distillation
+
+URL Source: https://arxiv.org/pdf/2608.04788v1
+
+Published Time: Thu, 06 Aug 2026 00:55:01 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Agentic Reinforcement Learning with Observation-Calibrated Self-Distillation 
+
+# Yi Yang 1,2 * , Cong Qin 1,3,* , Xiaodan Liu 1,4,* , Chishui Chen 1,5,* , Qing Dong 1,6,* , Yan Zhang 1,* ,Cao Liu 1, Zhao Yang 1, Lu Pan 1, Jiaye Lin 1, †, Yi Feng 2, †
+
+> 1
+
+Meituan LongCat Interaction 2Nanjing University 
+
+> 3
+
+Peking University 4McMaster University 5Fudan University 6East China Normal University 
+
+Abstract 
+
+Large language model agents are commonly trained through reinforcement learning with sparse trajectory-level rewards, which offer limited guidance on how strongly individual to-kens should be updated. On-Policy Self-Distillation (OPSD) addresses this by re-scoring generated tokens under a priv-ileged replay view to obtain dense, token-level supervision. However, we identify a confounding issue: the resulting sup-port may reflect both the privileged information contained in the replay view and score shifts induced by the replay scaffold, making it difficult to attribute the support specifi-cally to that information. This issue is especially pronounced when future environment observations serve as privileged in-formation, since replaying them requires reconstructing an extended scaffold that itself perturbs token scores. To re-solve this confounding, we propose Observation-Calibrated Self-Distillation (OCSD) , which contrasts two structurally matched replay views, Full and Observation-Ablated, differ-ing only in whether the actual future observation is present, to derive an observation residual that discounts score changes shared by the replay scaffold. OCSD then applies this residual to modulate token-level GRPO updates at high-uncertainty steps, while preserving the trajectory-level update direction. Experiments on ALFWorld, WebShop, and Search-QA across three Qwen3 model scales show that OCSD consistently outperforms strong baselines. Diagnostic analyses further confirm that the calibrated residual aligns better with lo-cal environment feedback. Our code is publicly available at https://github.com/yiy1x/OCSD. 
+
+# 1 Introduction 
+
+Large Language Model (LLM) agents are increasingly used for long-horizon interactive tasks such as web naviga-tion (Zhou et al. 2024), embodied control (Kim et al. 2024), and information seeking (Reddy et al. 2025), where complet-ing a task requires many rounds of observation, reasoning, and action (Yao et al. 2022b; Liu et al. 2024). Reinforce-ment learning has become the dominant paradigm for train-ing such agents, with methods such as Group Relative Policy Optimization (GRPO) (Shao et al. 2024). However, GRPO and its variants typically apply a shared trajectory-level re-ward signal to all tokens in a multi-step trajectory, offering  
+
+> *
+
+Equal contribution. † Corresponding authors. Email: yi.yang@smail.nju.edu.cn. Work done during an internship at Meituan. 
+
+little guidance on how strongly individual tokens generated at each step should be updated (Feng et al. 2026; Zeng et al. 2025; He et al. 2026). On-Policy Self-Distillation (OPSD) offers a natural way to complement sparse trajectory-level rewards with fine-grained supervision, by generating on-policy outputs and then re-evaluating the generated tokens under a privileged replay view after rollout (Zhao et al. 2026). Recent agentic self-distillation methods build such privileged views from subsequent environment observations (Liu et al. 2026a; Li et al. 2026), completed interaction trajectories (Zhang, Lin, and Wu 2026; Yang et al. 2026a; Lu et al. 2026), or distilled experience summaries (Lu et al. 2026; Wu et al. 2026). De-spite differing in how privileged supervision is constructed, localized, and integrated, these methods commonly treat the probability change induced by the replay view as the support contributed by the target hindsight information, implicitly as-suming that the added replay context beyond this information leaves token scores otherwise unaffected. This issue is particularly evident when future environment observations serve as privileged information. As shown in Figure 1, the agent incorrectly generates “take the mug from shelf 1,” after which the environment reports “there is no mug on the shelf.” The Full replay view incorporates this ob-servation into the context and re-scores the original output. Still, in doing so, it also introduces an additional replay for-mat and future-action scaffold. Even after removing the true observation, the Observation-Ablated view still assigns sim-ilar support to the Full view for some tokens, indicating that these changes are not entirely attributable to the environment feedback. Full-view support therefore conflates changes tied to the future observation with those shared by the replay scaf-fold. Controlling for the latter requires a structurally matched view that preserves the same replay structure while excluding the actual future observation. Accordingly, we propose Observation-Calibrated Self-Distillation (OCSD) for agentic reinforcement learning. OCSD constructs two structurally matched replay views, Full and Observation-Ablated, that differ only in whether the actual future observation is included, and contrasts their scores for the same generated token to derive an observation residual that discounts score changes shared by the replay scaffold. This residual is then applied at high-uncertainty steps to modulate the token-level update strength of GRPO, arXiv:2608.04788v1 [cs.LG] 5 Aug 2026 Figure 1: Deriving the observation residual from structurally matched replay views. while the trajectory-level update direction is left unchanged. In this way, OCSD turns future observations into calibrated, step-local supervision rather than a confounded replay signal. Fine-grained diagnostic analyses further show that the cali-brated residual aligns more closely with local environment feedback than Full-view support (Section 2.2). We evaluate OCSD on ALFWorld (Shridhar et al. 2020), WebShop (Yao et al. 2022a), and Search-QA (Jin et al. 2025) using Qwen3 models at three different scales. OCSD achieves the best overall performance across all tasks and model scales. Our contributions are summarized as follows: (1) We identify a confounding effect in agentic privileged replay scoring: Full-view support can reflect both informa-tion from future observations and score changes induced by the shared replay scaffold. (2) We propose OCSD, which de-rives an observation residual from structurally matched Full and Observation-Ablated views and applies it to token-level policy optimization at high-uncertainty steps. (3) Compre-hensive experiments show that the residual better aligns with local environment feedback and that OCSD consistently out-performs strong baselines across three benchmarks and three model scales. 
+
+# 2 Revisiting Privileged Replay Scoring 
+
+2.1 Preliminaries 
+
+LLM Agents. Given a task x, an LLM agent interacts with the environment over a sequence of steps. At step k, let hk
+
+denote the interaction context available to the agent, includ-ing the task, interaction history, and current observation ok.The agent generates yk = ( yk, 1, . . . , y k,T k ) ∼ πθ (· | hk),which determines an executable action, after which the en-vironment returns the next observation ok+1 . We denote the context for generating token yk,t by hk,t = ( hk, y k,<t ). The resulting trajectory τ receives a terminal reward R(τ ). When multiple trajectories are sampled, we add the trajectory in-dex i to these quantities and let Ki denote the number of interaction steps in τi.
+
+Group Relative Policy Optimization. For each task x,GRPO (Shao et al. 2024) samples a group of G trajecto-ries {τi}Gi=1 from the rollout policy and computes a group-relative advantage from their terminal rewards: 
+
+bAi = R(τi) − 1
+
+> G
+
+PGj=1 R(τj )std  {R(τj )}Gj=1 
+
+ + ϵadv 
+
+. (1) GRPO assigns the same trajectory-level advantage bAi to all tokens yi,k,t in τi, without distinguishing their individual contributions to the terminal reward. 
+
+Privileged Replay Scoring. OPSD generates on-policy outputs under the original interaction context and re-scores the same tokens after rollout using replay evidence Ei,k .We denote the original-context and replay-conditioned token distributions by πS and πT , referred to as the student and teacher views, respectively. For token yi,k,t at the k-th inter-action step of trajectory τi, its token-level support is defined as δi,k,t (Ei,k ) = log πT (yi,k,t | hi,k,t , E i,k )
+
+− log πS (yi,k,t | hi,k,t ) . (2) Positive values indicate increased support, while negative values indicate reduced support. For agent tasks, we instantiate two structurally matched re-play views. The Full evidence EFi,k contains the actual future observations together with naturalized schemas of future ac-tions. Each action schema preserves the coarse action intent and syntactic structure while replacing high-information ar-gument values, such as concrete entities, locations, queries, and answers, with natural-language expressions of their coarse semantic roles. The Observation-Ablated evidence Figure 2: Fine-grained diagnosis of Qwen3-1.7B over 150 training steps on ALFWorld. All panels use the top-20% high-NLL interaction steps selected within each trajectory. In (b)–(d), error bars indicate trajectory-cluster bootstrap 95% confidence intervals. (a) Words enriched in the upper 5% tails of the checkpoint-centered Full, Observation-Ablated, and residual signals, and in the lower 5% tail of the residual. (b) Word-level relative residual contribution D across five functional categories. (c) AUROC of step-averaged Observation-Ablated, Full, and residual signals for distinguishing valid from invalid actions; ambiguous cases are excluded. (d) AUROC improvement of the residual over Full support. Raw uses the original scores, Standard applies within-checkpoint normalization, and Matched controls for training stage and action operator. The final three bars report results at different training stages. 
+
+EAi,k replaces only the future-observation content with the fixed phrase “Observation: not provided,” while keeping the field order, replay format, and future-action scaffold un-changed. Their corresponding token-level supports are 
+
+δFi,k,t = δi,k,t (EFi,k ), δAi,k,t = δi,k,t (EAi,k ). (3) Under the Full and Observation-Ablated views, πT is in-stantiated as πF and πA, respectively, using the same model parameters with different input contexts. 
+
+2.2 Fine-Grained Diagnosis of Replay Support 
+
+As shown in Figure 1, the Full and Observation-Ablated views assign nearly identical support to tokens such as I,
+
+should , and from , but differ in their support for tokens such as take , mug , and shelf , which are more closely related to the actual future observation. To examine whether the pattern in Figure 1 generalizes be-yond the single example, we analyze the top-20% interaction steps ranked by average token NLL within each trajectory, following the step-selection procedure in Section 3.2, over 150 training steps of Qwen3-1.7B on ALFWorld. Within each checkpoint, we center δF , δA, and δF − δA by their respective means and merge subword tokens into word oc-currences by averaging their constituent token scores. For each word, we compute the fraction of its occurrences that fall in the upper 5% tail of each centered signal, or in the lower 
+
+5% tail for the negative residual, and aggregate these statis-tics equally across checkpoints. Figure 2(a) scales each word by its tail-hit rate multiplied by its log-scaled occurrence frequency. The upper tails of Full and Observation-Ablated support contain substantially overlapping words, whereas the observation residual highlights a distinct set. This suggests that Full-view support contains score changes shared by the replay scaffold, whereas the observation residual is more sensitive to the actual future observation. To further examine how this difference varies across func-tional roles, for each word occurrence w with constituent token set Ti,k,w , we define 
+
+mRi,k,w = mean t∈T i,k,w δFi,k,t − δAi,k,t ,mAi,k,w = mean t∈T i,k,w δAi,k,t ,Di,k,w = mRi,k,w 
+
+mRi,k,w + mAi,k,w + ϵ .
+
+(4) A larger Di,k,w indicates a greater relative contribution of the observation residual. We group the analyzed words into five mutually exclusive categories using deterministic lexical and output-structure rules. As shown in Figure 2(b), reasoning and environment entity/state words have higher D than action and format words, indicating that the difference between the two replay views varies across functional roles. We next assess the consistency of the three signals with local environment feedback. For each interaction step, we average the signal over all generated tokens: 
+
+Si,k (s) = 1
+
+Ti,k Ti,k 
+
+X
+
+> t=1
+
+si,k,t , s ∈ δA, δ F , δ F − δA . (5) Using deterministic rules based on the environment execu-tion status and templated feedback, we label actions that produce a state change as valid and actions that are rejected Figure 3: Overview of the OCSD training framework. or produce no effect as invalid, while excluding ambiguous cases. We pool the labeled steps across checkpoints and eval-uate each signal using AUROC (Hanley and McNeil 1982) with trajectory-cluster bootstrap. As shown in Figure 2(c), the Observation-Ablated, Full, and residual signals achieve AU-ROC values of 0.464 , 0.654 , and 0.707 , respectively, showing that the residual is more consistent with local environment feedback. Figure 2(d) further shows that its improvement over Full support remains stable under within-checkpoint stan-dardization, stratified matching, and across training stages. Together, these analyses show that Full support contains substantial preferences that persist without the actual future observation, whereas the difference between the two views is more closely aligned with local environment feedback. 
+
+# 3 Methodology 
+
+3.1 Observation-Calibrated Token Signal 
+
+Based on Full replay support δFi,k,t and Observation-Ablated support δAi,k,t , we define the observation residual as: 
+
+ei,k,t = δFi,k,t − δAi,k,t . (6) Both support terms are computed relative to the same student prediction, so the student log-probability cancels in their difference. Expanding the two terms gives 
+
+ei,k,t = log πF
+
+ yi,k,t | hi,k,t , E Fi,k 
+
+
+
+− log πA
+
+ yi,k,t | hi,k,t , E Ai,k 
+
+. (7) Thus, ei,k,t directly compares the support assigned to the same token by the Full Teacher and the Observation-Ablated Teacher, and captures the incremental difference between the two replay views. We further map the unbounded log-probability difference to a bounded observation-calibrated token signal: 
+
+qi,k,t = tanh 
+
+ ei,k,t 
+
+2
+
+
+
+, qi,k,t ∈ [−1, 1] . (8) The sign of qi,k,t indicates whether the Full Teacher as-signs higher or lower support to the current token than the Observation-Ablated Teacher, while its magnitude reflects the degree of disagreement between the two replay views. 
+
+3.2 NLL-Guided Step Selection 
+
+Following prior work on selective training (Wang et al. 2026c; Sow et al. 2025), we prioritize interaction steps with high average token NLL under the rollout policy. For the 
+
+k-th interaction step in trajectory τi, we define the average negative log-likelihood of all generated tokens under the old policy as the step uncertainty score: 
+
+ui,k = − 1
+
+Ti,k Ti,k 
+
+X
+
+> t=1
+
+log πθold (yi,k,t | hi,k,t ) . (9) A larger ui,k indicates greater uncertainty of the rollout policy about the generated output at that step. Within each trajectory, we rank all interaction steps in descending order of ui,k and select the top ρ fraction: 
+
+Si = TopIndices ⌈ρK i⌉
+
+
+
+{ui,k }Ki
+
+> k=1
+
+
+
+, (10) where ρ ∈ (0 , 1] is the step selection ratio. The ceiling op-eration ensures that at least one step is selected from each trajectory. OCSD computes the observation-calibrated signal for all generated tokens within each selected step. 
+
+3.3 Sign-Preserving Integration with GRPO 
+
+OCSD preserves the update direction determined by the trajectory-level GRPO advantage, while using the observation-calibrated signal to adjust the update strength of individual tokens within the selected steps. For token yi,k,t 
+
+in trajectory τi, we define the calibrated advantage as 
+
+bAOCSD  
+
+> i,k,t
+
+=
+
+( bAi
+
+h
+
+1 + β sgn( bAi)qi,k,t 
+
+i
+
+, k ∈ S i,
+
+bAi, k / ∈ S i,
+
+(11) where β ∈ [0 , 1] controls the strength of observation cali-bration. OCSD modulates all generated tokens within each selected step, while tokens in unselected steps retain the orig-inal GRPO advantage. Since qi,k,t ∈ [−1, 1] , the modulation factor is non-negative, so bAOCSD  
+
+> i,k,t
+
+preserves the sign of bAi.For token yi,k,t , the importance ratio is defined as 
+
+ri,k,t (θ) = πθ (yi,k,t | hi,k,t )
+
+πθold (yi,k,t | hi,k,t ) . (12) We then replace the trajectory-level advantage in the stan-dard GRPO surrogate with the calibrated token-level advan-tage: 
+
+J OCSD (θ) = Ei,k,t 
+
+"
+
+min 
+
+
+
+ri,k,t (θ) bAOCSD  
+
+> i,k,t
+
+,
+
+clip( ri,k,t (θ), 1 − ϵ, 1 + ϵ) bAOCSD 
+
+> i,k,t
+
+
+
+− βKL DKL (πθ ∥πref )i,k,t 
+
+#
+
+.
+
+(13) Here, πref is the reference policy, while ϵ and βKL control the clipping range and KL regularization, respectively. The expectation is taken over all sampled trajectories and valid generated tokens. Model Method ALFWorld WebShop Pick Look Clean Heat Cool Pick2 Overall Score Success                                                                                                                                                                              
+
+> Qwen3-1.7B
+> Vanilla 13.8 33.3 3.2 10.5 0.0 5.0 7.8 44.0 2.3 GRPO 70 .4±8.044 .0±1.740 .6±7.438 .6±5.833 .5±5.830 .1±7.346 .6±0.771 .8±1.048 .4±0.8
+> OPSD 33 .9±3.530 .7±7.95.4±1.81.6±2.32.9±2.011 .6±5.014 .6±0.350 .3±0.611 .4±0.5
+> GRPO+OPSD 63 .1±7.241 .5±5.839 .2±9.244 .8±9.427 .3±7.529 .1±1.841 .7±2.472 .1±2.649 .0±1.9
+> RLSD 49 .9±6.251 .9±2.646 .7±3.647 .5±7.438 .1±3.026 .9±4.744 .5±1.776 .3±2.552 .1±2.9
+> SDAR 66 .7±9.750 .6±7.551 .4±7.933 .7±6.543 .1±3.038 .1±3.651 .6±2.273 .4±1.053 .4±1.0
+> OCSD (ours) 75 .9±4.9 63 .1±2.7 51 .9±4.7 47 .7±4.3 46 .4±1.8 42 .3±6.9 55 .5±2.374 .7±3.454 .4±1.2
+> Qwen3-4B
+> Vanilla 60.0 33.3 16.7 31.6 0.0 20.0 27.3 16.2 3.9 GRPO 86 .6±0.659 .5±5.177 .7±4.767 .1±4.155 .5±4.155 .0±6.270 .6±1.381 .9±3.669 .5±1.5
+> OPSD 69 .9±3.139 .2±4.526 .6±4.826 .6±4.319 .0±4.626 .4±3.836 .2±1.927 .8±2.94.7±0.6
+> GRPO+OPSD 88 .0±0.452 .8±3.975 .0±4.162 .5±3.468 .3±8.136 .9±2.568 .8±2.682 .5±1.071 .3±1.2
+> RLSD 87 .9±4.083 .4±1.880 .5±0.970 .3±9.479 .6±4.060 .6±4.379 .2±1.083 .7±1.568 .5±1.2
+> SDAR 85 .2±4.863 .9±4.076 .8±5.880 .0±3.672 .9±4.442 .6±6.973 .2±1.383 .6±1.871 .9±0.7
+> OCSD (ours) 91 .9±1.477 .2±4.490 .2±4.6 84 .7±4.4 80 .9±4.3 63 .8±0.9 82 .8±0.786 .9±1.7 73 .7±1.6
+> Qwen3-8B
+> Vanilla 58.6 50.0 22.6 21.1 34.8 45.0 37.5 17.9 4.7 GRPO 86 .8±4.544 .4±7.981 .5±6.967 .8±0.870 .4±8.563 .2±3.473 .2±4.085 .4±3.175 .5±1.2
+> OPSD 62 .3±3.744 .8±4.554 .2±4.218 .7±5.638 .8±2.938 .4±0.848 .2±1.217 .1±0.73.9±0.0
+> GRPO+OPSD 84 .7±4.363 .9±3.983 .9±2.465 .5±2.985 .1±6.070 .7±4.278 .6±1.485 .3±2.176 .1±0.9
+> RLSD 90 .4±2.977 .5±4.994 .1±2.180 .5±3.885 .3±2.073 .6±2.085 .4±1.085 .4±0.974 .2±0.7
+> SDAR 87 .5±2.858 .2±3.681 .0±4.380 .7±6.864 .2±5.060 .3±2.875 .0±1.186 .6±1.075 .0±0.8
+> OCSD (ours) 92 .8±2.2 92 .6±6.990 .4±7.087 .8±8.8 85 .5±4.0 74 .2±5.8 87 .2±1.087 .4±1.9 78 .1±0.8
+
+Table 1: Performance on ALFWorld and WebShop tasks. Results are reported as mean ± standard deviation over three runs with different random seeds for most experiments. Blue and red backgrounds denote the best and second-best methods, respectively. 
+
+# 4 Experiments 
+
+4.1 Experimental Setup 
+
+Benchmarks. We conduct experiments on ALF-World (Shridhar et al. 2020), WebShop (Yao et al. 2022a), and Search-QA (Jin et al. 2025). ALFWorld is a text-based embodied benchmark with six long-horizon household manipulation tasks. WebShop evaluates product search, filtering, and purchase under user-specified require-ments. SearchQA evaluates external-information retrieval and integration across three factoid and four multi-hop question-answering datasets. 
+
+Baselines. We compare three categories of methods: (1) 
+
+base models and reward-only reinforcement learning ,including the Vanilla model without task-specific post-training and GRPO (Shao et al. 2024), which is trained solely with environment rewards; (2) direct self-distillation baselines , including OPSD (Zhao et al. 2026), which per-forms self-distillation without reinforcement learning, and GRPO+OPSD, which directly combines the two objectives; and (3) dedicated RL–OPSD integration methods , includ-ing RLSD (Yang et al. 2026a), which uses self-distillation signals to modulate RL updates, and SDAR (Lu et al. 2026), which introduces a gated auxiliary distillation objective. 
+
+Implementation Details. We conduct experiments across three model scales in the Qwen3 family (Yang et al. 2025) and, following SDAR (Lu et al. 2026), use a unified train-ing protocol for all post-training methods. For ALFWorld and WebShop, each batch contains 16 tasks with 8 rollouts per task; for Search-QA, each batch contains 128 tasks. In Search-QA, NQ and HotpotQA serve as the in-domain train-ing distributions, while the remaining five datasets are used for out-of-domain evaluation. We report Exact Match (EM), micro-averaged over the in-domain (ID), out-of-domain (OOD), and all datasets (Avg.). For OCSD, we set the step selection ratio to ρ = 0 .2 and the advantage modulation co-efficient to β = 0 .5. Additional training hyperparameters, evaluation details, and hyperparameter sensitivity analyses are provided in the supplementary material. 
+
+4.2 Main Results 
+
+Tables 1 and 2 report the main results on ALFWorld, Web-Shop, and SearchQA. We draw the following conclusions: 
+
+OCSD achieves the strongest overall results across all benchmarks. On ALFWorld, OCSD achieves overall suc-cess rates of 55.5, 82.8, and 87.2 with Qwen3-1.7B, 4B, and 8B, outperforming GRPO by 8.9, 12.2, and 14.0 points, re-spectively. It also achieves WebShop success rates of 54.4, 73.7, and 78.1, and SearchQA average EM scores of 43.1, 47.5, and 49.1. 
+
+Direct use of privileged replay support yields inconsis-tent gains. Directly using privileged replay support does not produce consistent improvements. Standalone OPSD per-forms substantially worse than GRPO across different models and environments, and exhibits particularly poor and unsta-ble performance on SearchQA. Directly incorporating OPSD into GRPO also fails to guarantee stable gains. Although GRPO+OPSD improves performance in several settings, it still underperforms the original GRPO on ALFWorld with Qwen3-1.7B and Qwen3-4B. Method SearchQA ID OOD Avg. 
+
+Qwen3-1.7B 
+
+Vanilla 19.6 23.3 22.5 GRPO 36 .3±1.6 42 .2±0.6 40 .9±0.7
+
+OPSD 1.4±1.7 2.5±2.9 2.3±2.7
+
+GRPO+OPSD 37 .5±1.7 44 .0±0.2 42 .6±0.4
+
+RLSD 36 .7±0.5 42 .2±0.8 41 .0±0.7
+
+SDAR 36 .9±0.6 43 .2±0.9 41 .8±0.8
+
+OCSD (ours) 37 .6±0.8 44 .5±1.3 43 .1±1.2
+
+Qwen3-4B 
+
+Vanilla 27.3 34.5 33.0 GRPO 42 .1±0.2 46 .4±0.9 45 .5±0.8
+
+OPSD 0.3±0.4 0.7±1.0 0.6±0.8
+
+GRPO+OPSD 42 .5±1.1 46 .3±1.3 45 .5±1.2
+
+RLSD 42 .9±0.3 47 .2±0.6 46 .3±0.5
+
+SDAR 42 .3±0.2 46 .9±0.2 45 .9±0.2
+
+OCSD (ours) 42 .5±0.9 48 .9±1.0 47 .5±0.8
+
+Qwen3-8B 
+
+Vanilla 29.1 37.4 35.6 GRPO 43 .7±0.1 50 .1±0.3 48 .7±0.3
+
+OPSD 33 .7±0.8 41 .1±0.7 39 .5±0.6
+
+GRPO+OPSD 44 .2±1.7 49 .3±0.4 48 .2±0.2
+
+RLSD 45 .6±0.5 49 .1±0.1 48 .4±0.1
+
+SDAR 43 .8±0.4 47 .9±0.3 47 .0±0.4
+
+OCSD (ours) 43 .6±0.2 50 .6±0.4 49 .1±0.3
+
+Table 2: Performance on the SearchQA task.                       
+
+> Method ALFWorld WebShop Overall Score Success
+> GRPO 70 .6±1.381 .9±3.669 .5±1.5
+> w/o Ablated Teacher 74 .8±1.685 .0±1.072 .9±1.8
+> w/ Random Select 78 .9±1.184 .2±1.670 .6±2.6
+> w/o Step Select 66 .4±1.182 .4±2.569 .8±1.8
+> w/o Sign Alignment 71 .4±0.581 .5±2.471 .6±1.5
+> OCSD (ours) 82 .8±0.786 .9±1.773 .7±1.6
+
+Table 3: Qwen3-4B ablations on ALFWorld and WebShop. 
+
+OCSD provides broad improvements across ALFWorld task categories. Across the three model scales, OCSD achieves the best or second-best performance on most ALF-World task categories, including basic object manipulation tasks such as Pick and more challenging tasks such as Pick2 that involve multi-step interactions. 
+
+OCSD performs consistently well under distribution shift. Across all three model scales, OCSD achieves the best OOD results among the compared methods, suggesting that its gains are not confined to the training distributions and extend to unseen retrieval and question-answering datasets. 
+
+4.3 Ablation Analysis 
+
+We evaluate four OCSD variants: (1) w/o Ablated Teacher re-moves the Observation-Ablated Teacher and directly uses the 
+
+Figure 4: ALFWorld training dynamics across model scales. token-level signal from the Full Teacher. (2) Random Selec-tion replaces high-NLL step selection with random selection. (3) w/o Step Selection applies residual calibration to all inter-action steps. (4) w/o Sign Alignment removes the advantage-dependent sign term in Eq. 11, so the same residual affects positive- and negative-advantage trajectories identically. As shown in Table 3, all ablated variants underperform the complete OCSD method. Specifically, w/o Ablated Teacher 
+
+outperforms GRPO on both tasks, showing that future ob-servations themselves provide useful supervision. Random Selection also performs better than GRPO, indicating that residual calibration remains beneficial even when applied to randomly selected steps. In contrast, w/o Step Selection falls below GRPO on ALFWorld and remains close to GRPO on WebShop, suggesting that indiscriminately calibrating all steps introduces low-value or noisy signals. Removing sign alignment similarly reduces ALFWorld performance and WebShop Score to around the GRPO level, confirm-ing that the residual should be interpreted jointly with the direction of the trajectory-level advantage. 
+
+4.4 More Analysis 
+
+Comparison of Training Dynamics. Figure 4 compares the validation success rates of OCSD, GRPO, RLSD, and SDAR throughout training. Overall, OCSD achieves compet-itive or better performance over most of the displayed training period, with its advantage becoming more evident as train-ing progresses. During the early stage, the different methods perform similarly and exhibit some fluctuations across ad-jacent checkpoints. As training continues, OCSD improves more steadily and gradually separates from the competing methods across both model scales. 
+
+Observation swapping analysis. To examine whether the observation residual depends on the correspondence between the future observation and the current action, we replace the realized future observation in the Full view with a swapped observation randomly sampled from another interaction step, while keeping all other inputs unchanged. Following the step-level aggregation in Eq. 5, we set the token-level signal to 
+
+|ei,k,t | and use the resulting step score to distinguish valid from invalid steps. As shown in Fig. 5, the AUROC values under the realized observations are 0.803, 0.668, and 0.664 across the three settings, respectively. After replacing them with swapped observations, the corresponding AUROC val-Figure 5: AUROC for distinguishing valid and invalid steps under realized and swapped future observations. 
+
+Figure 6: Per-iteration runtime breakdown of OCSD on ALF-World with Qwen3-4B using 8 A100 GPUs. Blue bars de-note modules shared with GRPO, while orange bars denote OCSD-specific operations. The y-axis uses a broken scale to accommodate small values. ues decrease to 0.542, 0.484, and 0.552, all close to random ranking. These results indicate that the discriminative abil-ity of the residual primarily depends on the correspondence between the future environment feedback and the current action, rather than merely on the introduction of additional observation text. 
+
+Computational Budget. We record a detailed breakdown of the per-iteration training runtime and decompose it into modules shared with GRPO and OCSD-specific operations. As shown in Figure 6, Dual-view replay scoring and residual modulation require only 7.52 and 0.12 seconds per itera-tion, respectively. Together, they introduce an overhead of 7.64 seconds, corresponding to only 1.40% relative to the shared GRPO pipeline. OCSD therefore maintains training efficiency comparable to standard GRPO. 
+
+# 5 Related Work 
+
+On-Policy Self-Distillation for Agentic Reinforcement Learning. OPSD provides fine-grained token-level super-vision by re-evaluating student-generated outputs under a privileged view (Penaloza et al. 2026; Zhao et al. 2026). Recent studies extend this paradigm to multi-turn agentic reinforcement learning. RLSD uses token-level probability gaps to modulate update magnitudes while retaining envi-ronment rewards to determine the update direction (Yang et al. 2026a). SDAR instead incorporates OPSD as a gated auxiliary objective to improve training stability in multi-turn agent settings (Lu et al. 2026). Other work explores skill-conditioned agentic distillation through hierarchical skill ex-traction, joint skill-policy evolution, and local selection be-tween skill-conditioned and skill-free views (Yang et al. 2026b; Wu et al. 2026; Tu et al. 2026), or derives privileged teacher context from question-construction paths generated through self-play (Zhang et al. 2026b). Recent studies also investigate step-level hindsight re-scoring (Zhang, Lin, and Wu 2026), Bayes-calibrated turn-level credit derived from verified answers (Tian et al. 2026), diagnostic feedback derived from subsequent environment observations (Liu et al. 2026a), and selective credit adjust-ment using grounded environment feedback (Li et al. 2026). These methods mainly study how privileged supervision is constructed and used, whereas we focus on disentangling future observations from shared replay scaffolds. 
+
+Calibration and Reliability of Privileged Signals Recent studies show that privileged distillation signals may contain changes unrelated to the target information. RLCSD con-trasts correct and incorrect hints to reduce hint-induced style shifts (Pan et al. 2026). Purified OPSD uses a reference-only view to control reference-specific shortcuts (Shen et al. 2026), while AR-OPD introduces a partially privileged an-chor to constrain hindsight guidance that is difficult for the current policy to reach (Zhang 2026). OPD 2 instead contrasts a reasoning-tuned teacher with its base model to capture prediction changes associated with reasoning specialization (Heo et al. 2026). These approaches primarily address shifts induced by hints, references, or teacher specialization in rea-soning tasks. Other studies analyze positional variation in teacher-token reliability (Liu et al. 2026b; Xie et al. 2026), the effects of privileged supervision on high-entropy reasoning and self-correction (Kaur et al. 2026; Zhang et al. 2026a), the suppression of native reasoning under overly strong super-vision (Peng et al. 2026; Kim et al. 2026), and degener-ate response patterns induced by dense distillation, includ-ing formatting artifacts and length-based shortcuts (Wang et al. 2026a,b). In contrast, we focus on separating future-observation effects from shared replay scaffold effects in agentic replay signals. 
+
+# 6 Conclusion 
+
+We identify an attribution confound in agentic privileged re-play scoring, where Full-view support contains score changes associated with both future observations and the shared re-play scaffold. To address this issue, we propose OCSD, which derives an observation residual from structurally matched Full and Observation-Ablated replay views and uses it to cal-ibrate token-level GRPO updates. Experiments across three agentic benchmarks and three Qwen3 model scales demon-strate consistent performance gains, while diagnostic analy-ses show that the calibrated residual better aligns with local environment feedback. References 
+
+Feng, L.; Xue, Z.; Liu, T.; and An, B. 2026. Group-in-group policy optimization for llm agent training. Advances in Neural Information Processing Systems , 38: 46375–46408. Hanley, J. A.; and McNeil, B. J. 1982. The meaning and use of the area under a receiver operating characteristic (ROC) curve. Radiology , 143(1): 29–36. He, L.; Zhu, J.; Zhou, Y.; Gu, Z.; Liu, J.; Huang, W.-C.; Zou, H. P.; Wipf, D.; Yu, P. S.; and Wu, Q. 2026. Resolving Action Bottleneck: Agentic Reinforcement Learning Informed by Token-Level Energy. arXiv preprint arXiv:2605.14558 .Heo, B.; Hwang, J.; Yun, S.; and Han, D. 2026. On-Policy Delta Distillation. arXiv preprint arXiv:2607.15161 .Jin, B.; Zeng, H.; Yue, Z.; Yoon, J.; Arik, S.; Wang, D.; Zamani, H.; and Han, J. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 .Kaur, S.; Ri, N.; He, Y.; Fowl, L.; and Arora, S. 2026. Re-thinking On-Policy Self-Distillation for Thinking Models. 
+
+arXiv preprint arXiv:2607.05184 .Kim, J.; Luo, X.; Kim, M.; Lee, S.; Kim, D.; Jeon, J.; Li, D.; and Yang, Y. 2026. Why Does Self-Distillation (Sometimes) Degrade the Reasoning Capability of LLMs? arXiv preprint arXiv:2603.24472 .Kim, M. J.; Pertsch, K.; Karamcheti, S.; Xiao, T.; Balakr-ishna, A.; Nair, S.; Rafailov, R.; Foster, E.; Lam, G.; Sanketi, P.; et al. 2024. Openvla: An open-source vision-language-action model. arXiv preprint arXiv:2406.09246 .Li, X.; Lyu, T.; Li, Y.; Ma, Y.; Li, P.; Li, L.; Guo, Q.; Lin, D.; and Chen, K. 2026. What and When to Distill: Selective Hindsight Distillation for Multi-Turn Agents. arXiv preprint arXiv:2605.19447 .Liu, H.; Zhang, Y.; Li, X.; Lyu, B.; and Shang, J. 2026a. HERO: Hindsight-Enhanced Reflection from Environment Observations for Agentic Self-Distillation. arXiv preprint arXiv:2606.11559 .Liu, X.; Wang, X.; Ma, Y.; Zhang, Y.; and Xiao, C. 2026b. When Are Teacher Tokens Reliable? Position-Weighted On-Policy Self-Distillation for Reasoning. arXiv preprint arXiv:2605.21606 .Liu, X.; Yu, H.; Zhang, H.; Xu, Y.; Lei, X.; Lai, H.; Gu, Y.; Ding, H.; Men, K.; Yang, K.; et al. 2024. Agentbench: Evaluating llms as agents. In International Conference on Learning Representations , volume 2024, 52989–53046. Lu, Z.; Yao, Z.; Han, Z.; Wang, Z.-H.; Wu, J.; Gu, Q.; Cai, X.; Lu, W.; Xiao, J.; Zhuang, Y.; et al. 2026. Self-distilled agentic reinforcement learning. arXiv preprint arXiv:2605.15155 .Pan, L.; Tao, S.; Zhai, Y.; Zhang, L.; Liu, Z.; Ding, B.; Liu, A.; and Wen, L. 2026. RLCSD: Reinforcement Learning with Contrastive On-Policy Self-Distillation. arXiv preprint arXiv:2606.11709 .Penaloza, E.; Vattikonda, D.; Gontier, N.; Lacoste, A.; Char-lin, L.; and Caccia, M. 2026. Privileged Information Distilla-tion for Language Models. arXiv preprint arXiv:2602.04942 .Peng, K.; Li, C.; Ouyang, Y.; Yuan, Y.; and Ding, L. 2026. Diagnosing and Mitigating Thinking Collapse in On-Policy Self-Distillation. arXiv preprint arXiv:2607.10805 .Reddy, R. G.; Mukherjee, S.; Kim, J.; Wang, Z.; Hakkani-Tur, D.; and Ji, H. 2025. Infogent: An agent-based framework for web information aggregation. In Findings of the Association for Computational Linguistics: NAACL 2025 , 5745–5758. Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y.; Wu, Y.; et al. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open lan-guage models. arXiv preprint arXiv:2402.03300 .Shen, Z.; Tong, J.; Yan, S.; Shen, C.; Chen, H.; Ye, W.; Hu, X.; Miao, R.; Wang, H.; Zhao, J.; et al. 2026. Purified OPSD: On-Policy Self-Distillation Without Losing How to Think. 
+
+arXiv preprint arXiv:2607.02234 .Shridhar, M.; Yuan, X.; Côté, M.-A.; Bisk, Y.; Trischler, A.; and Hausknecht, M. 2020. Alfworld: Aligning text and em-bodied environments for interactive learning. arXiv preprint arXiv:2010.03768 .Sow, D.; Woisetschläger, H.; Bulusu, S.; Wang, S.; Jacobsen, H. A.; and Liang, Y. 2025. Dynamic loss-based sample reweighting for improved large language model pretraining. In International Conference on Learning Representations ,volume 2025, 89490–89520. Tian, Y.; Wang, R.; Wen, X.; Li, J.; Sun, S.; Song, L.; Bian, J.; and Zhao, B. 2026. PBSD: Privileged Bayesian Self-Distillation for Long-Horizon Credit Assignment. arXiv preprint arXiv:2606.09348 .Tu, S.; Xu, C.; Zhang, Q.; Ma, Y.; Zhang, Y.; Li, L.; Li, D.; Lan, X.; and Zhao, D. 2026. UCOB: Learning to Utilize and Evolve Agentic Skills via Credit-Aware On-Policy Bidirec-tional Self-Distillation. arXiv preprint arXiv:2606.29502 .Wang, M.; Zhao, H.; Liu, W.; Yang, L.; Liu, G.; Guo, H.; Xie, G.-S.; Meng, G.; Liu, H.; and Zhu, F. 2026a. Denser ̸
+
+= Better: Limits of On-Policy Self-Distillation for Continual Post-Training. arXiv preprint arXiv:2607.01763 .Wang, R.; Wang, H.; Chen, Y.; Xue, B.; Fang, T.; Yu, W.; and Wong, K.-F. 2026b. Demystifying On-Policy Distilla-tion: Roles, Pathologies, and Regulations. arXiv preprint arXiv:2607.13399 .Wang, S.; Yu, L.; Gao, C.; Zheng, C.; Liu, S.; Lu, R.; Dang, K.; Chen, X.-H.; Yang, J.; Zhang, Z.; et al. 2026c. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for llm reasoning. Advances in Neural Information Processing Systems , 38: 115452–115486. Wu, J.; Yang, S.; Lu, Z.; Zhang, F.; Shen, Y.; Feng, L.; Luo, H.; Lian, Z.; Zhang, S.; Wen, Z.; et al. 2026. SEED: Self-Evolving On-Policy Distillation for Agentic Reinforcement Learning. arXiv preprint arXiv:2607.14777 .Xie, Y.; Zhu, S.; Wen, T.; Chen, B.; and Wang, Y. 2026. On the Position Bias of On-Policy Distillation. arXiv preprint arXiv:2606.22600 .Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.; Huang, C.; Lv, C.; et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Yang, C.; Qin, C.; Si, Q.; Chen, M.; Gu, N.; Yao, D.; Lin, Z.; Wang, W.; Wang, J.; and Duan, N. 2026a. Self-distilled rlvr. 
+
+arXiv preprint arXiv:2604.03128 .Yang, S.; Wu, J.; Lu, Z.; Shen, Y.; Zhang, F.; Feng, L.; Zhang, S.; Luo, H.; Lian, Z.; Wen, Z.; et al. 2026b. Opid: On-policy skill distillation for agentic reinforcement learning. arXiv preprint arXiv:2606.26790 .Yao, S.; Chen, H.; Yang, J.; and Narasimhan, K. 2022a. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems , 35: 20744–20757. Yao, S.; Zhao, J.; Yu, D.; Shafran, I.; Narasimhan, K. R.; and Cao, Y. 2022b. React: Synergizing reasoning and acting in language models. In NeurIPS 2022 Foundation Models for Decision Making Workshop .Zeng, S.; Wei, Q.; Brown, W.; Frunza, O.; Nevmyvaka, Y.; Zhao, Y. K.; and Hong, M. 2025. Reinforcing multi-turn reasoning in llm agents via turn-level credit assignment. In 
+
+ICML 2025 Workshop on Computer Use Agents .Zhang, H.; Wang, C.; Chen, K.; Pan, Y.; Xiang, Y.; Wang, J.; and Zhang, M. 2026a. Tailoring Teaching to Aptitude: Direction-Adaptive Self-Distillation for LLM Reasoning. 
+
+arXiv preprint arXiv:2605.22263 .Zhang, W. 2026. Beyond Absolute Imitation: Anchored Residual Guidance for Privileged On-Policy Distillation. 
+
+arXiv preprint arXiv:2606.10385 .Zhang, Y.; Lin, X.; and Wu, C. 2026. StepOPSD: Step-Aware Online Preference Distillation for Agent Reinforce-ment Learning. arXiv preprint arXiv:2605.27140 .Zhang, Y.; Zhu, Y.; Chong, W.; Tu, S.; Zhang, Q.; Chai, J.; Wang, X.; Lin, W.; Yin, G.; and Zhao, D. 2026b. π-Play: Multi-Agent Self-Play via Privileged Self-Distillation without External Data. arXiv preprint arXiv:2604.14054 .Zhao, S.; Xie, Z.; Liu, M.; Huang, J.; Pang, G.; Chen, F.; and Grover, A. 2026. Self-Distilled Reasoner: On-Policy Self-Distillation for Large Language Models. arXiv preprint arXiv:2601.18734 .Zhou, S.; Xu, F. F.; Zhu, H.; Zhou, X.; Lo, R.; Sridhar, A.; Cheng, X.; Ou, T.; Bisk, Y.; Fried, D.; et al. 2024. Webarena: A realistic web environment for building autonomous agents. In International Conference on Learning Representations ,volume 2024, 15585–15606. A Additional Method Details 
+
+A.1 End-to-End Training Procedure 
+
+OCSD builds on the standard GRPO rollout-and-update pipeline and introduces dual-view replay scoring between trajectory collection and policy optimization. At each train-ing iteration, the rollout policy first samples a group of inter-action trajectories for each task, and the terminal rewards are used to compute the group-relative trajectory advan-tages. Following the NLL-guided step-selection procedure described in Section 3.2, we compute the average token NLL under the old policy for each interaction step, rank the steps within each trajectory, and select the top-ρ high-NLL steps. For each selected step, OCSD constructs structurally matched Full and Observation-Ablated replay views and re-scores all tokens generated at that step under the same student-generated prefix. The difference between the token scores assigned by the two views yields the observation resid-ual, which is then mapped to the bounded calibration signal 
+
+qi,k,t . This signal modulates the magnitude of the original GRPO advantage at the token level without changing the update direction determined by the trajectory-level advan-tage. Tokens belonging to unselected steps retain the original trajectory-level advantage. OCSD introduces neither an additional imitation objec-tive nor replay-conditioned action generation. The Full and Observation-Ablated views are used only during training to score tokens already generated by the student, and the result-ing observation residual is subsequently incorporated into policy optimization. The complete OCSD training procedure is summarized in Algorithm 1, with the construction of replay evidence and replay-scoring details described in Sections A.2 and A.3, respectively. 
+
+A.2 Construction of Replay Evidence 
+
+For each selected interaction step, OCSD constructs two structurally matched replay views, Full and Observation-Ablated. In all main experiments, the replay evidence uses a two-observation horizon consisting of the two post-action observations ok+1 and ok+2 , together with a natu-ralized schema of the intervening action ak+1 . Accordingly, the Full evidence EFi,k contains ok+1 , g(ak+1 ), ok+2 ,where g(·) converts a future action into a natural-language schema that preserves its coarse intent and syntactic structure while replacing high-information ar-guments, such as concrete entities, locations, queries, and answers, with their coarse semantic roles. For ex-ample, take soapbar 1 from countertop 1 is converted to take an item from a receptacle ,while Search[Barack Obama birth year] is con-verted to Search[a query] . When a future action can-not be reliably parsed, we use the fixed fallback schema afuture action .The Observation-Ablated evidence EAi,k preserves the same field order, replay format, and future-action scaffold as the Full evidence, but replaces each future-observation field with the fixed phrase Observation: not provided .The two replay views therefore differ only in whether the Algorithm 1: Observation-Calibrated Self-Distillation (OCSD)                                                                                
+
+> Require: Policy πθ, reference policy πref , task distribution D
+> Require: Group size G, selection ratio ρ, modulation coefficient β
+> 1: for each training iteration do
+> 2: Set θold ←θ
+> 3: Sample a task batch B ∼ D
+> 4: On-policy rollout
+> 5: for each task x∈ B do
+> 6: Sample Gtrajectories {τi}Gi=1 using πθold
+> 7: Obtain terminal rewards {R(τi)}Gi=1
+> 8: Compute trajectory advantages {bAi}Gi=1
+> 9: end for
+> 10: NLL-guided step selection
+> 11: for each sampled trajectory τido
+> 12: Compute average token NLL ui,k for every interaction step 13: Select the top-ρhigh-NLL steps Si
+> 14: Structurally matched replay scoring
+> 15: for each selected step k∈ S ido
+> 16: Construct Full evidence EFi,k and Observation-Ablated evidence EAi,k
+> 17: Score all generated tokens under the Student, Full, and Observation-Ablated views using πθold
+> 18: Compute δFi,k,t ,δAi,k,t ,ei,k,t , and qi,k,t
+> 19: end for
+> 20: Construct bAOCSD
+> i,k,t using Eq. (11) 21: end for
+> 22: Update θby maximizing JOCSD (θ)in Eq. (13) 23: end for Ensure: Optimized policy πθ
+
+actual future observations are present, while the remaining replay context is kept unchanged. At a trajectory boundary where no subsequent action is available, the replay evidence contains only the available future observation following the current action. The Full view retains its actual content, whereas the Observation-Ablated view uses the fixed replacement phrase at the same position without introducing an additional future-action scaffold. 
+
+A.3 Replay Scoring and Optimization Details 
+
+For each selected interaction step, OCSD uses the Student, Full, and Observation-Ablated views to score the same tokens already generated by the student at that step. The three views use the same model parameters θold but differ in their input contexts. The Student view conditions only on the original in-teraction context hi,k,t . The Full view additionally conditions on the Full evidence EFi,k , whereas the Observation-Ablated view conditions on the structurally matched Observation-Ablated evidence EAi,k . In all three views, the context pre-ceding the scored token contains the same student-generated prefix yi,k,<t . The Full and Observation-Ablated views there-fore perform replay-conditioned scoring of tokens already generated during rollout, without generating an alternative response, action, or trajectory. Following the definition of privileged replay scoring in the main text, the Full support δFi,k,t and Observation-Ablated support δAi,k,t measure the token log-probability changes in-Hyperparameter Value RL Training                         
+
+> Backbone models Qwen3-1.7B /Qwen3-4B /Qwen3-8B Optimizer AdamW Learning rate 1×10 −6
+> Weight decay 0.01 Rollout group size G8GRPO clipping coefficient ϵ0.2 Maximum response length 512 Rollout temperature 1.0 Rollout top-p1.0 Training steps 150 Gradient clipping 1.0 Training hardware 8 NVIDIA A100 GPUs
+> OCSD
+> Step selection ratio ρ0.2 Advantage modulation coeffi-cient β
+> 0.5
+
+Table 4: Shared hyperparameters used for RL training and OCSD across all benchmarks. duced by their respective replay evidence relative to the Stu-dent view. OCSD computes their difference as 
+
+ei,k,t = δFi,k,t − δAi,k,t . (14) Because the two support terms share the same Student-view term, this common term cancels in their difference. The ob-servation residual can therefore also be written as 
+
+ei,k,t = log πF
+
+ yi,k,t | hi,k,t , E Fi,k 
+
+
+
+− log πA
+
+ yi,k,t | hi,k,t , E Ai,k 
+
+ . (15) This difference contrasts how the two structurally matched replay views score the same generated token. It discounts score changes shared by the replay scaffold and yields a token-level signal that is more sensitive to the actual future observation. OCSD then maps the observation residual to the bounded calibration signal qi,k,t following the definition in the main text. During policy optimization, qi,k,t is used neither as an in-dependent reward nor as an imitation target. Instead, it modu-lates the magnitude of the original trajectory-level advantage at the token level. The sign of the trajectory-level advantage continues to determine the update direction, whereas the ob-servation residual only adjusts the update strength assigned to each token. This calibration is applied to all generated tokens within each selected step rather than only to action tokens. Steps not selected by the NLL-guided step-selection procedure are not subjected to Full and Observation-Ablated replay scoring, and all of their tokens retain the original trajectory-level advantage. 
+
+# B Experimental Setup Details 
+
+Training Protocol. We conduct experiments with Qwen3-1.7B, Qwen3-4B, and Qwen3-8B. Following SDAR (Lu et al.                
+
+> Hyperparameter ALFWorld WebShop Search-QA
+> Task batch size 16 16 128 KL coefficient βKL 0.01 0.01 0.001 Maximum prompt length 2048 4096 4096 Maximum interaction steps 50 15 4
+
+Table 5: Benchmark-specific training configurations. Task batch size denotes the number of tasks sampled in each train-ing batch, with G = 8 rollout trajectories generated for each task. 2026), we adopt a unified training protocol for all post-training methods. Shared optimization and rollout hyperpa-rameters are kept consistent across all post-training methods. For published baselines, we follow the method-specific con-figurations reported in the corresponding original papers. All three benchmarks require the model to produce an explicit reasoning segment before each action. However, Qwen3’s native thinking mode already generates a reason-ing block delimited by <think> and </think> . En-abling this mode together with the benchmark-specific output format can therefore produce duplicated or nested think-ing delimiters, leading to ambiguous output parsing. We consequently disable the native thinking mode by setting 
+
+enable_thinking=False and instruct the model to place its intermediate reasoning within <reason> and 
+
+</reason> tags before emitting the action. For ALFWorld and WebShop, each training batch contains 16 tasks, with G = 8 rollout trajectories sampled for each task. For Search-QA, each training batch contains 128 tasks with the same rollout group size. All post-training methods are trained for 150 optimization steps. Except for the benchmark-specific configurations, all benchmarks and model scales share the same optimizer, learning rate, weight decay, GRPO clipping coefficient, roll-out decoding parameters, maximum response length, and gradient clipping. All experiments are conducted using 8 NVIDIA A100 80GB GPUs. The shared RL training and OCSD hyperparameters are summarized in Table 4, while the benchmark-specific task batch sizes, KL coefficients, max-imum prompt lengths, and maximum interaction steps are reported in Table 5. For OCSD, we use a step selection ratio of ρ = 0 .2 and an advantage modulation coefficient of β = 0 .5 across all benchmarks and model scales. These two hyperparameters are not adjusted separately for individual benchmarks or model sizes. 
+
+Evaluation Protocol. We use the same evaluation tasks and inference configuration for all methods. For both ALF-World and WebShop, one interaction trajectory is generated for each evaluation task, with a maximum of 50 interaction steps for ALFWorld and 15 interaction steps for WebShop. For ALFWorld, we report the success rates for the six house-hold manipulation task categories together with the overall result. For WebShop, we report both the task score returned by the environment and the success rate. For Search-QA, we follow the same evaluation protocol as SDAR (Lu et al. 2026) and evaluate each of the seven datasets using its corresponding test or validation split. NQ and HotpotQA are treated as the in-domain datasets, while the remaining five datasets are used for out-of-domain eval-uation. For each question, the agent generates one trajectory with at most four interaction steps. Evaluation uses a valida-tion batch size of 512. We report Exact Match (EM), micro-averaged over the in-domain datasets (ID), the out-of-domain datasets (OOD), and all seven datasets (Avg.). 
+
+# C Details of Fine-Grained Diagnosis 
+
+C.1 Word-Level Preference Analysis 
+
+Figure 2(a) analyzes only the top-20% high-NLL interaction steps selected by OCSD within each trajectory. Unselected steps are excluded. Since the model tokenizer may split one word into multiple byte-pair encoding (BPE) subword tokens, we merge adjacent subword pieces into word occurrences using whitespace and structural boundaries. The signal of each word occurrence is the mean of its constituent token signals. Repeated occurrences of the same word are then averaged within each checkpoint, followed by equal-weight averaging across checkpoints. Within each checkpoint, we separately center δF , δA, and 
+
+e = δF − δA. Full+, Ablated+, and Residual+ denote oc-currences in the upper 5% tail of the corresponding centered signal, while Residual − denotes the lower 5% tail. Thus, the “+” and “ −” labels indicate checkpoint-relative tail member-ship rather than the sign of the raw signal. For each word w, the tail-hit rate is the fraction of its occurrences that enter the corresponding tail. Its displayed word-cloud size is determined by 
+
+tail _ratio( w) log(1 + count( w)) ,
+
+which balances tail preference with log-scaled occurrence frequency. 
+
+C.2 Functional-Role Categorization 
+
+Figure 2(b) uses the same top-20% high-NLL steps as Fig-ure 2(a). Each word is automatically assigned to one of five mutually exclusive categories using deterministic lexical and output-structure rules, with priority Format > Action > Entity/State > Reasoning > Other .
+
+Format includes structural tags and output-template mark-ers. Action includes verbs such as go , take , put , and 
+
+examine . Entity/State includes environment entities, recep-tacles, and state words. Reasoning includes connectives such as because , since , and however , while all remaining words are assigned to Other. To avoid ambiguity with the GRPO clipping coefficient ϵ,we denote the numerical stabilizer in Eq. (4) by ϵD in this appendix. For each word occurrence, we compute 
+
+Di,k,w = mRi,k,w 
+
+mRi,k,w + mAi,k,w + ϵD
+
+,
+
+where mRi,k,w and mAi,k,w are the mean absolute observa-tion residual and Observation-Ablated support over its con-stituent tokens, respectively. Here, ϵD > 0 is a small numer-ical stabilizer distinct from the GRPO clipping coefficient. Accordingly, D ∈ [0 , 1) measures the relative contribution of the residual magnitude. We estimate the mean and 95% confidence interval using 1,000 trajectory-cluster bootstrap samples and aggregate checkpoints with equal weight. 
+
+C.3 Local-Feedback Labels and AUROC 
+
+Figure 2(c) analyzes only the top-20% high-NLL steps selected by OCSD. We automatically assign labels us-ing the environment execution status and the immediate future observation. A step is labeled invalid if the ac-tion is rejected by the environment or if the feedback contains an explicit error or no-effect template, includ-ing nothing happens , cannot , not carrying , no such , invalid , or nothing to . A step is labeled valid if the action is accepted, produces environment progress, and does not contain a no-effect template. All remaining ambigu-ous cases are excluded. For each interaction step, we average the signal over all generated tokens. The residual score uses the signed value 
+
+e = δF − δA, rather than its magnitude. We pool the valid and invalid steps across checkpoints and evaluate each signal using AUROC. We report 95% confidence intervals from 1,000 trajectory-cluster bootstrap samples, where complete trajectories, rather than individual steps, are resampled. 
+
+C.4 Robustness Settings 
+
+Figure 2(d) reports the AUROC improvement of the residual over Full support: 
+
+∆AUROC = AUROC(Residual) − AUROC(Full) .
+
+Raw directly uses the original step-level Full and resid-ual scores, obtained by averaging token signals within each interaction step, and computes AUROC over the pooled checkpoints. Standard separately applies within-checkpoint z-score normalization to the Full and residual scores before pooling, thereby reducing scale drift across training. Matched applies stratified class balancing together with checkpoint-balanced aggregation. We stratify samples by the joint combination of training stage and action operator, where training is divided into early (steps 1–50), middle (steps 51– 100), and late (steps 101–150) stages. The action operator is extracted from the verb prefix of the executed action, with actions outside the predefined operators assigned to other .Within each stratum, valid and invalid samples are randomly downsampled to the same size, with at most 50 samples re-tained from each class. AUROC is then computed separately for each checkpoint and averaged equally across checkpoints, preventing checkpoints with more samples from dominating the result. All settings use 1,000 paired trajectory-cluster bootstrap samples. Full and residual scores are evaluated on the same resampled trajectories, and 95% confidence intervals are computed directly from their paired AUROC differences. D Observation-Swapping Sensitivity Analysis 
+
+To examine whether the observation residual depends on the correspondence between the current action and its immedi-ate post-action observation ok+1 , we conduct an observation-swapping analysis using OCSD actor checkpoints of Qwen3-1.7B, Qwen3-4B, and Qwen3-8B. For each model, we se-lect checkpoints at training steps 10, 50, 100, and 150 to cover different stages of training. The evaluation samples are drawn from the high-NLL steps selected by OCSD at each checkpoint and are stratified into three feedback categories: progress, no-progress, and invalid. We sample at most 40 steps from each category at each checkpoint without reusing trajectories. The resulting evaluation set contains 560 steps, including 208, 186, and 166 steps for Qwen3-1.7B, Qwen3-4B, and Qwen3-8B, respectively. For each target step, we independently sample five donor observations from steps in different trajectories whose ac-tions share the same operator as the target action. Each donor observation is the immediate post-action observation returned after the corresponding donor action. For the j-th donor, we replace only the realized observation ok+1 in the Full view with the donor observation, while keeping the original future-action schema g(ak+1 ), the second future ob-servation ok+2 , the student output, the replay format, and the Observation-Ablated view unchanged. Both the realized and swapped views are scored by the corresponding actor check-point using the same response token sequence. To reduce variance associated with any single donor observation, the final swapped score averages the step-level scores obtained from the five donor observations. For the realized immediate observation and the j-th donor observation, we respectively compute 
+
+ereal  
+
+> i,k,t
+
+= log πF
+
+
+
+yi,k,t | hi,k,t , E F, real 
+
+> i,k
+
+
+
+− log πA
+
+ yi,k,t | hi,k,t , E Ai,k 
+
+ ,
+
+and 
+
+eswap ,j i,k,t = log πF
+
+
+
+yi,k,t | hi,k,t , E F, swap ,j i,k 
+
+
+
+− log πA
+
+ yi,k,t | hi,k,t , E Ai,k 
+
+ .
+
+Here, EF, swap ,j i,k differs from EF, real  
+
+> i,k
+
+only in the immediate observation field: ok+1 is replaced by the j-th donor obser-vation, while g(ak+1 ) and ok+2 remain unchanged. The two residuals share the same Observation-Ablated support, and their Full views differ only in the immediate observation ok+1 . Their difference therefore arises only from the immediate post-action observation provided to the Full teacher. We measure observation sensitivity using the mean resid-ual magnitude over all generated tokens in a step. For the realized observation, the score is defined as 
+
+Sreal  
+
+> i,k
+
+= 1
+
+Ti,k Ti,k 
+
+X
+
+> t=1
+
+ereal  
+
+> i,k,t
+
+,
+
+while the swapped score is 
+
+Sswap  
+
+> i,k
+
+= 15
+
+> 5
+
+X
+
+> j=1
+
+1
+
+Ti,k Ti,k 
+
+X
+
+> t=1
+
+eswap ,j i,k,t .
+
+Thus, we first compute a step-level residual magnitude for each donor observation and then average the scores across the five donor observations. We use these scores to distin-guish valid steps that produce environment progress from invalid steps and compute AUROC under the realized and swapped observations. No-progress steps are excluded from this binary evaluation. This metric addresses a different question from the signed residual used in Figure 2(c). Figure 2(c) examines whether the direction of the residual aligns with local environ-ment feedback. In contrast, observation swapping evalu-ates the response strength of the Full teacher relative to the Observation-Ablated teacher and whether the feedback-discriminative information in this response depends on the correct observation–action correspondence. We therefore use 
+
+|e| to construct the observation-sensitivity score and compare AUROC under realized and swapped observations. The two analyses respectively measure directional feedback align-ment and observation-dependent sensitivity. As shown in Figure 5, the realized immediate post-action observations consistently yield higher AUROC across all three model scales. Replacing only ok+1 with donor ob-servations from different trajectories whose actions share the same operator reduces AUROC from 0.803, 0.668, and 0.664 to 0.542, 0.484, and 0.552 for Qwen3-1.7B, Qwen3-4B, and Qwen3-8B, respectively. These results indicate that the lo-cal feedback information captured by the residual depends on the correct correspondence between the immediate post-action observation and the current interaction step, rather than merely on the presence of arbitrary additional observa-tion text in the Full view. 
+
+# E Hyperparameter Sensitivity 
+
+We examine the sensitivity of OCSD to the step selection ratio ρ and the advantage modulation coefficient β using Qwen3-4B on ALFWorld. For each analysis, we vary one hyperparameter while fixing the other to its default value. As shown in Figure 7(a), selecting only 10% of the interaction steps yields limited improvement over GRPO, whereas in-creasing the ratio to ρ = 0 .2 raises the overall success rate from 70 .6 to 82 .8. Performance then gradually decreases as more steps are selected, reaching 66 .4 when residual calibra-tion is applied to all interaction steps at ρ = 1 .0. This trend suggests that concentrating the observation-calibrated token signal on a moderate fraction of high-NLL steps is impor-tant. Selecting too few steps provides insufficient coverage, while calibrating all steps may introduce low-value or noisy signals. We therefore use ρ = 0 .2 in the main experiments. Figure 7(b) shows a similar pattern for the advantage mod-ulation coefficient. Setting β = 0 removes residual calibra-tion and recovers the GRPO baseline. Increasing β to 0.25 
+
+and 0.5 improves the overall success rate to 78 .9 and 82 .8,respectively. Performance remains strong at β = 0 .75 but decreases to 77 .3 at β = 1 .0. These results indicate that moderate modulation strength makes effective use of the observation-calibrated token signal, whereas overly strong modulation may place excessive weight on the residual. Ac-cordingly, we set β = 0 .5 throughout the main experiments. Figure 7: Hyperparameter sensitivity of OCSD with Qwen3-4B on ALFWorld. (a) Effect of the step selection ratio ρ with the advantage modulation coefficient fixed at β = 0 .5. (b) Effect of the advantage modulation coefficient β with the step selection ratio fixed at ρ = 0 .2. For visualization, ρ = 0 and β = 0 denote the GRPO baseline without residual calibration. The red dotted lines indicate the default settings used in the main experiments. 
+
+# F Additional Experimental Results 
+
+F.1 Full Search-QA Results 
+
+Table 6 presents the complete Search-QA results across the seven constituent datasets for all three Qwen3 model scales, including the two in-domain datasets used for training and the five out-of-domain datasets used only for evaluation, to-gether with the overall micro-averaged score across all seven datasets. 
+
+F.2 Detailed Ablation Results 
+
+Table 7 presents the complete results for the four OCSD ab-lations, including subtask-level success rates on ALFWorld and both score and success rate on WebShop. All variants use Qwen3-4B under the same training configuration, dif-fering only in whether they remove the Observation-Ablated Teacher, replace high-NLL step selection with random se-lection, apply residual calibration to all interaction steps, or remove sign alignment. 
+
+# G Prompts 
+
+This section provides the benchmark-specific interaction prompts used for rollout generation and evaluation, together with the replay-scoring prompt templates used by OCSD. All methods use the same interaction prompts for environ-ment rollouts and evaluation. OCSD additionally constructs the Full and Observation-Ablated prompt variants only for post-rollout replay scoring. 
+
+G.1 Interaction Prompts 
+
+The interaction prompt at each step contains the task instruc-tion, interaction history, current observation, and benchmark-specific action interface. The model is instructed to place its intermediate reasoning within <reason> and </reason> 
+
+tags before producing an executable action in the format required by the corresponding benchmark. Qwen3’s native thinking mode is disabled to avoid duplicated reasoning de-limiters. The interaction prompt templates for ALFWorld, Web-Shop, and Search-QA are shown in Tables 8, 9, and 10, respectively. 
+
+G.2 Replay-Scoring Prompts 
+
+The replay-scoring prompts retain the original task instruc-tion, interaction history, current observation, and output-format instruction, and append the corresponding replay ev-idence. The Full and Observation-Ablated prompts use the same field order and future-action scaffold, differing only in whether the actual future observations are included. Tables 11 and 12 show the Full and Observation-Ablated prompt templates for the same ALFWorld interaction step. In the latter, each future-observation field is replaced with the fixed phrase Observation: not provided . Web-Shop and Search-QA use the same construction with their respective interaction and action formats. Method ID OOD Avg. NQ HotpotQA TriviaQA PopQA 2Wiki MuSiQue Bamboogle 
+
+Qwen3-1.7B 
+
+Vanilla 22.9 18.0 33.4 22.6 19.0 3.7 5.6 22.5 GRPO 40 .1±0.3 34 .4±2.3 58 .4±0.5 44 .8±1.5 30 .3±0.4 10 .8±2.4 64 .6±1.2 40 .9±0.7
+
+OPSD 1.0±1.3 1.6±2.0 2.6±3.1 1.4±1.6 4.1±4.8 0.2±0.2 0.2±0.2 2.3±2.7
+
+GRPO+OPSD 41 .1±1.9 35 .8±2.3 58 .8±0.6 46 .6±0.9 33 .7±1.9 12 .3±1.2 66 .0±0.8 42 .6±0.4
+
+RLSD 39 .1±1.9 35 .5±0.4 57 .2±0.4 44 .1±0.8 32 .2±1.6 12 .3±1.3 66 .5±0.8 41 .0±0.7
+
+SDAR 38 .8±0.8 35 .7±0.4 57 .8±1.1 44 .7±0.6 34 .5±1.2 12 .5±0.3 65 .3±0.4 41 .8±0.8
+
+OCSD (ours) 41 .2±2.1 35 .9±0.5 58 .4±0.7 47 .1±1.0 35 .1±2.2 11 .9±1.0 65 .7±0.5 43 .1±1.2
+
+Qwen3-4B 
+
+Vanilla 30.5 25.8 49.5 32.5 28.7 7.3 14.1 33.0 GRPO 45 .9±0.8 40 .2±0.5 62 .5±0.4 46 .8±1.4 37 .0±2.4 16 .0±1.3 71 .0±0.8 45 .5±0.8
+
+OPSD 0.7±0.9 0.1±0.1 0.9±1.3 1.3±1.7 0.1±0.1 0.0±0.0 0.0±0.0 0.6±0.8
+
+GRPO+OPSD 45 .3±0.8 41 .1±1.4 62 .2±0.7 45 .4±1.1 38 .4±2.6 16 .9±1.2 70 .6±1.1 45 .5±1.2
+
+RLSD 46 .4±1.0 41 .2±0.2 62 .2±0.5 46 .8±1.7 39 .8±1.0 17 .1±1.8 72 .7±0.2 46 .3±0.5
+
+SDAR 45 .7±0.8 40 .6±0.2 62 .8±0.8 45 .2±0.1 40 .1±0.2 17 .4±1.1 71 .4±1.1 45 .9±0.2
+
+OCSD (ours) 45 .4±0.1 41 .1±1.3 63 .2±1.1 48 .2±0.5 42 .8±2.0 17 .0±1.0 70 .6±1.8 47 .5±0.8
+
+Qwen3-8B 
+
+Vanilla 28.9 29.2 55.4 32.2 32.4 8.7 66.9 35.6 GRPO 46 .2±0.2 42 .5±0.1 64 .2±0.1 48 .6±0.5 45 .1±1.2 17 .8±0.8 69 .9±1.0 48 .7±0.3
+
+OPSD 35 .7±0.4 32 .7±1.0 56 .4±1.3 41 .2±2.7 32 .3±1.7 12 .5±3.9 68 .8±3.5 39 .5±0.6
+
+GRPO+OPSD 46 .3±0.8 43 .2±2.2 64 .8±0.8 47 .8±0.2 42 .8±1.8 17 .9±1.7 72 .6±1.6 48 .2±0.2
+
+RLSD 46 .9±0.7 45 .0±0.6 64 .3±0.8 48 .8±0.8 41 .0±0.3 21 .2±1.3 72 .9±0.6 48 .4±0.1
+
+SDAR 45 .4±0.6 43 .0±1.0 63 .4±0.6 47 .1±1.1 40 .2±2.3 19 .0±2.1 71 .5±0.6 47 .0±0.4
+
+OCSD (ours) 46 .4±0.8 42 .3±0.5 65 .2±0.6 49 .0±0.4 45 .6±0.9 17 .0±0.4 71 .4±1.1 49 .1±0.3
+
+Table 6: Detailed performance on the two in-domain (ID) and five out-of-domain (OOD) Search-QA datasets, together with the overall micro-averaged score across all seven datasets. Results are reported as mean ± standard deviation over three runs with different random seeds for most experiments. Blue and red backgrounds denote the best and second-best methods, respectively. 
+
+Method ALFWorld WebShop Pick Look Clean Heat Cool Pick2 Overall Score Success 
+
+GRPO 86 .6±0.6 59 .5±5.1 77 .7±4.7 67 .1±4.1 55 .5±4.1 55 .0±6.2 70 .6±1.3 81 .9±3.6 69 .5±1.5
+
+w/o Ablated Teacher 88 .6±2.4 47 .6±3.4 81 .1±2.1 69 .7±3.9 77 .2±3.7 62 .9±1.0 74 .8±1.6 85 .0±1.0 72 .9±1.8
+
+w/ Random Selection 85 .6±2.4 50 .0±4.6 83 .6±4.2 83 .1±2.2 82 .8±4.2 68 .2±4.1 78 .9±1.1 84 .2±1.6 70 .6±2.6
+
+w/o Step Selection 82 .2±3.2 75 .9±1.3 58 .7±1.9 68 .7±2.8 41 .8±3.8 56 .7±1.7 66 .4±1.1 82 .4±2.5 69 .8±1.8
+
+w/o Sign Alignment 93 .1±3.1 41 .3±6.9 79 .9±2.3 71 .0±5.9 72 .8±8.4 50 .8±1.4 71 .4±0.5 81 .5±2.4 71 .6±1.5
+
+OCSD (ours) 91 .9±1.4 77 .2±4.4 90 .2±4.6 84 .7±4.4 80 .9±4.3 63 .8±0.9 82 .8±0.7 86 .9±1.7 73 .7±1.6
+
+Table 7: Detailed ablation results with Qwen3-4B on ALFWorld and WebShop. Results are reported as mean ± standard deviation over three random seeds. The best result in each column is shown in bold. 
+
+Interaction Prompt on ALFWorld 
+
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your admissible actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <reason> </reason> tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags. 
+
+Table 8: Prompt template used by OCSD for the ALFWorld task environment. Interaction Prompt on WebShop 
+
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to: {task_description}. Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation}. Your admissible actions of the current situation are: [{available_actions}]. Now it’s your turn to take one action for the current step. You should first reason step-by-step about the current situation, then think carefully which admissible action best advances the shopping goal. This reasoning process MUST be enclosed within <reason> </reason> tags. Once you’ve finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags. 
+
+Table 9: Prompt template used by OCSD for the WebShop task environment. 
+
+Interaction Prompt on Search-QA 
+
+You are an expert agent tasked with answering the given question step-by-step. Your question: {task_description} Prior to this step, you have already taken {step_count} step(s). Below is the interaction history where <search> </search> 
+
+wrapped your past search queries and <information> </information> wrapped the corresponding search results returned by the external search engine. History: {memory_context} Now it’s your turn to respond for the current step. You should first conduct reasoning process. This process MUST be enclosed within <reason> </reason> tags. After completing your reasoning, choose only one of the following actions (do not perform both): (1) If you find you lack some knowledge, you can call a search engine to get more external information using format: <search> your query </search> .(2) If you have enough knowledge to answer the question confidently, provide your final answer within <answer> </answer> tags, without detailed illustrations. For example, <answer>Beijing</answer> .
+
+Table 10: Prompt template used by OCSD for the Search-QA task environment. 
+
+Prompt of Full Replay-Evidence Scoring on ALFWorld 
+
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your admissible actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <reason> </reason> tags. Once you’ve finished your reasoning, you should choose an admissible action for the current step and present it within <action> </action> tags. Future evidence: After current action: Observation: {future_observation_1} Next action:{future_action_schema} After next action: Observation: {future_observation_2} 
+
+Table 11: Template of the Full replay-evidence scoring prompt for the ALFWorld task environment. Prompt of Observation-Ablated Replay-Evidence Scoring on ALFWorld 
+
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your admissible actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <reason> </reason> tags. Once you’ve finished your reasoning, you should choose an admissible action for the current step and present it within <action> </action> tags. Future evidence: After current action: 
+
+Observation: not provided 
+
+Next action:{future_action_schema} After next action: 
+
+Observation: not provided 
+
+Table 12: Template of the Observation-Ablated replay-evidence scoring prompt for the ALFWorld task environment.

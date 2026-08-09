@@ -1,0 +1,906 @@
+Title: SyncPlan: Long-Horizon LLM Coordination with Explicit Synchronization and Adaptive Correction
+
+URL Source: https://arxiv.org/pdf/2608.01652v1
+
+Published Time: Tue, 04 Aug 2026 02:11:48 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# SyncPlan: Long-Horizon LLM Coordination with Explicit Synchronization and Adaptive Correction 
+
+Shen You 1,* , Xiaoming Zhu 2,* , Weining Weng 2, Hefei Mei 1, Weixuan Wang 2, Zhongshen Li 1, Zeji Li 1,Ye-Wen Wang 2, Zijun Liao 2, Juchao Zhuo 2, Yang Wei 2, Fuhao Qiu 2, Siqin Li 2, Zhenjie Lian 2,Danei Gong 1, Junkai Ji 3, Xiangtao Li 4, Qiuzhen Lin 3, Liang Wang 2,** , Ka-Chun Wong 1,** 
+
+> 1
+
+City University of Hong Kong, 2Tencent, 3Shenzhen University, 4Jilin University, 
+
+Abstract 
+
+LLM-based multi-agent coordination faces a fundamental trade-off between efficiency and adaptivity in dynamic en-vironments. Existing approaches typically rely on repeated LLM invocations or multi-round communication to adapt de-cisions during execution, introducing substantial latency and making coordination vulnerable to asynchronous progress and environmental changes. Conversely, one-shot planning reduces coordination overhead but produces open-loop plans that can quickly become stale or fail when actions depend on other agents and the environment. We introduce SyncPlan ,a plan-execute-correct framework for long-horizon coordina-tion through explicit synchronization and adaptive correction. Given the state and team-level task, a centralized LLM coor-dinator generates per-agent action chains in a single planning call. During execution, explicit wait primitives and deadlock detection enforce inter-agent and agent-environment dependen-cies, while a lightweight Plan Staleness Detector continuously assesses the remaining plan and triggers replanning when environmental changes invalidate its assumptions. We further optimize the coordinator through SFT and planning-oriented RL with dense task progress and outcome-level execution feed-back. Experiments on the public Overcooked benchmark and the complex Honor of Kings environment show that SyncPlan achieves state-of-the-art task success rates while using less than 0.05% of the wall-clock runtime compared with existing LLM-based coordinators. Code and datasets will be made publicly available. 
+
+1 Introduction 
+
+Large Language Models (LLMs) provide a flexible way to coordinate multiple agents toward shared objectives in game environments (Liao et al. 2025; Shridhar, Stolfo, and Sachan 2023; Bolton et al. 2025). We study a centralized setting in which an LLM coordinator observes the environment state and generates high-level action chains for multiple low-level agents when given a team-level task. Example tasks include eliminating a designated enemy in a Multiplayer Online Battle Arena (MOBA) game or coordinating two agents to prepare and deliver a dish in Overcooked. These environments evolve continuously due to stochastic events, actions of non-controlled agents, and state changes of task-relevant entities, requiring adaptive coordination throughout execution. In this setting, Traditional Multi-Agent Reinforcement Learning (MARL) methods (Rashid et al. 2018; Yu et al. (3) Coordinate Conflicts LLM coordinator can not well handle the synchronization of agents   
+
+> Blocked
+> (1) Real-Time Constraints (2) Plan staleness Need adjust plan for suddenly appearing enemy After a long time
+> [Thinking…] Retreat! Push tower Back Now!
+
+Figure 1: Core challenges of multi-agent coordination: real-time constraints, plan staleness, and coordination conflicts. 2022; Kuba et al. 2022) require extensive task-specific in-teraction and careful reward engineering, while complex coordination preferences are difficult to encode as scalar re-wards. Recent LLM-based coordinators (Guo et al. 2025b; Zhang et al. 2024) offer a more expressive alternative by interpreting task objectives and generating explicit team-level plans. However, they typically rely on repeated LLM invoca-tions (Zhang et al. 2024) or multi-round communication (Guo et al. 2025b) during execution, introducing latency and cost that are acceptable in low-tempo settings but impractical for real-time multi-agent coordination. As illustrated in Fig. 1, this setting introduces three main challenges: 
+
+• Real-time Constraints. Real-time environments evolve at the frame level, while frequently invoking LLM coor-dination incurs intolerable computational overhead under limited response-time budgets. 
+
+• Plan staleness. Environment changes may invalidate a joint plan. Delayed replanning causes agents to continue executing stale actions, whereas frequent or periodic re-planning wastes computation when the plan remains valid. 
+
+• Coordination conflicts. Asynchronous execution intro-duces temporal and conditional dependencies, such as waiting for teammates or environmental conditions. Yet LLM plans express them in free-form text that low-level executors cannot reliably verify or enforce. Therefore, the core issue is: How can LLM-based multi-agent coordination remain efficient, synchronized, and arXiv:2608.01652v1 [cs.RO] 3 Aug 2026 adaptive during execution? 
+
+To address these challenges, we propose SyncPlan 
+
+(Sync hronized Plan ning ), a plan-execute-correct framework for long-horizon multi-agent coordination. In one-time LLM calling, the coordinator produces a long-horizon joint plan comprising structured action chains that span multiple en-vironment frames, amortizing planning cost over extended execution. A runtime executor advances these chains asynchronously and enforces inter-agent and agent-environment dependencies through executable synchronization primitives. These primi-tives make temporal dependencies explicit: an agent proceeds only after the required teammate milestone or environment condition is satisfied. The executor further monitors wait dependencies among agents and triggers replanning when cyclic dependencies cause execution to deadlock. To maintain plan validity as the environment evolves, Sync-Plan introduces a lightweight Plan Staleness Detector (PSD) that evaluates the remaining plan against current entity states. It invokes the coordinator when the current plan becomes invalid, thereby retaining adaptivity without periodic LLM inference. We further optimize the coordinator through SFT and planning-oriented RL. SFT warm-starts the coordinator with structured multi-agent planning capabilities, while RL opti-mizes complete action chains using dense task progress and outcome-level execution feedback, alleviating long-horizon credit assignment and stabilizing policy optimization. On the public Overcooked benchmark, SyncPlan improves task achievement rate by an average of 12.2 percentage points 
+
+over the strongest LLM-based baseline in each setting, while requiring less than 0.05% of their wall-clock runtime. On the substantially more complex Honor of Kings testbed, SyncPlan achieves 86.3% task achievement, surpassing DPT-Agent by 
+
+17.6 percentage points and reducing relative runtime by over 26 ×, enabling real-time coordination in a 5v5 MOBA environment. In summary, our main contributions are the following: 1. We introduce executable synchronization primitives that convert implicit coordination intent into explicit con-straints for asynchronous execution. 2. We propose a lightweight PSD model that detects when the remaining plan becomes invalid and triggers on-demand replanning. 3. We propose progressive composite rewards that jointly optimize task effectiveness, execution correctness, and runtime efficiency, providing dense intermediate feedback to improve long-horizon reinforcement learning. 4. Experiments on Overcooked and Honor of Kings demon-strate state-of-the-art task achievement with substantially lower runtime, enabling real-time 5v5 coordination. 
+
+2 Related Work 
+
+Multi-Agent Reinforcement Learning. MARL achieves coordination through joint policy optimization under CTDE, including value decomposition (QMIX (Rashid et al. 2018), QTRAN (Son et al. 2019)) and policy-gradient methods (MAPPO (Yu et al. 2022), HAPPO (Kuba et al. 2022)). Hierarchical variants such as HAVEN (Xu et al. 2023) and RHMC (Yu et al. 2024) introduce sub-goal or sub-action abstraction. 
+
+LLM-Based Planning and Multi-Agent Coordination. 
+
+Single-agent LLM planning has been studied in robotics (SayCan (Ahn et al. 2022), Inner Monologue (Huang et al. 2022)), open-world games (Voyager (Wang et al. 2023), SIMA 2 (Bolton et al. 2025)), and hero-level decision-making (TiG (Liao et al. 2025), SIMA (Bolton et al. 2025)). In particular, ReCAPA (Zeng et al. 2026) further performs hierarchical predictive correction through repeated LLM in-vocation, but focuses on a single agent and does not address concurrent multi-agent synchronization. For multi-Agent co-ordination, prior work spans dialogue-based consensus (CaPo (Guo et al. 2025b), MAGRPO (Liu et al. 2026)), hierarchical plan-then-execute pipelines (MindAgent (Gong et al. 2024), L2M2 (Geng, Pateria et al. 2025)), world-model-based co-operation (COMBO (Zhang et al. 2025a)), and teammate modeling (ProAgent (Zhang et al. 2024)). Their coordination dependencies are generally implicit, while execution-time adaptation relies on repeated LLM invocation or lacks an explicit signal for when the joint plan should be revised. 
+
+3 Problem Formulation 
+
+We consider a dynamic environment with N controlled low-level agents. At frame t, the environment state is in state 
+
+st ∈ S and evolves according to the transition function 
+
+st+1 = T (st, at, ξ t) (1) where T : S × A N × Ξ → S is the state transition function and at = {ait}Ni=1 denotes the joint low-level action of the controlled agents. And ξt ∈ Ξ represents uncontrolled stochastic dynamics, such as actions of non-controlled agents and unexpected environment events, and ξt ∈ Ξ is highly related to the state-dependent distribution ξt ∼ p(·| st).Each episode is associated with a team-level task e ∈ E and a finite horizon Tmax (e) measured in environment frames. Let C : S × E → 0, 1 denotes the task-completion indicator, where C(st, e ) = 1 if task e has been completed at frame t.The episode is successful if 
+
+∃ t ∈ { 0, . . . , T max (e)} s.t. C(st, e ) = 1 . (2) Our objective is to enhance task success ratio across multiple episodes and reduce end-to-end wall-clock runtime. 
+
+4 Method 
+
+4.1 Overall Framework 
+
+As illustrated in Figure 2, SyncPlan consists of three com-ponents: Collaborative Planning generates low-level action chains for multi-agents; Runtime Execution executes action chains while enforcing synchronization constraints; Adaptive Correction detects plan invalidation to selectively trigger replanning. To enable robust decision-making in complex, dynamic environments, the coordinator is optimized by SFT and RL with a well-designed composite reward function. SyncPlan: Long-Horizon LLM Coordination with Explicit Synchronization and Adaptive Correction 
+
+> Real-time Interact
+> Replan when Invalid Runtime Error
+> Evaluate Current Step
+
+Runtime Execution 
+
+(A) Plan-execute-correct framework (B) Supervised Fine-Tuning  
+
+> Structured SFT Data Base LLM SFT Coordinator
+> Lora
+> State Differences Chains
+> PSD Model
+
+Adaptive Correction 
+
+LLM Coordinator 
+
+Collaborative Planning Joint Plan (per-agent action chains)       
+
+> Joint Plan for Execution
+> Move Wait_agents Act
+> Agent 2 Agent 3
+> Move Act Assist Move Wait_entity Act
+> Distilled Coordination Data
+
+State + Task Coordinator Enviro 
+
+> Cal Reward &Update Policy Update State Generate Plans Expert Trajectories
+
+(C) Reinforce Learning 
+
+> Advance Chains & Dispatch Actions Deadlock Detection
+> Execution Feedback
+> Next States
+> Overcooked
+
+Environment Evolution    
+
+> Uncontrolled Dynamics States &Actions +
+> 𝑠 !
+> 𝑎 !𝜉 !
+> 𝑠 !"#
+
+Target Task States Agents Agent 1 Figure 2: Overall framework . (A) SyncPlan forms a plan-execute-correct loop: collaborative planning generates per-agent action chains; runtime execution advances the chains and detects deadlocks; and the PSD monitors plan validity. (B–C) SFT warm-starts the coordinator with expert and distilled data, followed by planning-oriented RL with execution feedback. 
+
+4.2 Collaborative Planning 
+
+The objective of collaborative planning is to generate long-horizon low-level coordination plans for multi-agents. Dif-ferent from single-agent planning, multi-agent coordination requires not only deciding what each agent should do, but also considering the collaboration between each agent. For-mally, given a target task e and an environment state st, the coordinator Dθ generates a joint action-chain for N agents. 
+
+Πt = Dθ (st, e ) = {π1 
+
+> t
+
+, . . . , π Nt } (3) where πit = [ ui, 1, . . . , u i,L ] is the action chain assigned to agent i and L represents the maximum length of action chain. The action space is environment-specific, and the complete action definitions are provided in Appendix A.5. 
+
+Explicit Synchronization Primitives . Existing work on multi-agent coordination largely relies on implicit coopera-tion, expressed through multi-turn dialogue (Feng et al. 2026) or simulated communication (Zhao et al. 2026). In these LLM-based planners, inter-agent coordination dependencies are typically expressed implicitly in natural language (e.g., 
+
+"attack after your teammate arrives" ), making them difficult to interpret, verify, and reliably execute during runtime. Con-sequently, agents normally become unsynchronized, leading to premature actions or coordination failures. Inspired by process synchronization in operating systems, where coor-dination is achieved through atomic wait operations, we introduce synchronization primitives that represent coordi-nation as executable runtime constraints. To be specific, we design two synchronization primitives to capture both inter-agent dependencies and agent–environment interactions: 
+
+• Wait_agents : agent waits until another agent reaches a specified milestone. 
+
+• Wait_entity : agent waits until an environment entity satis-fies a specified condition. These wait steps make cross-agent dependencies explicit and machine-checkable. Action 1 Action 2 Action 3 Action 4 Attribute I Attribute II Attribute III Entity 1 Agent 1 Agent 2    
+
+> Wait Condition Sequential Execution
+> Wait until Action2 finishes Wait until Action2 started Wait until Attribute II of Entity 1 meets the requirement
+> Action A Action B Action C
+
+Figure 3: Runtime execution . The module advances per-agent action chains and enforces synchronization through agent- and entity-dependent wait conditions. 
+
+4.3 Runtime Execution 
+
+Considering the generated high-level plan cannot be directly executed by the low-level agents, especially the synchro-nization primitives, we introduce the execution module to maintain and synchronize the action chain. This module en-ables explicit synchronization, as illustrated in Fig. 3. A wait step blocks only the corresponding agent, while other agents continue executing their action chains. Formally, each agent i maintains a pointer hi to the current head step of πit. At each frame, the module evaluates the head step ui,h i according to its type: 
+
+• Executable actions (e.g., move, attack, interface) are dispatched directly. Once the current action completes, the execution pointer advances to the next action. 
+
+• Synchronization primitives are interpreted as executable wait predicates. The agent emits a no-op until the corre-sponding predicate is satisfied. Once the head action is completed, hi advance to the next action. This mechanism allows the coordinator to express executable coordination dependencies, such as waiting for a teammate to arrive, waiting for an enemy to become visible, or waiting for an objective to reach a desired state. 
+
+Deadlock Detection. Considering wait primitives will arise deadlocks, we therefore perform deadlock detection at every frame and trigger the coordinator to replan whenever a dead-lock is detected. Wait-agent dependencies define a directed wait graph Gt = ( V, Et), where each node is an agent and an edge i → j means that agent i is currently waiting for agent j.Since a circular wait dependency implies that no agent in the cycle can proceed, deadlocks are detected by searching for directed cycles in the wait graph at every frame. The detailed detection algorithm is provided in Appendix A.4. 
+
+4.4 Adaptive Correction 
+
+The LLM coordinator assumes that the generated action chains remain valid. However, in dynamic multi-agent environments, this assumption is frequently violated as evolving game states continuously. When environmental changes, blindly following the original plan degrades coordination, whereas replanning at every timestep incurs prohibitive computational overhead. Therefore, SyncPlan introduces a lightweight Plan Staleness Detector (PSD) that explicitly determines whether the current collaborative plan remains valid under the latest environment state, triggering replanning only when necessary. At frame t, the PSD takes three inputs: (1) the binary chain-entity incidence matrix, which is used to label the participant entity in the action chains, (2) the normalized entity states and (3) the states difference between environments evolving. To be specific, the inputs are: 1. The chain-entity incidence matrix Ct ∈ { 0, 1}N ×M ×L,where M means the number of entity and L means the max length of one action chain. 2. The current entity-state matrix Xt ∈ [0 , 1] M ×F , where F
+
+means the property number of an entity. 3. The state-difference matrix ∆t ∈ [−1, 1] M ×F .The PSD uses two bilinear pathways. The chain pathway embeds which entities are referenced by action chains: 
+
+HC = W{1×N } 
+
+> N
+
+× Attn (Ct) × W{L×d} 
+
+> C
+
+∈ RM ×d (4) 
+
+Attn() means the attention module. The state pathway embeds state-conditioned changes: 
+
+HX =  Attn (Xt) ⊙ Attn (∆t) ⊙ WQ
+
+WX ∈ RM ×d (5) where WN,C,Q,W are learnable weight. The two pathways are combined and transformed through MLP module: 
+
+Preplan (t) = σ  M LP  H⊤ 
+
+> C
+
+HX
+
+ (6) A replan is triggered when Preplan exceeds a threshold. For a clear explanation, the architecture is illustrated in Figure 4. 
+
+4.5 SFT and Reinforcement Learning 
+
+While we can employ a general-purpose LLM as the coordi-nator, prompting-based SyncPlan still faces two bottlenecks: Plan Staleness Detector (PSD)                     
+
+> Learnable Weight
+> 𝑾𝑁 ,𝑪
+> The action refers to the entity State change in
+> Properties F
+> Entities  M
+> Attn(Chain-Entity Incidence Matrix)
+> 𝑪𝒕 ∈ 𝟎 ,𝟏 𝑵 ×𝑴 ×𝑳
+> Agent 2 Agent N
+> Action 1 Action L …Entity 1 Entity M …Chain Length (L)
+> N= num of agents
+> Chain pathway State pathway Attn(Entity-State)
+> X𝒕 ∈[𝟎 ,𝟏 ]𝑴 ×𝑭
+> Features F
+> Entities  M
+> Attn( State-Difference)
+> ∆𝒕∈ [−𝟏 ,𝟏 ]𝑴 ×𝑭
+> Learnable Weight Learnable Weight Chain Embedding State Embedding
+> 𝑯𝑪 ∈ 𝑹 𝑴 ×𝒅 𝑯𝑿 ∈ 𝑹 𝑴 ×𝒅
+> Feature Interaction
+> 𝑯𝑪 𝑻 𝑯𝑿
+> … …
+> MLP + σ
+> 𝑷𝒓𝒆𝒑𝒍𝒂𝒏 𝒕 =
+> 𝝈 (𝑴𝑳𝑷 (𝑯𝑪 𝑻 𝑯𝑿 ))
+> ∆𝑡∈ [−1,1] Element-wise product Matrix multiplication
+> 𝑷𝒓𝒆𝒑𝒍𝒂𝒏 𝒕 >𝜼 ?Continue Replan
+> No Yes
+> Replan Decision
+
+Figure 4: Architecture of PSD . The chain and state pathways encode remaining-plan structure and entity-state changes, whose interaction produces the replanning probability. 
+
+deployment latency , and a decision quality ceiling bounded by pre-trained knowledge. Therefore, we adopt an SFT and RL training pipeline to achieve both real-time responsiveness and superior performance on smaller models. 
+
+SFT Warm-Start SFT initializes the coordinator to gen-erate structured, executable multi-agent action chains. We construct instruction-response pairs from expert gameplay trajectories and distilled coordination data, with each target containing complete action chains and synchronization primi-tives. This establishes a strong prior over the SyncPlan schema and provides in-distribution initialization for subsequent RL. Training details are provided in Appendix B.5. 
+
+Planning-oriented Reinforcement Learning After data fine-tuning, the LLM coordinator has developed the ability to coordinate multiple agents. However, it does not explic-itly optimize long-horizon execution outcomes, as learning remains driven by token-level imitation rather than trajectory-level execution feedback. Therefore, we formulate executable collaborative planning as a reinforcement learning problem, improving the model’s planning quality and reasoning ca-pability by rewarding correct and goal-directed executable action chains, thereby progressively aligning planning in-tent with executor behavior. We design a composite reward that jointly optimizes three complementary properties of executable collaborative planning: 
+
+• Task Effectiveness , encouraging successful completion of long-horizon collaborative objectives; 
+
+• Execution Correctness , discouraging syntax errors, se-mantic inconsistencies, and deadlocks; 
+
+• Runtime Efficiency , encouraging efficient coordination with minimal unnecessary waiting and replanning. Let A denote an action chain produced by the coordi-nator. Executing A in the environment terminates in ex-actly one of five mutually exclusive outcomes: Success, SyntaxError, SemanticError, Deadlock, and Timeout. We denote the terminal outcome by Ω( A) ∈ O , where 
+
+O = {Succ , Syn , Sem , Dlk , Tmo }.The reward assigned to A combines a positive progress 
+
+term with a set of outcome-dependent penalties: Table 1: Main comparison on Overcooked across standard and dynamic settings. Best and second-best are highlighted. Type Methods Standard (Coordination) Dynamic(Coordination) Dynamic(Ring) Dynamic(symmetric) TAR ↑ AED ↓ AAS ↓ RT ↓ TAR ↑ AED ↓ AAS ↓ RT ↓ TAR ↑ AED ↓ AAS ↓ RT ↓ TAR ↑ AED ↓ AAS ↓ RT ↓                                                                                                                                                                                
+
+> RL  Greedy 40.6% 70.52 73.40 0.34s 58.5% 76.32 86.57 0.40s 22.6% 74.08 94.91 0.30s 96.2% 51.20 53.08 0.26s PBT 92.0% 50.91 50.91 0.23s 88.7% 53.09 58.51 0.27s 96.2% 52.78 64.60 0.26s 98.1% 44.92 45.98 0.22s FCP 91.0% 72.77 75.43 1.15s 74.0% 75.59 82.30 1.27s 91.0% 62.94 66.53 1.27s 94.3% 47.58 50.60 0.24s LLM-Based A-ToM(1st) 74.0% 43.74 46.96 3.15h 60.6% 72.05 83.45 4.85h 67.0% 67.50 78.67 5.36h 94.1% 73.25 74.88 5.82h A-ToM(2nd) 86.0% 44.67 44.46 3.52h 62.3% 65.39 78.83 6.09h 76.0% 63.74 74.35 6.46h 94.3% 62.12 64.32 7.05h Collab 79.5% 55.28 64.12 5.52h 63.0% 53.52 70.45 6.37h 50.7% 72.46 86.53 5.25h 95.9% 45.00 47.30 6.05h ProAgent 88.0% 75.93 78.88 12.72m 65.0% 77.91 86.06 23.33m 59.0% 65.50 80.12 23.40m 94.0% 45.56 48.82 13.91m DPT-Agent 91.3% 67.45 74.14 38.15m 71.5% 63.14 74.01 53.33m 69.3% 54.73 68.46 42.43m 96.3% 57.20 64.21 1.15h Ours (w/o SFT) 92.2% 49.88 43.82 11.21s 88.4% 53.86 48.12 11.04s 76.5% 58.80 68.91 25.26s 100% 49.24 36.71 17.54s Ours (w/o RL) 94.8% 43.27 43.85 6.46s 88.8% 54.13 52.58 9.55s 76.9% 68.80 76.23 6.86s 92.2% 40.68 32.79 5.38s Ours (Full) 96.1%** 43.10 41.88 4.91s 93.0%** 53.57 52.09 8.24s 88.3%** 52.23 63.71 8.80s 100%** 40.18 27.94 4.32s
+
+* p < 0.05, ** p < 0.01, compared with the baseline LLM-based methods under the same setting using a two-sided paired permutation test. Table 2: Performance comparison on Honor of Kings. Method Gemini-3.5-Flash DeepSeek-R1 (Thinking) TAR ↑ RTR ↓ TAR ↑ RTR ↓                                    
+
+> Off-the-shelf coordinators (w/o SFT)
+> ProAgent 56.3 ±3.5% 15.34 ±1.6x 62.5 ±2.6% 19.29 ±2.0x DPT-Agent 68.7 ±2.9% 21.76 ±2.1x 71.4 ±4.8% 23.10 ±2.8x SyncPlan (w/o SFT) 72.1 ±7.6% 7.32 ±2.0x 74.4 ±4.1% 9.41 ±2.5x
+> Fine-tuned SyncPlan TAR ↑RTR ↓
+> SyncPlan (SFT) 79.0 ±2.5% 0.96 ±0.03x SyncPlan (SFT + RL) 86.3 ±5.3% 0.83 ±0.07x
+
+R(A) = Rprog (A) + α 1[Ω( A)= Succ ]
+
+| {z } 
+
+> intrinsic reward Rintr (A)
+
+− (Ptmo + Psyn + Psem + Pdlk )
+
+| {z } 
+
+> penalty P(A)
+
+(7) where each penalty term is activated only when the cor-responding outcome or event occurs during the execution of A: Intuitively, Rprog (A) measures how much of the task the chain actually accomplishes before termination, and the bonus α is granted only when the chain fully completes the task. The four penalty coefficients λtmo , λ syn , λ sem , λ dlk dis-courage the four failure modes with different severity: syntax and deadlock errors are penalized more heavily since they typically indicate that the chain is unusable, while semantic errors and timeouts receive milder penalties as they may still reflect partial progress. The detailed computation and the specific values of α, λ (·) are provided in Appendix A.8. 
+
+5 Experiments 
+
+5.1 Experimental Setup 
+
+We evaluate SyncPlan on two complementary multi-agent platforms: 
+
+Overcooked-AI is a public two-player cooperative bench-mark in which two agents prepare and deliver an onion soup. We evaluate three map layouts with distinct spatial structures: 
+
+Coordination , Ring , and Symmetric . Under the standard setting, episodes follow the original game dynamics without externally injected perturbations, enabling direct comparison with prior methods. To further evaluate robustness to unex-pected environmental changes, we introduce three scripted perturbations: a held-item drop, partial scattering of pot con-tents, and agent displacement. Detailed layout configurations and event protocols are provided in Appendix B.4. 
+
+Honor of Kings (HoK) is a 5v5 MOBA environment with ten agents across two opposing teams. In Commander mode, SyncPlan coordinates up to five allied heroes to eliminate a designated enemy hero, while uncontrolled heroes continue acting autonomously under built-in policies. HoK therefore provides a naturally dynamic testbed for long-horizon multi-agent coordination. 
+
+Baselines and HoK disclosure. For Overcooked, we com-pare SyncPlan with task-specific RL methods, including FCP (Strouse et al. 2021), PBT (Jaderberg et al. 2017), and Greedy (Carroll et al. 2019; Li et al. 2023), as well as LLM-based coordinators, including Collab (Sun et al. 2025), Adaptive-ToM (Mu et al. 2026), ProAgent (Zhang et al. 2024), and DPT-Agent (Zhang et al. 2025b). For HoK, we focus on LLM-based coordinators sharing the same high-level plan-ning interface, as a task-specific MARL would require a separate training pipeline with extensive environment inter-action, bespoke reward design, and difficult joint exploration. 
+
+LLM base model and Datasets. We evaluate our method on ten representative LLMs: Qwen(Hui et al. 2024), LLaMA (Grattafiori et al. 2024), GLM (GLM-5-Team 2026), Claude, GPT (Achiam et al. 2023), HY3, Gemini (Team et al. 2023), Kimi (Team et al. 2025), deepseek-r1 (Guo et al. 2025a) and MiniMax (Chen et al. 2026). For Overcooked, our SFT data is from the Gemini (Comanici et al. 2025) model distillation process. For HoK, our dataset was sampled from anonymized records of real game matches in the Commander Mode (HoK), where neither user identifiers nor any personally identifiable information was collected to safeguard player privacy. 
+
+Metrics. We evaluate our approach using Task Achieve-ment Rate (TAR) ↑ across both environments. In Overcooked, we additionally report Average Episode Duration (AED) ↓,Average Action Steps (AAS) ↓, Real-Time (RT) ↓, and Dead-lock Rate ↓ to measure execution efficiency and coordination failures. In HoK, we measure Real-Time Ratio (RTR) ↓ and Action Timeout Rate (ATR) ↓ to quantify computational efficiency and instruction execution reliability. Detailed defi-nitions are provided in appendix B.3. Table 3: Ablation study on Overcooked across training regimes and architecture variants on the Coordination layout. Module Variant Dynamic Standard TAR ↑ AED ↓ AAS ↓ RT ↓ TAR ↑ AED ↓ AAS ↓ RT ↓                                                                                                                                                                                                                                                                                               
+
+> w/o SFT  w/o PSD 82.3% ±9.5% 50.93 ±0.6 49.29 ±2.0 15.08 ±1.6 92.0% ±2.1% 49.88 ±0.4 43.82 ±0.3 11.21 ±0.3 RePlan 4FPS 64.7% ±11.9% 59.27 ±1.2 58.76 ±2.5 91.26 ±2.9 88.2% ±3.7% 58.53 ±1.0 56.18 ±1.8 86.48 ±1.9 RePlan 8FPS 76.5% ±10.6% 58.77 ±1.9 59.18 ±2.9 63.60 ±3.2 83.2% ±3.1% 54.53 ±0.5 51.47 ±1.5 54.91 ±2.1 SyncPlan 88.2% ±8.1% 53.67 ±2.3 49.29 ±2.6 18.32 ±2.8 92.0% ±2.1% 49.88 ±0.4 43.82 ±0.3 11.21 ±0.3 w/o RL  w/o PSD 81.4% ±4.0% 50.71 ±0.5 46.38 ±0.9 10.09 ±0.3 94.0% ±1.3% 49.20 ±0.1 43.87 ±0.1 6.46 ±0.1 RePlan 4FPS 17.5% ±3.9% 61.94 ±1.8 59.39 ±1.0 49.34 ±0.6 16.5% ±3.8% 64.88 ±1.8 55.19 ±0.7 45.19 ±0.3 RePlan 8FPS 29.9% ±4.7% 71.31 ±3.0 66.91 ±1.5 29.03 ±0.5 14.4% ±3.6% 62.57 ±4.9 56.39 ±0.9 26.02 ±0.3 SyncPlan 88.7% ±3.2% 54.53 ±1.2 50.66 ±1.3 8.85 ±0.3 94.0% ±1.3% 49.20 ±0.1 43.87 ±0.1 6.46 ±0.1 SyncPlan  w/o PSD 82.3% ±9.5% 50.79 ±0.6 48.24 ±2.2 11.15 ±0.7 96.0% ±2.0% 49.53 ±0.2 41.88 ±0.3 4.91 ±0.1 RePlan 4FPS 23.5% ±10.6% 62.00 ±3.1 62.06 ±1.9 41.50 ±3.3 17.6% ±9.5% 63.33 ±5.4 53.71 ±1.2 23.68 ±0.4 RePlan 8FPS 23.5% ±10.6% 56.50 ±3.2 64.29 ±3.7 17.41 ±0.8 29.4% ±5.4% 71.80 ±9.0 57.88 ±2.0 16.34 ±0.6 SyncPlan 94.1% ±5.9% 50.25 ±3.0 48.24 ±2.6 6.58 ±0.5 96.0% ±2.0% 49.53 ±0.2 41.88 ±0.3 4.91 ±0.0
+
+Figure 5: (A) The ROC curve of PSD model. (B) RL training curves. (C) Task performance during RL. (D) Deadlock ratios. 
+
+5.2 Main Comparison 
+
+We benchmark SyncPlan against five external baselines with three architecture-stripped SyncPlan variants under a uni-fied Overcooked protocol covering one Standard and three dynamic evaluation tasks (Table 1). The central finding is that SyncPlan substantially outper-forms existing LLM-based coordinators on dynamic Over-cooked tasks while maintaining much lower wall-clock la-tency. Compared with task-specific MARL baselines, Sync-Plan achieves higher TAR on three settings. This advantage stems from SyncPlan’s event-driven correction design: in-stead of re-querying the LLM at a fixed frequency or per frame, it invokes the coordinator only when the PSD detects plan invalidation, reducing wall-clock overhead by two to three orders of magnitude compared with A-ToM and Collab. On the challenging Dynamic Ring layout, SyncPlan reaches 88.3% TAR, exceeding the LLM-based baselines A-ToM and Collab, while remaining below the best RL baseline. In HoK, we compare SyncPlan against two popular base-line methods, with results presented in Table 2. Our approach demonstrates lower latency by leveraging long-horizon plan-ning. More importantly, SyncPlan and its variants exhibit significantly stronger coordination performance, achieving 86.3% TAR compared to the best baseline’s 68.75% in this complex multi-agent environment. 
+
+5.3 Ablation Study 
+
+Table 3 isolates each architectural choice by comparing Full SyncPlan against w/o PSD and two periodic replanning baselines across three training regimes. Key insights: Table 4: Ablation study on Honor of Kings. Module Variant TAR ↑ ATR ↓ RTR ↓                                    
+
+> w/o SFT w/o PSD 59.0 ±11.1% 8.2 ±2.1% 5.92 ±1.3x RePlan 4FPS 67.9 ±4.7% 0.1 ±0.0% 81.17 ±7.7x RePlan 8FPS 69.7 ±6.4% 0.1 ±0.1% 57.52 ±9.4x SyncPlan 72.1 ±7.6% 5.8 ±1.3% 7.32 ±0.1x w/o RL w/o PSD 66.7 ±3.3% 7.9 ±4.0% 0.72 ±0.0x RePlan 4FPS 60.0 ±6.9% 0.0 ±0.0% 2.38 ±0.1x RePlan 8FPS 66.7 ±4.8% 0.1 ±0.1% 1.04 ±0.0x SyncPlan 79.0 ±2.5% 3.9 ±3.4% 0.96 ±0.0x SFT+RL w/o PSD 71.4 ±8.4% 6.6 ±1.5% 0.72 ±0.0x RePlan 4FPS 73.0 ±7.1% 0.0 ±0.0% 2.18 ±0.1x RePlan 8FPS 77.1 ±9.4% 0.1 ±0.1% 1.19 ±0.0x SyncPlan 86.3 ±5.3% 2.3 ±1.6% 0.83 ±0.0x
+
+PSD provides targeted, low-cost correction. On the stan-dard layout, removing PSD has no effect because no dynamic perturbation ever invalidates the initial plan. Under dynamic events, the gap widens sharply: PSD recovers broken plans ex-actly when needed, whereas the w/o PSD variant cannot react and loses 8+ TAR points. Periodic RePlan baselines attempt to compensate by blind re-invocation, but they pay an order-of-magnitude RT penalty for marginal or even negative TAR gains, because frequent unnecessary replanning destabilizes partially executed chains. This confirms that when to correct matters more than how often . RL improves coordination quality and boosts TAR. Without RL (middle block), even Full SyncPlan achieves only 88.7% dynamic TAR because the SFT-only coordinator, despite generating syntactically correct (a) Coordination (b) Ring (c) Symmetric Figure 6: Effect of coordinator model size on SyncPlan performance. The critical threshold lies between 1B and 1.5B. Llama3.1-8B Qwen3-8B Qwen3-14B Qwen3-32B DeepSeek-R1 Claude-Sonnet-4.6 Gemini-2.5-Flash Kimi-K2.6 GLM-5.1 GPT-5.4 Qwen3.7-Max MiniMax-M2.5 GPT-5.6-Luna Hy3 Qwen3.5-397B-A17B Llama3.3-70B Claude-Haiku-4.5 GLM-5.2 
+
+> Gemini-3.5-Flash
+
+Figure 7: Performance on main backbone models. plans, fails to account for the bot executor’s actual movement timing and collision dynamics, leading to poor coordination quality. RL enhances coordination by providing closed-loop feedback that helps the model learn execution-aligned strate-gies absent from offline demonstrations. The HoK ablation (Table 4) confirms these insights: SFT+RL Full SyncPlan reaches 86.3% TAR versus 79.0% without RL, while reducing ATR from 7.9% to 2.3%. These improvements demonstrate that RL refines the coordinator’s ability to generate plans that align with real execution constraints, thereby improving overall coordination quality and task success. 
+
+5.4 Training and Performance Analysis on base models 
+
+Figure 5 reveals how the training stages shape coordinator behavior in complementary ways. Fig. 5(A) shows the ROC curves, demonstrating that PSD performs well under different MLP architectures. Fig. 5 (B,C) shows progressively improved TAR by exposing the coordinator to real execution feedback: the reward curve climbs steadily as the model learns to account for bot-level timing constraints that are invisible in the static SFT corpus. A byproduct is the deadlock ratio trajectory. Fig. 5D shows Full SyncPlan maintains the lowest deadlock density throughout training, while w/o SFT exhibits higher rates. This shows deadlock suppression stems from both training stages: SFT teaches structurally valid action chains that avoid resource conflicts, while RL further reduces deadlocks through execution-level collision feedback. We report the performance of backbone models in Fig. 7, from which we observe that Gemini-3.5-Flash and DeepSeek-R1 achieve the leading performance. Honor of Kings  Overcooked  1s ago: P2 held a plate. Now it unexpectedly dropped.      
+
+> PSD triggers replanning, P1 brings a new plate.
+> A2 A1 E1 E1 retreats as health drops E1 A2 A1 P1 P2 P1 P2 A1 route A2 route A2 waits for A1 E1 retreat
+> Original generated plan PSD-triggered replanning
+> PSD triggers replanning, adapting the strategy to E1's retreat.
+
+Figure 8: PSD-triggered replanning in two scenarios. 
+
+5.5 Boundary Exploration 
+
+To investigate the relationship between model capacity and planning performance, and to identify the minimum parameter threshold required for reliable action generation under struc-tured constraints. We evaluate LLaMA-3.2-1B/3B, LLaMA-3.1-8B, and Qwen2.5-(0.5/1.5/3/7)B-Instruct. Performance (Fig. 6) scales log-linearly with parameter count, but the critical threshold lies between 1B and 1.5B: models below 1B fail to produce syntactically valid action chains at non-trivial rates, making downstream execution unreliable regardless of the framework. Above 3B, gains plateau under SyncPlan’s structured schema because the schema itself constrains the output space, meaning additional capacity yields diminishing returns once format compliance is achieved. 5.6 Case Studies 
+
+Figure 8 illustrates how SyncPlan’s modules collaborate in two scenarios. When PSD detects that current plan is invalidated (P2 drops a plate, E1’s health is fast dropping). The PSD detects it and invokes LLM coordinator to update agent’s action chain to adjust the changes of environment’s state. This reactive correction completes in limited wall-clock time, whereas a fixed-interval replanner would either react too late or waste compute on unnecessary reinvocations. 
+
+6 Conclusion 
+
+Aiming at coordinating multi-agents in real-time and dynamic environments, we presented SyncPlan to separate planning from execution and real-time correction detection. SyncPlan 
+
+contains a synchronization-based LLM coordinator and an action correction detector to maintain the validity of plan. Experiments across different domains supported that the explicit synchronization enables effective coordination. This study also reveals that RL fine-tuning is critical for bridging LLM coordinator intent and reality across different domains. Future work will explore SyncPlan’s scalability, generalization to new environments, and larger team sizes. Additionally, we will enhance its recovery mechanisms against execution failures, persistent stalls, and rapid environmental dynamics. 
+
+References 
+
+Achiam, J.; Adler, S.; Agarwal, S.; Ahmad, L.; Akkaya, I.; Aleman, F. L.; Almeida, D.; Altenschmidt, J.; Altman, S.; Anadkat, S.; et al. 2023. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 .Ahn, M.; Brohan, A.; Brown, N.; Chebotar, Y.; Cortes, O.; David, B.; Finn, C.; Fu, C.; Gober, K.; Gopalakrishnan, K.; et al. 2022. Do As I Can, Not As I Say: Grounding Language in Robotic Affordances. In Conference on Robot Learning .Bolton, A.; Lerchner, A.; Cordell, A.; Moufarek, A.; Bolt, A.; Lampinen, A.; Mitenkova, A.; Hallingstad, A. O.; Vujatovic, B.; Li, B.; et al. 2025. Sima 2: A generalist embodied agent for virtual worlds. arXiv preprint arXiv:2512.04797 .Carroll, M.; Shah, R.; Ho, M. K.; Griffiths, T.; Seshia, S.; Abbeel, P.; and Dragan, A. 2019. On the utility of learning about humans for human-ai coordination. Advances in neural information processing systems , 32. Chen, A.; Li, A.; Zhou, B.; Gong, B.; Jiang, B.; Dan, B.; Yu, C.; Wang, C.; Ma, C.; Zhong, C.; et al. 2026. The minimax-m2 series: Mini activations unleashing max real-world intelligence. arXiv preprint arXiv:2605.26494 .Comanici, G.; Bieber, E.; Schaekermann, M.; Pasupat, I.; Sachdeva, N.; Dhillon, I.; Blistein, M.; Ram, O.; Zhang, D.; Rosen, E.; et al. 2025. Gemini 2.5: Pushing the fron-tier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 .Feng, Y.; Wang, J.; Zhou, L.; Lei, Z.; and Li, Y. 2026. Doctoragent-rl: A multi-agent collaborative reinforcement learning system for multi-turn clinical dialogue. In ICASSP 2026-2026 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) , 16952–16956. IEEE. Geng, M.; Pateria, S.; et al. 2025. L2M2: A Hierarchical Framework Integrating Large Language Model and Multi-agent Reinforcement Learning. In International Joint Confer-ence on Artificial Intelligence .GLM-5-Team. 2026. GLM-5: from Vibe Coding to Agentic Engineering. arXiv:2602.15763. Gong, R.; Huang, Q.; Ma, X.; Vo, H.; Durante, Z.; Noda, Y.; Zheng, Z.; Zhu, S.-C.; Terzopoulos, D.; Fei-Fei, L.; and Gao, J. 2024. MindAgent: Emergent Gaming Interaction. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence .Grattafiori, A.; Dubey, A.; Jauhri, A.; Pandey, A.; Kadian, A.; Al-Dahle, A.; Letman, A.; Mathur, A.; Schelten, A.; Vaughan, A.; et al. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 .Guo, D.; Yang, D.; Zhang, H.; Song, J.; Zhang, R.; Xu, R.; Zhu, Q.; Ma, S.; Wang, P.; Bi, X.; et al. 2025a. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforce-ment Learning. arXiv preprint arXiv:2501.12948 .Guo, J.; Li, Y.; Wang, Y.; Feng, Z.; and Zha, D. 2025b. CaPo: Cooperative Plan Optimization for Efficient Embodied Multi-Agent Cooperation. In International Conference on Learning Representations .Huang, W.; Xia, F.; Xiao, T.; Chan, H.; Liang, J.; Florence, P.; Zeng, A.; Tompson, J.; Mordatch, I.; Chebotar, Y.; et al. 2022. Inner Monologue: Embodied Reasoning through Planning with Language Models. In Conference on Robot Learning .Hui, B.; Yang, J.; Cui, Z.; Yang, J.; Liu, D.; Zhang, L.; Liu, T.; Zhang, J.; Yu, B.; Lu, K.; et al. 2024. Qwen2. 5-coder technical report. arXiv preprint arXiv:2409.12186 .Jaderberg, M.; Dalibard, V.; Osindero, S.; Czarnecki, W. M.; Razavi, A.; Vinyals, O.; Green, T.; Dunning, I.; Simonyan, K.; Fernando, C.; and Kavukcuoglu, K. 2017. Popula-tion Based Training of Neural Networks. arXiv preprint arXiv:1711.09846 .Kuba, J. G.; Chen, R.; Wen, M.; Wen, Y.; Sun, F.; Wang, J.; and Yang, Y. 2022. Trust Region Policy Optimisation in Multi-Agent Reinforcement Learning. In International Conference on Learning Representations .Li, Y.; Zhang, S.; Sun, J.; Du, Y.; Wen, Y.; Wang, X.; and Pan, W. 2023. Cooperative open-ended learning framework for zero-shot coordination. In International Conference on Machine Learning , 20470–20484. PMLR. Liao, Y.; Gu, Y.; Sui, Y.; Zhu, Z.; Lu, Y.; Tang, G.; Sun, Z.; and Yang, W. 2025. Think in games: Learning to reason in games via reinforcement learning with large language models. 
+
+arXiv preprint arXiv:2508.21365 .Liu, S.; Wang, H.; Chen, Y.; Zhang, J.; and Yang, Y. 2026. MAGRPO: Multi-Agent Group Relative Policy Optimization. In AAAI Conference on Artificial Intelligence .Mu, C.; Zeng, Y.; Zhang, Q.; Shao, K.; Chu, C.; Guo, H.; Jia, D.; Wang, Z.; and Hu, S. 2026. Adaptive theory of mind for LLM-based multi-agent coordination. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, 29608–29616. Rashid, T.; Samvelyan, M.; de Witt, C. S.; Farquhar, G.; Foerster, J.; and Whiteson, S. 2018. QMIX: Monotonic Value Function Factorisation for Deep Multi-Agent Reinforcement Learning. In International Conference on Machine Learning ,4295–4304. Shridhar, K.; Stolfo, A.; and Sachan, M. 2023. Distilling reasoning capabilities into smaller language models. In 
+
+Findings of the Association for Computational Linguistics: ACL 2023 , 7059–7073. Son, K.; Kim, D.; Kang, W. J.; Hostallero, D. E.; and Yi, Y. 2019. QTRAN: Learning to Factorize with Transformation for Cooperative Multi-Agent Reinforcement Learning. In 
+
+International Conference on Machine Learning , 5887–5896. Strouse, D.; McKee, K.; Botvinick, M.; Hughes, E.; and Everett, R. 2021. Collaborating with humans without human data. Advances in neural information processing systems , 34: 14502–14515. Sun, H.; Zhang, S.; Niu, L.; Ren, L.; Xu, H.; Fu, H.; Zhao, F.; Yuan, C.; and Wang, X. 2025. Collab-Overcooked: Bench-marking and Evaluating Large Language Models as Collabo-rative Agents. In Proceedings of the 2025 Conference on Em-pirical Methods in Natural Language Processing , 4922–4951. Suzhou, China: Association for Computational Linguistics. ISBN 979-8-89176-332-6. Team, G.; Anil, R.; Borgeaud, S.; Alayrac, J.-B.; Yu, J.; Soricut, R.; Schalkwyk, J.; Dai, A. M.; Hauth, A.; Millican, K.; et al. 2023. Gemini: a family of highly capable multimodal models. arXiv preprint arXiv:2312.11805 .Team, K.; Du, A.; Yin, B.; Xing, B.; Qu, B.; Wang, B.; Chen, C.; Zhang, C.; Du, C.; Wei, C.; et al. 2025. Kimi-vl technical report. arXiv preprint arXiv:2504.07491 .Wang, G.; Xie, Y.; Jiang, Y.; Mandlekar, A.; Xiao, C.; Zhu, Y.; Fan, L.; and Anandkumar, A. 2023. Voyager: An Open-Ended Embodied Agent with Large Language Models. Advances in Neural Information Processing Systems .Xu, Z.; Bai, Y.; Zhang, B.; Li, D.; and Fan, G. 2023. HAVEN: Hierarchical Cooperative Multi-Agent Reinforcement Learn-ing with Dual Coordination Mechanism. In AAAI Conference on Artificial Intelligence .Yu, C.; Velu, A.; Vinitsky, E.; Gao, J.; Wang, Y.; Baez, A.; Bhatt, S.; et al. 2022. The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games. Advances in Neural Information Processing Systems .Yu, Y.; Zhai, Z.; Li, W.; and Ma, J. 2024. Target-oriented multi-agent coordination with hierarchical reinforcement learning. 
+
+Applied Sciences , 14(16): 7084. Zeng, X.; Sun, Y.; Li, H.; Liu, S.; and Wang, H. 2026. Re-capa: Hierarchical predictive correction to mitigate cascading failures. arXiv preprint arXiv:2604.21232 .Zhang, C.; Yang, K.; Hu, S.; Wang, Z.; Li, G.; Sun, Y.; Zhang, C.; Zhang, Z.; Liu, A.; Zhu, S.-C.; Chang, X.; Zhang, J.; Yin, F.; Liang, Y.; and Yang, Y. 2024. ProAgent: Building Proactive Cooperative Agents with Large Language Models. In AAAI Conference on Artificial Intelligence .Zhang, H.; Du, Z.; Qi, T.; Zhao, D.; et al. 2025a. COMBO: Compositional World Models for Embodied Multi-Agent Cooperation. In International Conference on Learning Rep-resentations .Zhang, S.; Wang, X.; Zhang, W.; Li, C.; Song, J.; Li, T.; Qiu, L.; Cao, X.; Cai, X.; Yao, W.; et al. 2025b. Leveraging dual process theory in language agent framework for real-time simultaneous human-AI collaboration. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 4081–4108. Zhao, R.; Zhou, D.; Jha, S. K.; Bastian, N. D.; and Shah, A. 2026. HiComm: Hierarchical Communication for Multi-agent Reinforcement Learning. arXiv preprint arXiv:2606.29126 .A Method Details 
+
+A.1 Algorithm 
+
+Algorithm 1 separates the slow planning path from the per-frame execution path. The coordinator Dθ first generates an initial multi-agent plan and initializes chain pointers and the wait graph for execution tracking (line 2). At each timestep, the system executes the current plan step and checks for deadlock situations (lines 4-5). If the task is completed, the algorithm terminates successfully (lines 6-8). Otherwise, the Plan Staleness Detector (PSD) evaluates whether replanning is necessary by analyzing the current context, execution status, and state changes (lines 9-10). Replanning is triggered either when a deadlock is detected or when the staleness probability exceeds the threshold η (line 11), in which case a new plan is generated and execution trackers are reset (lines 12-13). If the plan remains valid, only the chain pointers are updated to reflect execution progress (line 15). This design enables efficient plan reuse while maintaining adaptive coordination through selective replanning. 
+
+A.2 Training Pipeline Overview 
+
+Figure 9 illustrates the two-stage training pipeline used to optimize the SyncPlan Coordinator. Stage 1 (SFT) initializes the Coordinator with behavioral priors. Stage 2 (GRPO) further refines the policy through reinforcement learning with the composite reward signal defined in Table 7. We train the Coordinator using LoRA adapters in both stages. We first collect gameplay data and annotate it with labels. We use this labeled data to perform SFT, which produces the first-generation LoRA adapter. We then merge this adapter into the base model to obtain the SFT model. This model also serves as the starting point for the RL stage. At the beginning of the RL stage, we initialize the training loop with a LoRA adapter whose weights are all zero. This adapter does not change the behavior of the base model. It only provides a general interface for loading LoRA weights during the loop. During the RL loop, we use random seeds to generate different game matches, and we disable scripted dynamic events in the environment. As a result, RL does not directly train on injected perturbations; instead, the gains observed in dynamic evaluation arise from better alignment between the Coordinator and the real executor under the environment’s timing and collision constraints. We separate inference and training by using vLLM for inference and TRL for training. 
+
+A.3 Complete Prompt Templates 
+
+This subsection provides the full prompt templates used in the SyncPlan Plan Module. The Plan Module is invoked as a single structured LLM call that produces per-agent action chain assignments. We use two prompt variants depending on whether the underlying model has been fine-tuned on the target environment: a Non-SFT variant for off-the-shelf base/instruct models, and a SFTed variant for models that have already internalized the action vocabulary through supervised fine-tuning or RL on SyncPlan trajectories. 
+
+Algorithm 1 SyncPlan 
+
+Require: task e, initial state s0, correction threshold η 
+
+> 1:
+
+Π ← D θ (s0, e ) 
+
+> 2:
+
+initialize chain pointers {hi} and wait graph G 
+
+> 3:
+
+for each frame t do  
+
+> 4:
+
+at, deadlock ← ExecuteStep (Π t, {hi}, G, s t) 
+
+> 5:
+
+apply at and observe st+1  
+
+> 6:
+
+if C(st+1 , e ) = 1 then  
+
+> 7:
+
+return Success  
+
+> 8:
+
+end if  
+
+> 9:
+
+construct Ct+1 , Xt+1 , ∆t+1  
+
+> 10:
+
+Preplan ← PSD( Ct+1 , Xt+1 , ∆t+1 ) 
+
+> 11:
+
+if deadlock or Preplan > η then  
+
+> 12:
+
+Π ← D θ (st+1 , e ) 
+
+> 13:
+
+reset {hi} and G 
+
+> 14:
+
+else  
+
+> 15:
+
+Update {hi} 
+
+> 16:
+
+end if  
+
+> 17:
+
+end for Prompt schema overview. Both variants follow the same three-role chat layout. The System message encodes the static task framing: the environment Background , the coordination 
+
+Target , and the number of controlled agents. The User message supplies the dynamic Current Environment State at the current decision step. The Assistant response emits per-agent action chains inside tagged blocks, one block per agent. The variants differ only in whether the action vocabulary ( Description and 
+
+Usage ) is materialized in the System message. 
+
+Variant 1: Non-SFT prompt. For base or instruct models with no environment-specific fine-tuning, the System message must spell out the full action vocabulary so the model can ground its outputs:                                     
+
+> [System] You are aplanner for {Background}. Your target is {Target} while controlling {Num of Agents} agents. You assign each agent an action chain. The action list is {Description}; the usage is {Usage}. There are some cases: {Case}. [User] Here is the current state: {State} [Assistant] {"agent_1":{action1, action2, ...}, "agent_2":{action1, action2, ...} ... }
+
+Variant 2: SFTed prompt. For models that have been fine-tuned on SyncPlan trajectories from the target environment, the action vocabulary is already internalized in the weights, so the Description and Usage slots are dropped from the System message.                    
+
+> [System] You are aplanner for {Background}. Your target is {Target} while controlling {Num of Agents} agents. [User] Here is the current state: {State} [Assistant] {"agent_1":{action1, action2, ...},
+
+Offline Preparation 
+
+> C. SFT Dataset extract
+
+Online RL Training (GRPO) Compute Reward Overcooked Env LLM x K Chains Sample Kitchen Merge & Load   
+
+> random kitchen snapshot K diverse coordination plans rule-based simulator single model with dual mode LoRA as adapter group normalization
+> E.SFT LoRA
+> init policy for GRPO
+
+A. Expert Demos            
+
+> Overcooked game replays Instruction tuning data
+> D. SFT Training
+> LoRA fine-tune on base model GRPO Train
+> format save
+> SFT LORA Gold = reward/training weight update / LoRA save Blue = model/inference Green = Overcooked env Iteration loop vLLM Service freeze base;
+> B. Chain Annotation
+> LLM-labeled task chains
+> Train data flow
+> updated policy -> next iteration
+> LOAD new LoRA
+> Base Model Base Model Merged
+> Evolving for t frames
+> P1: [pick_onion > put_pot] P2: [pick_dish > serve]
+> (prompt, chain) X N pairs
+> P1: pick-put_pot P1: pick-put_pot P1: pick-put_pot P1: pick-put_pot P1: pick-put_pot P1: pick-put_pot 𝑅𝑡𝑎𝑠𝑘 +𝑅𝑒𝑓𝑓 +𝑅𝑝𝑟𝑜𝑔 𝐿𝑐𝑙𝑖𝑝 +𝛽 ⋅ 𝐿𝐾𝐿
+> Adapter weights
+> LoRA ON LoRA OFF
+
+Figure 9: Overview of the two-stage SFT +RL training pipeline for the SyncPlan Coordinator. Stage 1 performs supervised fine-tuning; Stage 2 applies GRPO reinforcement learning with environment-grounded rewards. 
+
+"agent_2":{action1, action2, ...} ... }
+
+Slots in braces ( Background , Target , Num of Agents , Descrip-tion , Usage , State ) are template variables filled at planning time; tokens inside the Assistant blocks are generated by the model. 
+
+A.4 Deadlock Detection 
+
+This detector addresses agent-dependency deadlocks : cycles induced by active Wait_agents predicates. It does not classify an unsatisfied Wait_entity predicate, a timeout, or another non-cyclic execution failure as a graph deadlock; those cases remain available to the PSD or the episode-level termination logic. We maintain a directed dependency graph G = ( V, E), where V = {1, . . . , K } and an edge 
+
+i → j ∈ E exists only while agent i is blocked by an active 
+
+Wait_agents (j, m, s ) predicate. A graph deadlock corre-sponds to a directed cycle in G. When agent i enters a new wait Wait_agents (j, m, s ), we test whether j can already reach i in G before inserting the edge: 
+
+R(j, i ) = 
+
+
+
+true if i = j, 
+
+true if ∃k. (j, k ) ∈ E ∧ R (k, i ),
+
+false otherwise .
+
+(8) If R(j, i ) = true, inserting i → j would close a cycle, which means a deadlock is found. Otherwise, the edge is appended to E. When agent i’s wait is satisfied, the edge i → j is removed in O(1) ; since the remaining graph stays acyclic by construction, no rebuild is required. Each reachability check is bounded by O(|V| + |E| ) = O(K2) in the worst case, but in practice each agent has at most one outgoing wait edge (|E| ≤ K), reducing the cost to O(K).
+
+A.5 The design details of action chains 
+
+In this section, we introduce the details of action chains. 
+
+Action-Chain Step Language Each step-level objective 
+
+o(ℓ) 
+
+> i
+
+takes one of two forms: an action or a wait condition. This design follows the basic distinction between execution and synchronization in concurrent programming. An action primitive specifies an operation that can be verified by the environment. A wait primitive specifies a condition on other agents or on the world state that must be satisfied before the next step can proceed. This design gives the LLM an explicit way to represent synchronization, rather than forcing it to hide such logic in natural-language step descriptions. 
+
+⟨step ⟩ ::= ⟨action ⟩ | ⟨ wait ⟩⟨wait ⟩ ::= ⟨atom ⟩ | ⟨ atom ⟩ (& | |) ⟨atom ⟩⟨atom ⟩ ::= Wait_agents (a, {start |done }, s )
+
+| Wait_entity (e, attr , op , v )
+
+The action vocabulary depends on the environment. In con-trast, the wait primitives capture two synchronization patterns that appear in both environments. In Wait_agents (a, m, s), a
+
+identifies the prerequisite agent, m ∈ { start , done } selects whether the prerequisite is the start or completion milestone, and s identifies the referenced step in that agent’s current chain. The predicate is removed as soon as the indicated milestone is observed. Wait_entity pauses progress until a condition on the world state becomes true, based on an exposed entity attribute such as hero health or pot status. We allow bounded 
+
+& and | composition, so the language can express common coordination rules such as "both teammates have arrived" or "low HP or under attack" while keeping each predicate evaluation local to the current frame. This language is used directly by the Execute Module. A Wait_agents cycle triggers the graph-deadlock pathway in Appendix A.4; non-cyclic unsatisfied waits are not silently reclassified as deadlocks. The action list of Honor of Kings Table 5 defines the com-plete action-primitive vocabulary used by the Plan Module in the HoK environment. 
+
+Type Target Description 
+
+Kill Enemy or monster Kill the specific target Move Position Move to specific position Push Tower Destroy the specific tower Clear None Kill all the minions around Back None Back to home 
+
+Table 5: HoK action-primitive vocabulary. In Honor of Kings, we support the five common action types described above. The LLM is required to coordinate participant agents using these five actions with the two wait primitives. 
+
+The action list of Overcooked. Table 6 defines the action vocabulary for Overcooked. 
+
+Type Target Description 
+
+Interact Target Interact with the specified target Move_to Position Move to specific position Face Direction Face the specific direction 
+
+Table 6: Overcooked action-primitive vocabulary. Target spec-ifies the station or ingredient; Position is the grid coordinate. 
+
+A.6 The design details of PSD 
+
+The design principle Since the detector must operate at high frequency to capture situational changes in real time, efficiency is the primary design goal. We therefore use a simple and lightweight structure to track state changes in relevant entities. 
+
+The input of PSD model Since the PSD module must monitor both the absolute state and the relative change of every entity in the environment, its input is built from two complementary entity-level tensors rather than raw observa-tions. At each frame t, we compute the normalized entity-state matrix Xt ∈ [0 , 1] M ×F , which encodes the current absolute state of all M tracked entities across F normalized attributes, and the state-change matrix ∆t ∈ [−1, 1] M ×F , obtained by differencing Xt against the state kref frames earlier. We use kref = 3 (Table 7). Feeding both the absolute state Xt
+
+and the differential signal ∆t lets the detector distinguish a stable-but-unfavorable situation from one that is rapidly deteriorating. In addition to Xt and ∆t, we construct the chain-entity incidence tensor Ct ∈ { 0, 1}N ×M ×L for the remaining 
+
+plan and N agents. Specifically, Ct,i,j,ℓ = 1 if entity j is referenced by the unexecuted step ℓ ≥ hi in agent i’s current chain; completed-prefix steps are masked out. This tensor supplies a relevance prior: rather than weighting every entity equally, it directs the PSD toward entities referenced by the portion of the plan that can still be invalidated. 
+
+Tensor contraction and output shape. The concise no-tation in Equations (4)–(6) contracts the agent axis of Ct.Concretely, WC ∈ RL×d first maps the step axis to d dimen-sions, and WN then sums over controlled agents, yielding 
+
+HC ∈ RM ×d. For the state pathway, WQ ∈ RF is broadcast across entities as a feature-wise gate and WX ∈ RF ×d maps the gated state-difference features to HX ∈ RM ×d. Thus 
+
+H⊤ 
+
+> C
+
+HX ∈ Rd×d; the MLP maps this interaction matrix to one logit, and the sigmoid produces the scalar Preplan (t) ∈ (0 , 1) .This convention is used consistently in the implementation and in the main-paper equations. Nearby entities Assign an entity list to a task according the s patial distance 
+
+x 
+
+> Faraway entities Target entity & area Self
+
+y 
+
+> Attack/move/wait { Target }
+> (b) Task-related Entity Matrix (Overcooked) (a) Task-related Entity Matrix (Hok)
+> Move to { Device }Interact { Device }
+> Get the associated entity according to different action. Device
+> Marked rectangle means this entity is combined with action. Two different action
+> Player
+> Two player is always marked
+> Self Target
+> Self and Target around entity is marked
+
+Figure 10: Constructing the remaining-plan chain-entity in-cidence tensor Ct per domain. (a) Honor of Kings : spatial-proximity rule. (b) Overcooked : action-object binding. 
+
+Action-Chain Incidence Matrix The definition of entity relevance in Ct depends on the domain. For this reason, we do not learn Ct from data. Instead, we construct it with a lightweight heuristic that reflects the structure of each environment. Figure 10 shows the resulting entity relevance matrices in the two domains. In Honor of Kings, most chain steps are spatial. Typical examples include Attack , Move , and Wait with respect to a target location or target entity. In this setting, whether an entity is relevant mainly depends on spatial proximity. For each step, we always include the self-agent. We also include entities within a fixed radius around the self-agent, as well as entities within a fixed radius around the target location or target entity. All included entities are marked as relevant by setting Ct,i,j,ℓ = 1 for the corresponding agent i, entity j,and unexecuted step ℓ. Entities that are far away from both the self-agent and the target remain 0 (Figure 10a). In Overcooked, most chain steps are centered on specific objects or agents. Typical examples include Move_to and 
+
+Interact {Device} . In this setting, relevance is determined by the object referenced in the step template rather than by spatial distance. We parse the operation template of the current step and identify the referenced entity category, such as a Device 
+
+slot or a Player slot. The corresponding category is then marked as relevant in Ct, while unrelated devices and players remain 0 (Figure 10b). This design keeps Ct simple and fully rule-based. It does not introduce any additional learnable parameters. It is also easy to extend to a new environment. One only needs to define an appropriate relevance rule based on the structure of that domain. 
+
+Training Data & Labels The PSD is trained as a binary classifier: given the input tensors (Ct, Xt, ∆t) at frame t, it predicts whether the remaining chain should be corrected, supervised by a binary label yt ∈ { 0, 1}. Here yt = 1 denotes an operationally defined plan-staleness event: an observed or constructed change that invalidates an assumption used by at least one remaining chain step; yt = 0 denotes a clean frame with no such event. Training data for the two environments is constructed independently from the SFT corpus (Section A.7) and is not shared across environments. 
+
+Overcooked: event-frame labeling. We reuse the dynamic-event injection protocol (Section B.4): the frame at which a dynamic event is injected is labelled yt = 1 , since the event is designed to invalidate at least one field of the active chain. Frames drawn from clean (non-injected) rollouts are labelled yt = 0 . Because positive frames are rare relative to the length of a rollout, we subsample negative frames at a positive-to-negative ratio of 1:5 to mitigate the class imbalance that would otherwise bias the classifier toward always predicting yt = 0 .
+
+Honor of Kings: synthetic perturbation. HoK has no scripted event injection at evaluation time (Section B.4); however, to obtain a sufficiently dense supervision signal for 
+
+training the PSD, we construct positive examples offline by synthetically perturbing recorded frames so that the active chain becomes invalid. Two perturbation types are used: (i) reducing the health of an allied agent referenced by the active chain, simulating an unexpected engagement risk; and (ii) moving an enemy hero closer to the chain’s target location or agent, simulating an unanticipated rotation. Each perturbed frame is manually reviewed to confirm that the perturbation indeed renders the original chain unreasonable before being accepted as a positive example; frames without perturbation are labelled yt = 0 . This synthetic construction is used exclusively to train the PSD offline and does not alter the injection-free evaluation protocol described in Section B.4, under which HoK dynamics arise entirely from uncontrolled bot behavior. 
+
+Data collection and split. The HoK and Overcooked PSD training sets are each collected independently of the corre-sponding SFT rollout pool, and each is split into training and validation subsets with an 8:2 ratio. 
+
+PSD Threshold Selection The PSD threshold θPSD trades off between recall (catching genuine chain invalidations) and precision (avoiding unnecessary replanning). We select 
+
+θPSD = 0 .7 via grid search over {0.3, 0.5, 0.7, 0.9} on a held-out validation set, balancing detection recall with replanning overhead. Action1 2 3 4Agent 1 Agent 2 Agent 3 
+
+> Generate QA when task chain is updated
+> Includes 2,2,1 actions for agents Includes 4,3,3 actions for agents
+
+Figure 11: Event-driven SFT data augmentation. Each dashed vertical line marks an action-chain update event. Within one segment, different agents may execute different numbers of actions under the same chain. For example, the first segment has counts (4,3,3) , while the next replanned segment has counts (2,2,1) .
+
+A.7 SFT Data Augmentation 
+
+Our SyncPlan-RL Coordinator is first warm-started with a short supervised fine-tuning (SFT) stage before online RL, and we also report an SFT-only baseline in the main paper. This section describes how the SFT corpus is constructed. A naive per-step imitation objective is inefficient, because many consecutive frames share the same action chain and therefore provide highly repetitive supervision. In contrast, the informative decision points are the moments when the Co-ordinator updates the chain. We therefore use an event-driven data augmentation scheme that converts each chain-update event into one QA training instance, while also recording the multi-agent action footprint within the corresponding segment. 
+
+Construction protocol. We replay SyncPlan trajectories collected from the prompt-only Coordinator and treat each chain-update event as a supervision boundary. For each rollout, we apply the following procedure: 1. Detect chain-update events. A boundary tk is recorded whenever the Plan Module emits a new action-chain set 
+
+{τi}tk .2. Aggregate per-agent action footprints. For each segment 
+
+[tk, t k+1 ), we record, for every controlled agent i, how many atomic actions were actually executed under the same chain. For example, the first segment in Figure 11 has action counts (4 , 3, 3) . These counts are stored as auxiliary metadata for each segment. 3. Generate one QA instance per boundary. For each boundary tk, we create one QA pair. The question con-sists of the Coordinator observation at tk, including the current state otk , the previous chain set {τi}tk−1 , and the correction history htk . The answer is the new chain set 
+
+{τi}tk emitted at that boundary, together with the per-agent action-footprint statistics collected from the subsequent segment [tk, t k+1 ).
+
+A.8 Reward Design 
+
+This section provides the full definition of the reward R(A)
+
+used in GRPO training. Executing a generated action chain terminates in exactly one of five mutually exclusive outcomes: Success, SyntaxError, SemanticError, Deadlock, or Timeout. For an action chain A, the reward is 
+
+R(A) = Rprog (A) + α 1[Ω( A) = Success ]
+
+− Psyn (A) + Psem (A) + Pdlk (A) + Ptmo (A).
+
+Each penalty is zero unless its corresponding terminal out-come occurs. The reward is computed once per response and then clamped to the range [−1, 1] .
+
+Progress reward. The term Rprog (A) combines three dense signals. The first is execution progress within the generated chain, rather than a second task-success indicator: 
+
+Rprog (A) = wfrac Rfrac (A) + weff Reff (A) + wlen Rlen (A).
+
+Each component is normalized to [0 , 1] before weighting. 
+
+• Rfrac (A) measures fractional progress toward the action chain: 
+
+Rfrac (A) = ncompleted 
+
+ntotal 
+
+,
+
+where ncompleted is the number of completed actions and 
+
+ntotal is the length of action chain. This term is defined for every response, regardless of the final outcome. 
+
+• Reff (A) rewards faster successful completion: 
+
+Reff (A) = 1 − tfinish 
+
+T
+
+if the task is completed successfully, and Reff (A) = 0 
+
+otherwise. Here tfinish is the frame at which the task is completed, and T is the episode horizon. 
+
+• Rlen (A) is a length regularization term. It favors re-sponses whose length falls within the ideal token range 
+
+[Lmin , L max ] = [100 , 500] , and decreases outside this range, with a maximum reduction of 0.5.
+
+Penalty terms. The penalty terms correspond to the four non-success outcomes. With the values in Table 7, deadlock receives the largest fixed penalty ( 1.0), semantic failure re-ceives 0.3, syntax failure receives 0.1 scaled by the fraction of malformed instructions, and timeout has no additional fixed penalty; a timeout still forfeits both the success bonus and the efficiency reward. This explicit numerical ordering is the one used in training. 
+
+• Syntax penalty. If the response cannot be parsed, we apply 
+
+Psyn (A) = λsyn · sev syn (A).
+
+The severity sev syn (A) ∈ [0 , 1] equals 1 for a fully un-parsable response, such as invalid JSON. For a partially malformed response, it is defined as the fraction of invalid instructions among all instructions. 
+
+• Semantic penalty. If the response is syntactically valid but fails semantic validation during execution, we apply a fixed penalty 
+
+Psem (A) = λsem 
+
+Typical cases include references to non-existent targets or invalid entities. 
+
+• Deadlock penalty. If execution enters deadlock, we apply 
+
+Pdlk (A) = λdlk 
+
+• Timeout penalty. If the response times out without trig-gering syntax, semantic, or deadlock failure, we set 
+
+Ptmo (A) = λtmo 
+
+In this case, the response receives no additional fixed penalty, but it also does not receive the success bonus α or the efficiency reward Reff . This makes timeout the mildest of the four failure modes.                          
+
+> Parameter Value
+> Success bonus
+> α0.45
+> Penalty coefficients
+> λsyn (syntax error) 0.1
+> λsem (semantic error) 0.3
+> λdlk (deadlock) 1.0
+> λtmo (timeout) 0.0
+> Rprog internal weights
+> wfrac (fractional progress) 0.15
+> weff (efficiency) 0.15
+> wlen (length term) 0.25
+> Environment
+> Horizon T100 steps
+> kref (replan reference) 3
+> Length regularization
+> Ideal token range [Lmin , L max ][100 ,500]
+> Maximum reduction 0.5
+
+Table 7: Configuration of the GRPO reward function. 
+
+B Experiment Details 
+
+B.1 Computing infrastructure. 
+
+All experiments were conducted on Linux servers running TencentOS Server 4.2. Each server is equipped with dual-socket AMD EPYC 9K84 96-Core processors and 8 NVIDIA H20 GPUs, each with 96 GB memory. The software environ-ment uses Python 3.11.6, NVIDIA driver 535.161.08, and CUDA 12.8. Our training and inference stack is built on PyTorch 2.10.0, Transformers 4.57.6, TRL 0.24.0, vLLM 0.19.0, Accelerate 1.7.0, DeepSpeed 0.16.4, PEFT 0.18.1, and LLaMA-Factory 0.9.5.dev0. 
+
+B.2 Environment Layouts 
+
+We evaluate on three Overcooked layouts shown in Figure 12: 
+
+Coordination , Ring , and Symmetric . The standard evaluation uses the original, unperturbed dynamics on the Coordination layout. Dynamic evaluation applies the seeded perturbation protocol in Section B.4 to each of the three layouts, yielding the Dynamic (Coordination), Dynamic (Ring), and Dynamic (Symmetric) settings reported in the main comparison. 
+
+B.3 Evaluation metrics 
+
+In this section, we define the reported metrics. For each eval-uation setting, we run independent trials and report the mean and standard deviation across trials. The random seed for the 
+
+i-th repeated trial is set to i, which ensures reproducible replay under the same evaluation protocol. In HoK, we additionally randomize the controlled heroes’ starting positions and orien-tations before each episode to increase evaluation diversity. HoK starting points are selected from player-match records using an internal filtering pipeline and then replayed under the same seed-controlled setup for all compared methods. (a) Coordination (Hard) (b) Ring (Medium) (c) Symmetric ( Easy )
+
+Figure 12: Our experiments are conducted on three different layouts. We report four common metrics in both environments. Task Achievement Ratio (TAR) is the percentage of trials in which the target task is successfully achieved. Average Eposide Duration (AED), Average Action Steps(AAS), and Running Time (RT) denote the average episode duration, average movement steps, and wall-clock running time, respectively, computed over repeated trials. We also report domain-specific diagnostic metrics. For Overcooked, the deadlock rate is defined as the fraction of executed actions that result in deadlock. For HoK, we report Action Timeout Rate (ATR), defined as the fraction of coordinator action whose execution exceeds the allowed wall-clock budget. 
+
+Paired statistical testing. For the marked main-table com-parisons, the i-th run of each method is paired through the same evaluation seed and, in Overcooked, the same seeded event realization. We apply a two-sided paired permutation test to the trial-level outcomes under each setting. The signifi-cance markers in the main comparison denote comparisons of SyncPlan (SFT+RL) with the LLM-based baselines in the corresponding setting; the markers are not intended as a claim of significance against task-specific RL baselines. 
+
+B.4 Dynamic Event Taxonomy and Trigger Protocols 
+
+The design rationale of dynamic events Real-world dy-namic events form an open-ended combinatorial perturbation 
+
+Figure 13: The HoK game map. space: enemy support can arrive from any direction with any composition; held items can drop at any frame; an ally can disconnect or be teleported mid-chain. Enumerating this space exhaustively is impossible. Instead, for evaluation we define a small set of dynamic event types that provides broad coverage of the main failure modes. Each type is triggered by a seeded script in Overcooked so that the same perturbation can be replayed across methods and seeds. 
+
+Overcooked dynamic event injection Table 8 summarizes the three Overcooked dynamic event types and the action-chain field each one stresses. Overcooked events reuse the injection hooks exposed by the Collab-Overcooked platform. All three events are triggered from a seeded RNG so that runs across methods and seeds see the exact same sequence.         
+
+> ID Name Example
+> O1 Held-Item Drop Held onion drops to floor O2 Pot-Content Scatter 1 of 3 onions scattered; timer resets O3 Agent Displacement Agent teleported to a far counter
+
+Table 8: Overcooked dynamic events. 
+
+HoK dynamic event injection In HoK we do not inject any scripted events. The environment is inherently non-stationary: uncontrolled allied and adversarial bots act on their own policies, so perturbations to an action chain (enemy rein-forcements rotating in, an objective disengaging, a teammate dying) arise naturally during play. HoK therefore serves as a complexity stress-test in which dynamic events are endoge-nous, and only Overcooked uses the injected event protocol below. 
+
+B.5 SFT Training Hyperparameters 
+
+Table 9 lists the hyperparameters for the supervised fine-tuning stage. We use LLaMA-Factory with LoRA adaptation on Qwen2.5-7B-Instruct. (a) Qwen2.5-1.5b (c) LLama3.1-8b (b) Qwen2.5-3b Figure 14: In-game performance variation over the course of RL training. (a) Qwen2.5-1.5b (c) LLama3.1-8b (b) Qwen2.5-3b 
+
+Figure 15: Training curves (reward and loss) during RL optimization. • wait_entity(counter(2,1),has_item,eq,true) 
+
+• face(left),interact(counter(2,1)) 
+
+• face(up) 
+
+• interact(pot(3,0)) 
+
+• wait_entity(counter(2,1),has_item,eq,true) 
+
+• face(left) 
+
+• interact(counter(2,1)),face(up) 
+
+• interact(pot(3,0)) 
+
+• wait_entity(pot(3,0),cooked,eq,true),move_to(3,1) 
+
+• face(up) 
+
+• interact(pot(3,0)) 
+
+• move_to(3,3) 
+
+• face(down) 
+
+• interact(serving(3,4)) 
+
+• move_to(1,1) 
+
+• face(left) 
+
+• interact(onion_dispenser(0,1)) 
+
+• face(right) 
+
+• interact(counter(2,1)) 
+
+• move_to(1,1) 
+
+• face(left) 
+
+• interact(onion_dispenser(0,1)) 
+
+• face(right) 
+
+• interact(counter(2,1)) 
+
+• move_to(1,1) 
+
+• face(left) 
+
+• interact(onion_dispenser(0,1)) 
+
+• face(right) 
+
+• interact(counter(2,1)) 
+
+• move_to(1,3) 
+
+• face(left) 
+
+• interact(dish_dispenser(0,3)) 
+
+• face(right) 
+
+• interact(counter(2,3)) 
+
+• move_to(1,1) 
+
+• wait_entity(counter(2,3),has_item,eq,true) 
+
+• move_to(3,3) 
+
+• face(left) 
+
+• interact(counter(2,3)) 
+
+• wait_entity(counter(2,1),has_item,eq,true) 
+
+• face(left) 
+
+• interact(counter(2,1)) 
+
+• face(up) 
+
+• interact(pot(3,0)) 
+
+> Get onion Delivery  Soup Delivery onion Delivery Plate
+
+Palyer1’s(right) Chain Random0 (Hard) Palyer2’s(right) Chain Get Plate 
+
+Figure 16: Overcooked case study on the Coordination layout. When the active chains create mutually dependent Wait_agents 
+
+predicates, the incremental reachability test in Section A.4 detects the resulting wait cycle. The re-invoked Plan Module emits a revised chain with an explicit Wait_agents step that serializes tile access, allowing both agents to complete delivery without collision. Hyperparameter Value 
+
+Model 
+
+Flash attention FA2 Precision bfloat16 
+
+LoRA 
+
+Rank 32 Alpha 64 Dropout 0.05 Target modules All linear layers 
+
+Data 
+
+Template Qwen chat format Max sequence length 4,096 tokens Validation split 5% 
+
+Optimization 
+
+Per-device batch size 1Gradient accumulation 8Learning rate 2 × 10 −5
+
+LR schedule Cosine Warmup ratio 0.1 Epochs 4Save interval 200 steps Eval interval 200 steps 
+
+Table 9: SFT training hyperparameters (LLaMA-Factory + LoRA). 
+
+Hyperparameter Value 
+
+Model 
+
+Base model Qwen2.5-7B-Instruct Max sequence length 4,096 tokens Precision bfloat16 
+
+LoRA 
+
+Rank 32 Alpha 64 Target modules q, k, v, o, gate, up, down proj 
+
+GRPO 
+
+Prompts per batch 10 Responses per prompt 10 Min group size 2Clipping threshold ϵ 0.2 KL coefficient β 0.02 Entropy coefficient 0.001 
+
+Optimization 
+
+Learning rate 5 × 10 −5
+
+Warmup ratio 0.03 Per-device batch size 2Gradient accumulation 4Max grad norm 1.0 Epochs 1Seed 42 
+
+Table 10: RL (GRPO) training hyperparameters. 
+
+B.6 RL Training Hyperparameters 
+
+Table 10 lists all hyperparameters for the GRPO-based RL training. 
+
+B.7 PSD Architecture 
+
+Table 11: PSD Architecture Arch. Loss Param F1(opt) Acc(opt) Precision Recall Small BCE 68,737 0.8062 0.8363 0.6799 0.9902 Focal 68,737 0.8189 0.8491 0.697 0.9924 Medium BCE 261,377 0.8284 0.8588 0.7115 0.9913 Focal 261,377 0.8204 0.8509 0.7003 0.9902 Wide BCE 745,473 0.8169 0.8472 0.6947 0.9913 Focal 745,473 0.8382 0.8685 0.7266 0.9902 To determine the optimal architecture for the Plan Stale-ness Detector (PSD), we conducted an architecture search across different model scales and loss functions. As shown in Table 11, we evaluated three architectures—Small (68K parameters), Medium (261K parameters), and Wide (745K parameters)—with both Binary Cross-Entropy (BCE) and Focal loss. The results indicate that performance differences across architectures are relatively modest, with F1 scores ranging from 0.8062 to 0.8382 and accuracy from 0.8363 to 0.8685. Notably, all configurations achieve consistently high recall (above 0.99), which is critical for detecting plan stal-eness to avoid coordination failures. The Wide architecture with Focal loss achieves the best overall performance (F1: 0.8382, Acc: 0.8685), offering a favorable trade-off between precision (0.7266) and recall (0.9902). Based on these find-ings, we adopt the Wide+Focal configuration for subsequent experiments, as the marginal parameter increase is justified by its superior detection capability. • Move_to(14,10)         
+
+> •Move_to(16,13)
+> •Wait_entity(E1,pos_x,lt,13) & Wait_entity(E1,pos_y,lt,13)
+> •Clear_mission()
+> •Wait_agents(A1, start, Attack{E1})
+> •Move_to{E1}"
+> •Attack{E1}
+> •Move_to{E1}
+> •Attack{E1}
+> Approach
+> Attack
+> Prepare
+> Wait
+
+A2’s Chain A1’s Chain Task: Kill the E1 
+
+> Attack
+> Wait
+> Wait Here A2 A1 E1
+
+Figure 17: Honor of Kings case study: the PSD detects an unexpected health drop on the support hero caused by an enemy rotation invalidating the original engagement-window assumption. C Additional Experimental Analysis 
+
+C.1 Training Dynamics 
+
+We visualize the RL training process from two complemen-tary perspectives: in-game task performance (Figure 14) and optimisation-level statistics (Figure 15). 
+
+In-game performance. Figure 14 tracks task completion and deadlock-rate trajectories over GRPO iterations. The curves show improving task completion together with a declining rate of cyclic wait failures. They are descriptive training diagnostics rather than an estimate of generalization to unseen event distributions. 
+
+Optimization curves. Figure 15 reports the GRPO reward and policy-loss trajectories. The reward trend is interpreted jointly with the task-level evaluation tables: it is evidence of training progress, but it is not by itself evidence that any single reward component or module causes the final performance gain. 
+
+C.2 Case Studies 
+
+This section expands the two representative episodes summa-rized in the main paper’s Case Studies section with the full step-by-step trace of each correction event. 
+
+Overcooked: Resolving a Spatial Conflict Figure 16 traces an episode on the Coordination layout in which the initial plan assigns both agents an overlapping tile as an intermediate way-point. If execution turns this conflict into mutually dependent 
+
+Wait_agents predicates, the incremental reachability check in Section A.4 detects that adding the new wait edge closes a cycle and raises a graph-deadlock signal. The Plan Module is then reinvoked and produces an explicit Wait_agents step that serializes access to the shared tile, after which the agents complete their pickup/delivery sequence. 
+
+Honor of Kings: PSD-Triggered Reactive Correction Fig-ure 17 traces a team-gank episode in which the original plan assumes a safe engagement window for a flanking maneu-ver on the enemy jungler. Partway through execution, an off-screen enemy hero rotates into the fight and the support hero’s health changes unexpectedly relative to the state on which the chain was conditioned. Because the affected hero is referenced by a remaining chain step, the PSD state pathway incorporates this entity-level change; once Preplan exceeds 
+
+θPSD = 0 .7, the Plan Module is reinvoked on the updated state. The resulting chain redirects the support hero to disen-gage and provide healing rather than continuing the original flanking route, while the remaining agents adjust their en-gagement timing. This case illustrates selective correction under endogenous HoK dynamics; aggregate latency results are reported in the main paper.
