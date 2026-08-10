@@ -1,0 +1,894 @@
+Title: DiDPO: Diff-in-Diff Policy Optimization for Coding Agent Training
+
+URL Source: https://arxiv.org/pdf/2608.07147v1
+
+Published Time: Mon, 10 Aug 2026 00:51:28 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+DiDPO: Diff-in-Diff Policy Optimization for Coding Agent Training 
+
+## Xucong Wang 1, Zhe Zhao 1,2 , Liheng Yu 1, Di Wu 1,Xiaofeng Cao 4, Pengkun Wang 1,3 §
+
+> 1
+
+University of Science and Technology of China (USTC) 2Stanford University 
+
+> 3
+
+Suzhou Institute for Advanced Research, USTC 4Tongji University 
+
+> §
+
+Corresponding Author 
+
+## Abstract 
+
+Reinforcement learning with Verifiable Reward (RLVR) has emerged as a powerful paradigm for training coding agents, where the execution feedback from compilation and tests provides objective verification. However, unlike agent tasks, coding agents face a unique and finer-grained credit assignment challenge: at each step, coding actions simultaneously pack varying changes into different regions of a code version, which makes the contribution of independent change indistinguishable. Existing RLVR methods mostly leverage the outcome reward or step-level reward, which fails to dive into a code diff and makes unique properties of coding actions invisible to training. In this paper, we propose Diff-in-Diff Policy Optimization (DiDPO), a critic-free RL method that constructs fine-grained credit units directly from the structure of code diffs. DiDPO organizes multi-turn coding interactions into multiple thought–action steps and discovers code diffs across sampled trajectories. It then selects anchors by aggregating highly similar sub-diffs split from each whole diff by our “groupability score”, which provides the splitting schema that optimally balances the semantic scope of anchors and the group mass they may form. Finally these anchors form advantage groups and project the diff-level advantage back to individual response tokens. Experiments on long-horizon coding and reasoning benchmarks show that DiDPO significantly outperforms strong agentic RL baselines. On Qwen2.5-7B-Coder, DiDPO exceeds comparable methods by over 10% and narrows the gap with far larger models, offering a principled framework for fine-grained credit assignment in coding agent training. We also open-source verl-code, an agentic rl codebase that supports various RL methods and coding benchmarks.  
+
+> Github: https://github.com/xuc865/verl-code
+
+## 1 Introduction 
+
+LLM agents [9, 13, 30, 41, 57, 58] extend language models from response generation to goal-directed in-teraction by combining reasoning, tools, and environ-mental feedback. ReAct [58] established a widely used reasoning–action loop, while related self-improvement methods showed how environmental feedback can re-fine subsequent behavior [41]. For coding, advances in code representation and generation provided the foundation for understanding program structure and producing executable code [15, 20, 31]. Some coding agents, like SWE-agent [56], OpenHands [45], Code-Act [44] also place the model inside an interactive software workspace, allowing it to inspect reposito-ries, modify files, execute code, and respond to test feedback. Recent work also explores stateful agent harnesses and streamlined repository-repair work-1arXiv:2608.07147v1 [cs.AI] 7 Aug 2026 add/del exec res.        
+
+> action observation
+> step1 step2 step3 step4 step1 step2 step3 step4 …… ……
+> 𝑎 !(!)
+> 𝑠 !(!)
+
+## ……       
+
+> 𝑟 !(!) 𝑠 $(!) 𝑎 $(!) 𝑟 $(!) 𝑠 %(!) 𝑎 %(!) 𝑟 %(!)
+> 𝑎 !(!)
+> 𝑠 !(!)
+
+## …𝑟 !(!) 𝑠 $! (!) 𝑎 $! (!)                    
+
+> 𝑟 $(!)
+> 𝑠 %! (!) 𝑎 %! (!)
+> 𝑟 %(!)
+> 𝑠 &(!) 𝑎 &(!) 𝑟 &(!)
+> 𝑠 &(!) 𝑎 &(!) 𝑟 &(!)
+> 𝑎 $(!) 𝑟 $(!) 𝑎 &(!) 𝑟 &(!) 𝐴(𝑎 $(!) )𝐴(𝑎 &(!) )
+> One action on one state
+> 𝑎 $(!) 𝑟 $(!) 𝑎 &(!) 𝑟 &(!) 𝐴(𝑎 $(!) )𝐴(𝑎 &(!) )
+> 𝑠 $$ (!) 𝑠 %$ (!)
+> 𝑠 &(!)
+> 𝑠 $(!)
+> 𝑠 $$ (!) 𝑠 &(!)
+> Sub-diffs on Snippet 1 Sub-diffs on Snippet 2 𝑎 $$ (!) 𝑎 %$ (!)
+> Different actions on different parts of a state!
+
+Figure 1 Upper: For many agent tasks, each agent action is treated as a single decision unit over a state. Lower: 
+
+For coding tasks, many coding actions may be applied to different parts of a state, while producing multiple functional sub-diffs. 
+
+flows [53]. Alongside this methodological progression, coding benchmarks have expanded from executable synthesis to competition-level programming and real repository repair tasks [7, 25, 34]. These executable environments create a natural role for Reinforcement Learning with Verifiable Rewards (RLVR). A software issue may admit many valid inter-action trajectories, making exhaustive supervision ex-pensive, while compilation and tests provide objective feedback on the resulting workspace. CodeRL [28] first used execution outcomes to optimize program generation, and SWE-RL [52] later extended rein-forcement learning to open software evolution. Ex-ecVerify [43] further shows the value of stepwise ver-ifiable signals for code execution reasoning. More broadly, GRPO [16] estimates relative advantages from multiple rollouts without a learned critic, while DAPO [59] and GSPO [60] improve the stability and efficiency of group-based policy optimization. For long-horizon agents, GiGPO [14] groups actions that revisit the same environment state. Together, these methods make RLVR increasingly effective for train-ing interactive agents. However, as shown in Figure 1, the common settings in many agent tasks [19, 42, 48] assume one atomic action is applied to one atomic state, which does not transfer cleanly to coding. To be concrete, ❶ coding actions are bundled with snippets which expand with task difficulty and project scale. This means harder tasks require longer edits and admit interleaved ac-tions on interleaved regions. ❷ At each step, each diff ( i.e., code changes between two adjacent ver-sions ) may contain several sub-diffs ( i.e., part of the code diffs ) with different functionalities. Treating the whole diff as one therefore obscures the seman-tic unit that produced an improvement. ❸ code is also governed by strict syntax, execution, and pass/-fail criteria; any small malformed edit may influence a long trajectory thus merits special focus. These challenges naturally lead to the following question: 
+
+How can we construct dynamic, finer-grained credit units for code diffs to better apply agentic RL to coding tasks? 
+
+Motivated by these observations, we introduce Diff-in-Diff Policy Optimization (DiDPO), a tailored agentic RL algorithm that uses the hierarchy in each code diff to construct fine-grained credit. DiDPO retains a trajectory-level group-relative advantage but fur-ther looks inside each code-producing action. Across rollouts of the same task, it identifies highly similar sub-diffs between diffs and uses these sub-diffs as an-chors that induce sub-diff boundaries. The resulting sub-diffs capture recurring functional regions from diffs of different rollouts. DiDPO then groups aligned sub-diffs and computes a local group-relative advan-tage named diff-level advantage. Since over-large and over-small anchors affect the quality of grouping, we design a groupability score to select anchors that op-timally balance semantic scope they could represent and the mass of the group they could aggregate. The diff-level advantage is combined with the trajectory-level advantage and projected back to its response tokens, requiring neither an additional critic nor extra environment rollouts. Extensive experiments across long-horizon coding benchmarks demonstrate the su-periority of DiDPO over existing coding and agentic RL baselines. Our contributions are threefold: • We identify three structural properties that dis-tinguish coding from existing agentic RL settings and formulate the resulting need for hierarchical credit assignment within code-producing actions. • We propose DiDPO, the first agentic RL algo-rithm tailored to the functional hierarchy of code, which dynamically aligns diffs, constructs sub-diff groups, and assigns group-relative advan-tages to the corresponding response tokens with-out extra rollouts. • We conduct extensive experiments across di-verse long-horizon coding benchmarks, where DiDPO consistently outperforms strong policy-optimization baselines. 22 Related Work 
+
+2.1 Agentic Reinforcement Learning 
+
+Reinforcement Learning with Verifiable Reward [2] extends policy optimization to dynamic, open-ended tasks whose outcomes can be checked automatically. Early RLHF [10, 37] methods learned reward mod-els from human comparisons and optimized policies against those models. Direct preference methods later converted pairwise preferences into supervised objec-tives, with DPO providing a representative formula-tion [38]. More recent methods such as GRPO [16], GSPO [60], and DAPO [59] estimate advantages from multiple rollouts of the same prompt. Subsequent studies examine how sampling, clipping [4] and nor-malization further affects the training stability. In complementary to the outcome rewards, Process-supervision methods provide finer feedback by as-signing signals to intermediate reasoning steps [11, 32, 46, 47]. Interactive search-augmented systems combine environment feedback with search or value-guided trajectory improvement. RAGEN [50] studies training stability when trajectories contain many de-pendent decisions [6]. State-based methods approach credit assignment through local comparisons. GiGPO constructs groups when trajectories revisit the same state [14], whereas GAGPO derives a TD/GAE-style advantage from estimated state values [62]. In con-trast, DiDPO treats code changes inside diffs as the comparison units. This reflects the internal structure of coding actions beyond environment observations. 
+
+2.2 Code Generation and Coding Agents 
+
+Executable feedback made functional correctness di-rectly optimizable [7, 18] beyond surface similarity rubrics. Building on this signal, CodeRL used unit tests to train program generators, while CodeT [5] used generated tests and learned verifiers to improve candidate selection. Self-debugging [8] further in-corporated execution failures into iterative revision. As executable evaluation expanded to data-science and class-level generation [27], repository-level tasks extended the same feedback loop across a sequence of workspace interactions [25]. SWE-agent realizes this process through repeated editing and testing [56], with format disciplines from OpenHands [45] and CodeAct [44]. Although this line of work improves generation under executable feedback, the final pro-gram remains the unit of evaluation. As a result, the contribution of internal changes remains unresolved. In complement to the above, some methods target repair-generation and unit editing [26]. GenProg [29] +   
+
+> Whole-diff Sub-diff
+> Percentage % Group Mass
+> Similarity=0.67
+> Based on the whole-diffs, they may be different.. Based on the sub-diffs, they are similar!
+> def is_sorted_and_how(arr): if arr == sorted(arr): return "yes, ascending" elif arr == sorted(arr, reverse=True): return "yes, descending" else: return "no" from typing import List class Solution: def is_sorted_and_how..: if arr == sorted(arr): return "yes, ascending" elif arr == sorted(arr): return "yes, descending" else: return "no"
+> ++ +++++++++++++Similarity=1
+> ++++++++++++
+> Threshold for Grouping: 0.9
+> Diff1 Diff2
+
+Figure 2 Upper: Grouping states based on whole diffs tends to produce more small-mass (mass: number of elements in that group) groups; grouping based on sub-diffs results in more large-mass groups. This is because the former one neglects similarities in sub-diffs (Lower) .
+
+searches over test-guided patch candidates, while Prophet [33] uses human-designed or learned priors to rank candidate repairs. CURE [22] guides repair generation with code context, and Recoder [61] in-corporates syntax-guided decoding and neural patch generation. These methods, however, operate on iso-lated bug-fix instances where the edit scope is small and self-contained, whereas coding agents must dis-tribute credit across multi-step trajectories that span multiple files and edit locations. In contrast, DiDPO is the first coding RL method to connect executable outcome feedback with localized credit by aligning recurring sub-diffs across coding agent rollouts. 
+
+## 3 Problem Setting 
+
+3.1 Coding as Markov Decision Process 
+
+We consider a typical multi-turn coding process inter-acting with a software environment. A task instance 
+
+x is provided to the agent. At the step t, the gener-ation follows the CodeAct [44] paradigm, where the agent with the old policy πθold outputs N Thought-Action-Observation cycles to the environments: 
+
+τ (i) = {(s(i) 
+
+> t
+
+, a(i) 
+
+> t
+
+, r (i) 
+
+> t
+
+)|1 ≤ t ≤ Ti} (1) Where Ti is the number of steps in the trajectory τ (i),and the agent emits a textual action a(i) 
+
+> t
+
+based on the code state s(i) 
+
+> t
+
+, and a(i) 
+
+> t
+
+can be add , del or none . In contrast with many agentic tasks where each action is applied to one state, s(i) 
+
+> t
+
+here is divisible, and at
+
+here can be applied to a sub-set of s(i) 
+
+> t
+
+. For most coding tasks, the process reward r would be replaced by the outcome reward R(i) for the i-th trajectory. 33.2 Trajectory / State-Level Advantage 
+
+For a group of rollouts sampled from the task prompt 
+
+x, the trajectory-level advantage [39] is written as: 
+
+AE (τ (i)) = [ R(i) − 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+R(j)]/std( {R(j)}Nj=1 ), (2) While AE (τ (i)) still treats the response as a single carrier of credit, GiGPO [14] proposes that states naturally recur across episodes and results in redun-dancy; based on which, it constructs a state-level advantage term by grouping similar actions with sim-ilar states as units for credit assignment. Formally, GiGPO identifies unique states s from all trajectories of the same prompt as anchors: 
+
+G(˜ s) = {(a(i) 
+
+> t
+
+, r (i) 
+
+> t
+
+)|s(i) 
+
+> t
+
+= ˜ s, 1 ≤ i ≤ N, 1 ≤ t ≤ Ti} (3) Let R(i) 
+
+> t
+
+= PTi
+
+> k=t
+
+(γ)Ti−k· r(i) 
+
+> k
+
+as the discounted reward at step t. The state-level advantage AS (τ (i)) is then calculated within actions started from each unique s:
+
+ASi (a(i) 
+
+> t
+
+) = R(i) 
+
+> t
+
+−avg( {R(j) 
+
+> t
+
+|(a(j) 
+
+> t
+
+, R (j) 
+
+> t
+
+) ∈ G(˜ s)})
+
+Fnorm ({R(j) 
+
+> t
+
+|(a(j) 
+
+> t
+
+, R (j) 
+
+> t
+
+) ∈ G(˜ s)}) (4) 
+
+ASi is then combined with AE (τ (i)) to provide state-level signals for intermediate actions in long-horizon agent tasks. 
+
+## 4 Methodology 
+
+The primary challenge in long-horizon coding tasks lies in identifying the contribution of each action step. To address this, we introduce DiDPO, which derives dynamic advantage groups based on code diffs for credit assignment. 
+
+4.1 Diffs are Divisible 
+
+For step k of trajectory τ (i), let Di,k denote the set of diffs distributed at different locations. DiDPO first aggregate diffs from all trajectories and steps together, resulting S:
+
+S = {{D i,k ; 1 ≤ k ≤ Ti}; 1 ≤ i ≤ N } (5) To better track these diffs for differentiated process-ing, for diff each s ∈ S , we attach the following tuple of metadata to this diff: 
+
+Metadata( s) = ( u(s), v (s), w (s), q (s)) , (6) where u(s) denotes the normalized (i.e., with annota-tions and blanks removed) text of diff s, v(s) denotes its response-token span, w(s) ∈ { add , del , none } rep-resents the actions applied to the diff, and q(s) the task instance that produces s. The normalized diff size is denoted as |u(s)|.Unlike cases where states can be treated as atomic units, when code diffs are placed together, the severe asymmetry prevents most diffs from being effectively grouped. As shown in Figure 2, on the APPS dataset, grouping states based on the whole diffs results in groups that are mostly small-sized, whereas decom-posing diffs into finer sub-diffs leads to a greater number of groups with larger sizes. A typical ex-ample to explain this is: Diff 1 and Diff 2 partially overlap but also partially diverge, causing the overall similarity score to fall below the similarity threshold. This motivates us that further division of diffs helps uncover a richer set of mergeable states. 
+
+4.2 Dynamic Sub-Diff Anchors 
+
+The above findings prompted us to further decompose diffs, yet this raises another question: how should we choose the division criteria for different diffs, to ensure that the resulting sub-diffs are the most abundant and semantically meaningful? If we uni-formly split all diffs line by line and rely on them to form anchors, the anchors would inevitably be clut-tered with countless meaningless blanks and snippets. DiDPO addresses this by striking a balance between the size of the anchors and the group mass (number of elements in that group) of anchors. Recall that |u(s)| is the normalized diff size of s ∈ S .We enumerate its contiguous sub-diffs at multiple scales as the following: 
+
+I(s) = Seg( s, [p, q )) : 0 ≤ p < q ≤ | u(s)| , (7) Where Seg( s, [p, q )) slices the diff s from p to q. For two sets of sub-diffs I(s) and I(s′), which may be produced by different rollouts or steps, we separately calculate the similarity matrix as 
+
+Ms,s′ =(I, J, σ I,J )|I ∈ I (s), J ∈ I (s′); 
+
+w(s) = w(s′); σI,J = sim( u(sI ), u (s′ 
+
+> J
+
+)) ≥ η . (8) The sim combines token-level lexical matching and embedding similarity to compare the source text. Notably matching is restricted to the same edit type, i.e, w(s) = w(s′).All matched sub-diffs can be aggregated into an an-chor c ∈ C , which represents one code-changing pat-tern. We use O(c) to denote the occurrences sup-porting this anchor. Accordingly, ¯L(c) measures its 4…𝑎 !(!) 𝑟 !(!) 
+
+𝑠 $! (!) 𝑎 $! (!) 
+
+𝑟 $(!) 
+
+𝑠 %! (!) 𝑎 %! (!) 
+
+𝑟 %(!) 𝑠 &(!) 𝑎 &(!) 𝑟 &(!) 
+
+𝑠 $$ (!) 𝑠 %$ (!) 
+
+𝑎 $(!) 𝑟 $(!) 𝑎 &! ($) 𝑟 &($) 𝐴(𝑎 $(!) ) 𝐴(𝑎 &(!) )
+
+𝑠 $$ (!) 𝑠 &! ($) 
+
+# …𝑎 !($) 𝑟 !($) 𝑠 !($) 𝑎 $($) 𝑟 $($) 
+
+𝑠 %! ($) 𝑎 %! ($) 
+
+𝑟 %($) 
+
+𝑠 %$ ($) 
+
+# …
+
+𝑎 !! (%) 
+
+𝑟 !(%) 
+
+𝑠 %! (%) 𝑎 %! (%) 
+
+𝑟 %(%) 𝑠 &(%) 𝑎 &(%) 𝑟 &(%) 
+
+𝑠 %$ (%)  
+
+> 𝑠 !" ($) 𝑎 !" ($)
+
+𝑟 &($) 
+
+> 𝑠 !$ ($)
+> 𝑠 !& ($)
+
+𝑠 $! (%) 𝑎 $! (%) 
+
+𝑟 $(!) 
+
+𝑠 $$ (%) 
+
+𝑠 !! (%) 
+
+𝑠 !$ (%) 
+
+> Agent CodeEnv
+
+𝑎 $$ (!) 
+
+𝑎 !! (!) 𝑟 !(%) 𝑎 %! (%) 𝑟 %(%) 
+
+𝑠 !! (!) 𝑠 %! (%) 
+
+𝐴(𝑎 $(!) ) 𝐴(𝑎 &(!) )
+
+> 𝑎 !$ ($)
+> 𝑎 !& ($)
+
+𝑎 %$ ($) 
+
+𝑎 %$ (%) 
+
+𝑎 !$ (%) 𝑎 $$ (%) 
+
+𝑎 %$ (!) 
+
+𝑎 !(!) 𝑟 !(!) 𝑎 &% ($) 𝑟 &($) 𝐴(𝑎 $(!) ) 𝐴(𝑎 &(!) )
+
+𝑠 !(!) 𝑠 &% ($) 
+
+𝑎 &(!) 𝑟 &(!) 𝑎 &(%) 𝑟 %(%) 
+
+𝑠 &(!) 𝑠 &(%) 
+
+𝐴(𝑎 $(!) ) 𝐴(𝑎 &(!) )
+
+𝑠 !($) 
+
+𝑠 !(!) 
+
+> Trajectory-level
+
+𝐴(𝑎 $(!) )
+
+𝐴(𝑎 $(!) )
+
+𝑎 %$ ($) 
+
+𝑎 %! (%) 𝑟 %(%) 
+
+𝑟 %($) 
+
+𝑠 %$ ($) 𝑠 %! (%) 
+
+𝑅 (!) 
+
+𝑅 (%) 
+
+𝑅 ($) 
+
+𝐴 (!) 
+
+𝐴 (!) 
+
+𝐴 (!) 
+
+γ
+
+Advantage Group 1 
+
+> Func A add Func B add
+
+𝑎 !! 𝑠 !! 
+
+𝑎 !" 𝑠 !" 
+
+Diffs Sub-diffs State-Actions Diff-level 
+
+> Rollout
+
+(a) (b) 
+
+> split by ‘’Groupability Score’’
+
+Advantage Group 2 Advantage Group 3 Figure 3 (a) : Code diffs can be split into sub-diffs according to our proposed Groupability Score (GS). (b): The agent interacts with the code execution environments and generate several code editing trajectories, and state-actions with the same color means the same sub-diffs. DiDPO computes both trajectory-level advantage AE and diff-level advantage AD ; AE is calculated from outcome rewards, while AD is calculated among all aggregated sub-diffs. 
+
+average size and n(c) counts the occurrences. An optimal anchor should both be large enough to carry a valid functional meaning and also gather a group with enough group mass . We define the “Groupabil-ity Score (GS)” to formalize this trade-off: 
+
+GS( c) =  1 − e− ¯L(c)  1 − e−(n(c)−1) , (9) While Equation 9 shows how suitable each occurrence is as an anchor, two high-scoring anchors may be built from many of the same sub-diffs. Thus, selecting anchors by this score alone would therefore introduce redundant groups. With this in mind, DiDPO searches for different an-chors which jointly maximizes GS across sub-diffs: 
+
+C⋆ = argmax |C|≤ K
+
+X
+
+> s∈I (S)
+
+max  
+
+> c∈C
+
+1[s∈O (c)] GS( c) (10) The inner maximum allows each candidate sub-diff to contribute through only one selected anchor, so overlapping anchors cannot repeatedly claim the same occurrence. Equation 10 is a cardinality-constrained facility-location form of submodular max-imization [36]. We solve it greedily by adding the anchor with the largest marginal increase until reach-ing no gains. The detailed solution process is in 
+
+Appendix B .
+
+4.3 Diff Advantage Calculation 
+
+The selected anchors determine both the decomposi-tion and the grouping. According to the anchors C⋆,larger diffs are cut into the occurrences of anchors and other sub-diffs. Actions belonging to the same anchor then form an advantage group: 
+
+G(C⋆) = {(a(i)
+
+> t,m
+
+, R (i) 
+
+> t
+
+)|∃ c ∈ C ⋆ : s(i) 
+
+> t,m
+
+∈ O (c)}. (11) Where 1 ≤i ≤ N, 1 ≤t ≤ Ti. a(i) 
+
+> t,m
+
+is the action over the m-th sub-diff. R(i) 
+
+> t
+
+is the discounted reward at step t. The groups G(C⋆) therefore contain sub-diffs that share a code-changing pattern across roll-outs. DiDPO then computes the diff-level advantage 
+
+AD (a(i)
+
+> t,m
+
+) for each (a(i) 
+
+> t,m
+
+, R (i) 
+
+> t
+
+) ∈ G(C⋆) as: 
+
+AD(a(i)
+
+> t,m
+
+)= R(i) 
+
+> t
+
+−avg( {R(j) 
+
+> t
+
+|(a(j)
+
+> t,m
+
+, R (j) 
+
+> t
+
+) ∈ G(C⋆)})
+
+Fnorm ({R(j) 
+
+> t
+
+|(a(j)
+
+> t,m
+
+, R (j) 
+
+> t
+
+) ∈ G(C⋆)}) .
+
+(12) The trajectory-level advantage AE supervises the entire coding, whereas the diff-level advantage AD
+
+distinguishes code diffs that lead to different outcomes within the same task. 
+
+4.4 Diff-In-Diff Policy Optimization 
+
+With a slight abuse of notation, let a(i) 
+
+> l
+
+be the action containing response l from rollout i. Since each diff 5may contain multiple actions that belong to different advantage groups, we write the final advantage as a token-level format, with a coefficient λ:
+
+ˆAi,l = AE (τ (i)) + λ · AD (a(i) 
+
+> l
+
+). (13) Finally, let ρi,l (θ) = πθ(yi,l | yi,<l , x )/π θold (yi,l |
+
+yi,<l , x ). The training objective of DiDPO applies the standard clipped form as: 
+
+J = Ex,i,l 
+
+h
+
+min 
+
+
+
+ρi,l ˆAi,l , clip( ρi,l , 1−ϵ, 1+ ϵ) ˆAi,l 
+
+i 
+
+(14) All anchors and groups are obtained from the original rollouts, thus DiDPO introduces minor additional interaction expenditure. 
+
+4.5 Theoretical Foundations 
+
+We give a compact view of why DiDPO scores an-chors by both semantic size and group mass. The size term avoids fragments that are too small to express a meaningful code change. The mass term controls the reliability of the local comparison once similar sub-diffs have been matched across rollouts. For a sub-diff s, let Us be its normalized code units and let 
+
+ds encode their textual and structural relations. A correspondence π ⊆ Us × Us′ aligns units from two sub-diffs. Following the Gromov-Hausdorff perspec-tive [3, 35], its distortion is 
+
+dis( π)= sup (a,b )∈π, (a′,b ′)∈π |ds(a, a ′)−ds′ (b, b ′)| (15) We combine this structural distortion with the source similarity used by the anchor matcher: 
+
+∆( s, s ′) = inf 
+
+> π∈Π( s,s ′)
+
+ 12 dis( π)+ β 1 − sim π (s, s ′)
+
+(16) Where Π( s, s ′) is the set of valid correspondences, 
+
+sim π measures aligned source similarity, and β bal-ances structural and textual agreement. This distance formalizes the mismatch between two sub-diffs that are grouped by an anchor. 
+
+Theorem 4.1 Suppose the local reward contribution 
+
+r(s) is L-Lipschitz with respect to ∆. If every sub-diff in a DiDPO group is within correspondence error ϵ of the same anchor, then replacing exact code matches with anchor-based matches changes the local group contrast by at most O(Lϵ ).
+
+The first theorem states that better anchor alignment gives a less biased local credit signal. The next theo-rem will further show that grouping further reduces variance through cross-rollout averaging. 
+
+Theorem 4.2 Assume the step return decomposes as R(i) = r(si) + ξi, where si is the matched sub-diff and ξi is zero-mean non-causal trajectory noise with variance σ2 
+
+> ξ
+
+. If a DiDPO group contains m > 1 sub-diffs with correspondence error at most ϵ, then its local advantage estimator satisfies 
+
+MSE( ˆADi ) ≤ O(L2ϵ2) + O(σ2 
+
+> ξ
+
+/m ). (17) 
+
+An episode-level broadcast estimator retains an O(σ2 
+
+> ξ
+
+)
+
+contamination term for tokens in the same sub-diff. 
+
+Together, the two results explain the statistical role of groupability. Anchor quality limits local-credit bias, while cross-rollout support reduces variance from non-causal trajectory components. In practice, 
+
+ϵ is implicitly controlled by the similarity matching criteria and the groupability score used in anchor selection. Proof of theorems is in Appendix A .
+
+## 5 Experiments 
+
+5.1 Experimental Setup  
+
+> Benchmarks.
+
+Following CodeRL+ [24], we use prime data from [12] as the training set for all RL-based methods, but filter out those that belongs to the validation set or do not conform to long-horizon code generation patterns. For evaluation, eight code-generation benchmarks are selected: APPS [18], Hu-manEval [7], MBPP [1], LiveCodeBench [21], Leet-Code [54], USACO [40], OJBench [49] and ICPC [55]. HumanEval and MBPP assess function-level synthe-sis, while APPS spans programming problems from introductory exercises to competition-level challenges. LiveCodeBench provides a continuously updated eval-uation of code generation with reduced contamina-tion risk. LeetCode, USACO, OJBench and ICPC place greater emphasis on longer competition-level algorithmic reasoning.  
+
+> Training Pipeline.
+
+To standardize the boundaries between tool-call and reasoning in code generation, we place the target code in a sandbox environment (temp dir), where the agent can only perform an 
+
+add/delete/none action at each step. For the train-ing phase, since weaker models may not reliably follow the multi-turn thought-action pattern, we introduce a cold-start stage. Specifically, we first select a subset of medium-sized and moderate-difficulty tasks from the training set, and then augment them using template filling and rewriting with GPT-5.5. On the resulting 7K augmented dataset, we prompt Qwen3.6-27B to generate up to 12-turn rollouts while strictly adher-ing to the thought-action format. We then apply 6Table 1 Performance comparison on standard code generation benchmarks. The best results are in bold .                                                                                                                                                                                                                                 
+
+> Method APPS HumanEval MBPP LiveCodeBench Leetcode Avg All Introductory Interview Competition
+> # Samples 5000 1000 3000 1000 164 257 1054 228 —Kimi-K2.6 84.4 92.5 80.1 89.0 97.0 82.2 74.9 72.4 82.2 Qwen3.6-27B 87.6 91.6 87.7 83.4 96.9 79.1 72.2 62.3 79.6 GLM-5.2 86.3 93.0 84.1 86.1 93.3 69.7 76.5 78.9 80.9 GPT-5.5 89.5 95.5 88.6 86.4 100.0 83.7 100.0 85.2 91.7
+> Skywork-OR1 ————87.2 —33.8 60.0 —Qwen2.5-Coder-7B 16.9 40.8 12.7 5.5 69.3 61.1 15.0 14.3 35.3
+> Code-Reasoning Baselines
+> + CoT 25.9 52.6 22.0 11.0 70.5 67.4 11.9 12.0 37.5 + CodeAct 14.7 34.4 11.6 4.4 66.0 62.0 19.1 18.2 36.0 + Self-Planning 17.4 40.4 13.6 6.0 68.9 66.0 26.5 15.5 38.9
+> Coding (Agentic) RL Baselines
+> + SFT 16.0 38.3 11.0 8.8 66.2 64.2 19.1 21.5 37.4 + CodeRL+ 24.4 50.8 19.5 12.9 72.0 68.2 32.0 17.0 42.7 + GRPO 23.8 49.6 18.3 14.3 70.7 69.8 31.3 18.4 42.8 + GiGPO 25.1 53.8 18.0 17.7 67.0 71.7 35.0 22.1 44.2 + DiDPO (ours) 31.3 54.7 28.4 16.8 72.3 74.2 39.3 24.7 48.4
+> Qwen3.5-4B 43.8 72.1 44.9 12.0 83.7 68.9 31.3 20.5 49.6
+> Code-Reasoning Baselines
+> + CoT 45.8 70.4 48.5 13.1 86.3 67.7 36.0 25.9 52.3 + CodeAct 40.7 70.5 39.1 16.0 84.2 61.5 33.0 25.7 49.0 + Self-Planning 45.1 74.0 46.4 12.0 85.4 54.9 26.7 28.1 48.1
+> Coding (Agentic) RL Baselines
+> + SFT 43.9 69.6 46.8 9.8 82.9 70.1 32.8 20.3 50.0 + CodeRL+ 47.1 74.1 50.1 11.0 85.0 70.7 35.3 27.7 53.2 + GRPO 45.0 76.0 46.2 10.4 85.2 67.4 30.2 25.4 50.6 + GiGPO 48.5 77.6 50.2 14.2 88.4 72.0 31.0 28.5 53.7 + DiDPO (ours) 51.3 82.2 53.0 15.5 91.8 76.9 40.4 32.8 58.6
+
+rejection sampling and LLM-based evaluation, ulti-mately collecting around 3K high-quality trajectories for Supervised Fine-Tuning (SFT). Finally, we apply DiDPO or other RL methods to the SFT checkpoint. The training epochs for SFT and DiDPO stage are 2 and 120 respectively. Unless otherwise specified, all methods use the same set of hyper-parameters for fairness. Evaluation is performed with held-out tasks and deterministic test execution. More implementa-tion details are in Appendix E .
+
+Baselines. We compare the proposed DiDPO with 
+
+(1): Large open/closed-source models like Kimi-K2.6, Qwen3.6-27B, GLM-5.2, GPT-5.5 and Skywork-OR1 [17]; (2): Code-reasoning baselines, like CoT [51], CodeAct [44], Self-Planning [23]; (3): Coding RL / Agentic RL baselines, like CodeRL+ [24], GRPO [39], GiGPO [14] and DiDPO (with SFT ablated). More introductions are in Appendix C / D .
+
+5.2 Main Results 
+
+Overall Performance. Table 1 reports results on two backbones. DiDPO achieves the highest average on both: 48.4% with Qwen2.5-Coder-7B and 58.6% with Qwen3.5-4B, surpassing the strongest baseline GiGPO by 4.2 and 4.9 respectively. DiDPO narrows the gap to GPT-5.5 from 56.4% (base model 35.3% vs. 91.7%) to 43.3% (48.4% vs. 91.7%). Table 2 further reports results on competition benchmarks, where DiDPO achieves 15.6% on USACO with the 7B backbone, more than doubling GRPO’s 6.8%. 
+
+Compared with Code-Reasoning Baselines. Among reasoning baselines, no single strategy dominates: CoT leads on APPS while Self-Planning is strongest on LiveCodeBench. CodeAct underperforms even the base model on APPS for the 7B backbone, i.e., 14.7% vs. 16.9%, showing that untrained tool-use can disrupt synthesis. DiDPO outperforms the best reasoning method by 5.4 on APPS and 12.8 on Live-CodeBench with the 7B backbone, confirming that RL provides gains inaccessible to prompting alone. 
+
+Compared with Coding / Agentic RL Baselines. 
+
+DiDPO improves over GRPO by 5.6 on average with the 7B backbone. Since both share the same episode-level advantage, these gains are directly attributable to sub-diff credit. Compared with GiGPO, DiDPO leads by 4.2. This is because GiGPO groups by identi-cal environment states, which fails when functionally analogous edits modify different code regions; the advantage is most pronounced on APPS Interview, i.e., +10.4, where multi-step reasoning spans multi-ple functions. SFT slightly outperforms base models but largely underperforms all RL methods applied over it. This suggests that, building on format align-ment capability, RL methods can further enhance the model’s performance in long-horizon competitive coding and reasoning. 7Table 2 Performance comparison on competition-level algorithmic benchmarks. The best results are in bold .            
+
+> Method USACO OJBench ICPC Avg All Bronze Silver Gold Platinum All Easy Medium Hard
+
+# Samples 307 123 100 63 21 159 20 53 86 106 —Kimi-K2.6 79.1 95.0 79.8 64.4 16.7 32.3 89.5 54.3 5.5 5.7 39.0 Qwen3.6-27B 68.7 86.2 67.0 54.0 19.0 48.5 100.0 100.0 4.7 21.4 46.2 GLM-5.2 63.5 80.5 64.0 49.2 4.8 13.8 70.0 15.1 0.0 5.7 27.7 GPT-5.5 92.2 99.2 97.0 87.3 42.9 48.4 95.0 81.1 17.4 19.8 53.5 
+
+Skywork-OR1 — — — — — — — — — — —Qwen2.5-Coder-7B 6.5 9.8 5.0 4.8 0.0 3.8 25.0 1.9 0.0 0.9 3.7 
+
+> Code-Reasoning Baselines
+
++ CoT 12.7 24.4 7.0 3.2 0.0 8.6 50.0 3.8 1.9 7.5 9.6 + CodeAct 7.1 15.4 2.0 1.6 0.0 4.4 25.0 3.8 0.0 0.0 3.9 + Self-Planning 5.2 8.9 5.0 0.0 0.0 3.8 25.0 1.9 0.0 2.8 3.9 
+
+> Coding (Agentic) RL Baselines
+
++ SFT 5.2 10.6 2.0 1.6 0.0 3.8 25.0 1.9 0.0 4.7 4.6 + CodeRL+ 13.7 26.8 5.0 6.3 0.0 7.3 40.0 3.8 1.9 8.5 9.8 + GRPO 6.8 12.2 5.0 1.6 0.0 5.7 40.0 1.9 0.0 4.7 5.7 + GiGPO 9.1 13.8 10.0 1.6 0.0 5.7 40.0 1.9 0.0 2.8 5.9 + DiDPO (ours) 15.6 27.6 10.0 6.3 0.0 8.0 45.0 3.8 1.9 8.5 10.7 
+
+Qwen3.5-4B 31.6 49.6 26.0 15.9 0.0 8.8 50.0 7.5 0.0 3.8 14.7 
+
+> Code-Reasoning Baselines
+
++ CoT 40.1 57.7 38.0 22.0 0.0 13.2 70.0 13.2 0.0 1.9 18.4 + CodeAct 29.0 32.5 12.0 11.1 0.0 8.2 35.0 9.4 1.2 0.9 12.7 + Self-Planning 24.8 36.6 23.0 12.7 0.0 8.2 40.0 9.4 0.0 0.0 11.0 
+
+> Coding (Agentic) RL Baselines
+
++ SFT 32.7 50.4 30.0 13.2 0.0 4.4 30.0 1.9 0.0 0.0 12.4 + CodeRL+ 37.5 54.5 37.0 17.4 0.0 11.3 55.0 11.3 1.2 2.8 17.2 + GRPO 35.1 48.9 37.0 17.0 0.0 7.6 50.0 3.8 0.0 2.8 15.2 + GiGPO 36.8 51.2 40.0 15.9 0.0 8.2 55.0 7.5 1.2 3.8 16.9 + DiDPO (ours) 43.0 60.9 44.0 20.6 0.0 13.9 60.0 17.0 1.2 9.4 22.1 20 40 60 80 100 00.2 0.4 0.6 0.8 1.0 Validation Reward Training Steps       
+
+> 100% 50%
+> 0
+> 0% 30 120 60 90
+> Other Scaffold Fragment Block
+> Training Steps 120
+
+Figure 4 Left: validation reward over training. Right: 
+
+Evolution dynamics of group types in DiDPO, which are classified by GPT-5.5. Block: sub-diffs on meaning-ful functional blocks. Fragment: sub-diffs on fragments. 
+
+Scaffold: sub-diffs on object definitions and declarations. 
+
+Other: sub-diffs on meaningless lines (like blank lines). 
+
+5.3 Analysis 
+
+Learning Dynamics Analysis. Figure 4 (left) shows APPS accuracy over training. All methods improve similarly in the first 20 steps, driven by the shared episode-level advantage. After step 40, DiDPO con-tinues to climb while GiGPO plateaus, indicating that sub-diff credit becomes more informative as the policy diversifies its edits. Figure 4 (right) tracks group com-position with 4 types classified by GPT-5.5. Block 
+
+(function bodies and loop structures) steadily increase their share, while Fragment groups (short isolated edit segments), and Scaffold groups (imports and definitions) decline. This shift matches the DiDPO design, where functional blocks earn higher GS and dominate anchor selection, thus providing more mean-
+
+Table 3 Ablation studies on different design of “Groupa-bility Score (GS)” (left) and components (right) .                       
+
+> Design APPS OJBench
+> ¯L(c)×n(c)16.5 1.9
+> ¯L(c) + n(c)24.4 5.7 Qwen3.6-27B Judge 21.5 1.9 Ours (Eq. 9) 31.3 8.0 Method APPS OJBench DiDPO 31.3 8.0 w/o AE10.4 3.8 w/o AD23.8 5.7 w/o sub-diff 25.0 4.4
+
+ingful credit. The evolution of group mass distribu-tions is provided in Appendix F .
+
+Different Groupability Score (GS) Design. Table 3 (left) compares GS formulations. Our design in Eq. 9 achieves 31.3% on APPS, versus 24.4% for the addi-tive variant and 21.5% for an LLM judge (which uses an LLM to group sub-diffs) based on Qwen3.6-27B. We think the additive form allows one strong factor to compensate for a weak one, but the saturating expo-nential compresses both factors into (0 , 1) , preventing either from dominating while keeping moderate pairs viable. The costly LLM judge also underperforms be-cause it favors a few large-sized groups, while format issues also render it ineffective occasionally. 
+
+Ablation Study of DiDPO’s Components. We ab-late DiDPO’s components and show the results in Table 3 (right). Removing AE drops APPS from 31.3% to 10.4%, confirming episode-level signal is in-dispensable. Removing AD reduces to 23.8%, which is comparable to GRPO and isolates the 7.5-point marginal gain from localized credit. Removing sub-diff decomposition, i.e., treating each whole diff as the atomic grouping unit, yields 25.0%, outperform-8λ
+
+> Accuracy (%)
+> only ~2.3%!
+
+Figure 5 Left: Sensitivity analysis on λ. Right: Anal-ysis of per-step training time breakdown. Pink bars are DiDPO-specific. Blue bars are these shared with GRPO. 
+
+ing GRPO but 6.3-point below full DiDPO. This gap together with Figure 2 confirms that: without sub-diff decomposition, partially overlapping diffs cannot be matched, producing smaller and noisier groups. All three components are necessary and their combination exceeds additive contribution. 
+
+Sensitivity Analysis of λ. As shown in Figure 5 (left), the performance with respect to λ follows an inverted U-shape, peaking near λ = 1 .2. Below 0.6, the diff-level signal is suppressed and DiDPO reverts to GRPO-level performance, consistent with the AD
+
+ablation. Above 1.2, the policy overfits to local credit, learning edits that resemble high-reward peers but fail to compose globally. The method tolerates moderate variation around the optimum: accuracy is stable across 0.6 to 1.2, and we select λ as 1.2 in practice. 
+
+Scaling and Efficiency Analysis. Figure 5 (right) breaks down per-step training time. DiDPO only adds approximately 2.3% overhead over GRPO, dom-inated by cross-rollout similarity computation for anchor calculation (Eq. 8). This cost scales quadrat-ically with sub-diff candidates but is bounded in practice by the similarity threshold η. Greedy anchor selection (Eq. 10) is linear and negligible. Moreover, this overhead is training-only since inference uses standard autoregressive decoding with no grouping. Given the 5.6 average gain over GRPO (Table 1), the overhead is well justified, and caching or approximate search could further reduce it. 
+
+## 6 Conclusion 
+
+DiDPO starts from the observation that comparable behavior in coding agent trajectories often appears as recurring or partially recurring diffs across rollouts. By selecting similar sub-diffs from these diffs with the groupability score and constructing dynamic advan-tage groups, DiDPO turns generated code into the substrate of critic-free policy optimization. Extensive experiments show that DiDPO mostly outperforms existing baselines. DiDPO is effective and a practical step toward coding agentic RL. 
+
+## References 
+
+[1] Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Do-han, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with large language models. arXiv preprint arXiv:2108.07732, 2021. [2] Mohammad Gheshlaghi Azar, Zhaohan Daniel Guo, Bilal Piot, Remi Munos, Mark Rowland, Michal Valko, and Daniele Calandriello. A general theo-retical paradigm to understand learning from hu-man preferences. In International Conference on Artificial Intelligence and Statistics, pages 4447– 4455. PMLR, 2024. [3] Dmitri Burago, Yuri Burago, Sergei Ivanov, et al. A course in metric geometry, volume 33. American Mathematical Society Providence, 2001. [4] Aili Chen, Aonian Li, Bangwei Gong, Binyang Jiang, Bo Fei, Bo Yang, Boji Shan, Changqing Yu, Chao Wang, Cheng Zhu, et al. Minimax-m1: Scaling test-time compute efficiently with lightning attention. arXiv preprint arXiv:2506.13585, 2025. [5] Bei Chen, Fengji Zhang, Anh Nguyen, Daoguang Zan, Zeqi Lin, Jian-Guang Lou, and Weizhu Chen. Codet: Code generation with generated tests. arXiv preprint arXiv:2207.10397, 2022. [6] Kevin Chen, Marco Cusumano-Towner, Brody Hu-val, Aleksei Petrenko, Jackson Hamburger, Vladlen Koltun, and Philipp Krähenbühl. Reinforcement learning for long-horizon interactive llm agents. arXiv preprint arXiv:2502.01600, 2025. [7] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code. arXiv preprint arXiv:2107.03374, 2021. [8] Xinyun Chen, Maxwell Lin, Nathanael Schärli, and Denny Zhou. Teaching large language models to self-debug. In International Conference on Learning Representations, volume 2024, pages 8746–8825, 2024. [9] Prateek Chhikara, Dev Khant, Saket Aryan, Taran-jeet Singh, and Deshraj Yadav. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413, 2025. [10] Paul F Christiano, Jan Leike, Tom Brown, Mil-jan Martic, Shane Legg, and Dario Amodei. Deep reinforcement learning from human preferences. Advances in neural information processing systems, 30, 2017. [11] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias 
+
+9Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168, 2021. [12] Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Yuchen Zhang, Jiacheng Chen, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, et al. Process rein-forcement through implicit rewards. arXiv preprint arXiv:2502.01456, 2025. [13] Runnan Fang, Yuan Liang, Xiaobin Wang, Jialong Wu, Shuofei Qiao, Pengjun Xie, Fei Huang, Huajun Chen, and Ningyu Zhang. Memp: Exploring agent procedural memory. In Findings of the Association for Computational Linguistics: ACL 2026, pages 17490–17502, 2026. [14] Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. Group-in-group policy optimization for llm agent training. Advances in Neural Information Processing Systems, 38:46375–46408, 2026. [15] Daniel Fried, Armen Aghajanyan, Jessy Lin, Sida Wang, Eric Wallace, Freda Shi, Ruiqi Zhong, Wen-tau Yih, Luke Zettlemoyer, and Mike Lewis. Incoder: A generative model for code infilling and synthesis. arXiv preprint arXiv:2204.05999, 2022. [16] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. Deepseek-r1: In-centivizing reasoning capability in llms via reinforce-ment learning. arXiv preprint arXiv:2501.12948, 2025. [17] Jujie He, Jiacai Liu, Chris Yuhao Liu, Rui Yan, Chaojie Wang, Peng Cheng, Xiaoyu Zhang, Fuxi-ang Zhang, Jiacheng Xu, Wei Shen, et al. Skywork open reasoner 1 technical report. arXiv preprint arXiv:2505.22312, 2025. [18] Dan Hendrycks, Steven Basart, Saurav Kadavath, Mantas Mazeika, Akul Arora, Ethan Guo, Collin Burns, Samir Puranik, Horace He, Dawn Song, et al. Measuring coding challenge competence with apps. arXiv preprint arXiv:2105.09938, 2021. [19] Wenyi Hong, Weihan Wang, Qingsong Lv, Jiazheng Xu, Wenmeng Yu, Junhui Ji, Yan Wang, Zihan Wang, Yuxiao Dong, Ming Ding, et al. Cogagent: A visual language model for gui agents. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 14281–14290, 2024. [20] Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Day-iheng Liu, Lei Zhang, Tianyu Liu, Jiajun Zhang, Bowen Yu, Keming Lu, et al. Qwen2. 5-coder techni-cal report. arXiv preprint arXiv:2409.12186, 2024. [21] Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica. Live-codebench: Holistic and contamination free eval-uation of large language models for code. arXiv preprint arXiv:2403.07974, 2024. [22] Nan Jiang, Thibaud Lutellier, and Lin Tan. Cure: Code-aware neural machine translation for auto-matic program repair. In 2021 IEEE/ACM 43rd International Conference on Software Engineering (ICSE), pages 1161–1173. IEEE, 2021. [23] Xue Jiang, Yihong Dong, Lecheng Wang, Zheng Fang, Qiwei Shang, Ge Li, Zhi Jin, and Wenpin Jiao. Self-planning code generation with large language models. ACM Transactions on Software Engineering and Methodology, 33(7):1–30, 2024. [24] Xue Jiang, Yihong Dong, Mengyang Liu, Hongyi Deng, Tian Wang, Yongding Tao, Rongyu Cao, Binhua Li, Zhi Jin, Wenpin Jiao, et al. Coderl+: Improving code generation via reinforcement with execution semantics alignment. arXiv preprint arXiv:2510.18471, 2025. [25] Carlos E Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan. Swe-bench: Can language models re-solve real-world github issues? In International Conference on Learning Representations, volume 2024, pages 54107–54157, 2024. [26] René Just, Darioush Jalali, and Michael D Ernst. Defects4j: A database of existing faults to enable controlled testing studies for java programs. In Proceedings of the 2014 international symposium on software testing and analysis, pages 437–440, 2014. [27] Yuhang Lai, Chengxi Li, Yiming Wang, Tianyi Zhang, Ruiqi Zhong, Luke Zettlemoyer, Wen-tau Yih, Daniel Fried, Sida Wang, and Tao Yu. Ds-1000: A natural and reliable benchmark for data science code generation. In International Conference on Machine Learning, pages 18319–18345. PMLR, 2023. [28] Hung Le, Yue Wang, Akhilesh Deepak Gotmare, Sil-vio Savarese, and Steven Chu Hong Hoi. Coderl: Mastering code generation through pretrained mod-els and deep reinforcement learning. Advances in Neural Information Processing Systems, 35:21314– 21328, 2022. [29] Claire Le Goues, Michael Dewey-Vogt, Stephanie Forrest, and Westley Weimer. A systematic study of automated program repair: Fixing 55 out of 105 bugs for $8 each. In 2012 34th international conference on software engineering (ICSE), pages 3–13. IEEE, 2012. [30] Yoonho Lee, Roshen Nair, Qizheng Zhang, Kang-wook Lee, Omar Khattab, and Chelsea Finn. Meta-harness: End-to-end optimization of model harnesses. arXiv preprint arXiv:2603.28052, 2026. 
+
+10 [31] Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas Muennighoff, Denis Kocetkov, Chenghao Mou, Marc Marone, Christopher Akiki, Jia Li, Jenny Chim, et al. Starcoder: may the source be with you! arXiv preprint arXiv:2305.06161, 2023. [32] Hunter Lightman, Vineet Kosaraju, Yuri Burda, Har-rison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations, volume 2024, pages 39578–39601, 2024. [33] Fan Long and Martin Rinard. Automatic patch gen-eration by learning correct code. In Proceedings of the 43rd annual ACM SIGPLAN-SIGACT symposium on principles of programming languages, pages 298–312, 2016. [34] Ziyu Ma, Shidong Yang, Yuxiang Ji, Xucong Wang, Yong Wang, Yiming Hu, Tongwen Huang, and Xiangxiang Chu. Skillclaw: Let skills evolve collectively with agentic evolver. arXiv preprint arXiv:2604.08377, 2026. [35] Facundo Mémoli. Gromov–wasserstein distances and the metric approach to object matching. Foundations of computational mathematics, 11(4): 417–487, 2011. [36] George L Nemhauser, Laurence A Wolsey, and Marshall L Fisher. An analysis of approxima-tions for maximizing submodular set functions—i. Mathematical programming, 14(1):265–294, 1978. [37] Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow in-structions with human feedback. arXiv preprint arXiv:2203.02155, 2022. [38] Rafael Rafailov, Archit Sharma, Eric Mitchell, Ste-fano Ermon, Christopher D Manning, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. arXiv preprint arXiv:2305.18290, 2023. [39] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300, 2024. [40] Quan Shi, Michael Tang, Karthik Narasimhan, and Shunyu Yao. Can language models solve olympiad programming? arXiv preprint arXiv:2404.10952, 2024. [41] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems, 36:8634–8652, 2023. [42] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. Alfworld: Aligning text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768, 2020. [43] Lingxiao Tang, He Ye, Zhaoyang Chu, Muyang Ye, Zhongxin Liu, Xiaoxue Ren, and Lingfeng Bao. Ex-ecverify: White-box rl with verifiable stepwise re-wards for code execution reasoning. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 13850–13875, 2026. [44] Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng Ji. Ex-ecutable code actions elicit better llm agents. In Forty-first International Conference on Machine Learning, 2024. [45] Xingyao Wang, Boxuan Li, Yufan Song, Frank F Xu, Xiangru Tang, Mingchen Zhuge, Jiayi Pan, Yueqi Song, Bowen Li, Jaskirat Singh, et al. Open-hands: An open platform for ai software developers as generalist agents. In International Conference on Learning Representations, volume 2025, pages 65882–65919, 2025. [46] Xucong Wang, Pengchao Han, and Lei Guo. Lightweight self-knowledge distillation with multi-source information fusion. arXiv preprint arXiv:2305.09183, 2023. [47] Xucong Wang, Pengkun Wang, Shurui Zhang, Miao Fang, and Yang Wang. Multi-label self knowledge distillation. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 39, pages 21330– 21338, 2025. [48] Xucong Wang, Ziyu Ma, Shidong Yang, Tongwen Huang, Pengkun Wang, Yong Wang, and Xiangxiang Chu. Role-agent: Bootstrapping llm agents via dual-role evolution. arXiv preprint arXiv:2606.10917, 2026. [49] Zhexu Wang, Yiping Liu, Yejie Wang, Wenyang He, Bofei Gao, Muxi Diao, Yanxu Chen, Kelin Fu, Flood Sung, Zhilin Yang, et al. Ojbench: A competi-tion level code benchmark for large language models. arXiv preprint arXiv:2506.16395, 2025. [50] Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, et al. Ra-gen: Understanding self-evolution in llm agents via multi-turn reinforcement learning. arXiv preprint arXiv:2504.20073, 2025. [51] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, 
+
+11 Denny Zhou, et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems, 35:24824– 24837, 2022. [52] Yuxiang Wei, Olivier Duchenne, Jade Copet, Quentin Carbonneaux, Lingming Zhang, Daniel Fried, Gabriel Synnaeve, Rishabh Singh, and Sida Wang. Swe-rl: Advancing llm reasoning via reinforce-ment learning on open software evolution. Advances in Neural Information Processing Systems, 38:78500– 78525, 2026. [53] Chunqiu Steven Xia, Yinlin Deng, Soren Dunn, and Lingming Zhang. Agentless: Demystifying llm-based software engineering agents. arXiv preprint arXiv:2407.01489, 2024. [54] Yunhui Xia, Wei Shen, Yan Wang, Jason Klein Liu, Huifeng Sun, Siyue Wu, Jian Hu, and Xiaolong Xu. Leetcodedataset: A temporal dataset for robust eval-uation and efficient training of code llms. arXiv preprint arXiv:2504.14655, 2025. [55] Shiyi Xu, Hu Yiwen, Yingqian Min, Zhipeng Chen, Xin Zhao, and Ji-Rong Wen. Icpc-eval: Probing the frontiers of llm reasoning with competitive pro-gramming contests. Advances in Neural Information Processing Systems, 38, 2026. [56] John Yang, Carlos E Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik R Narasimhan, and Ofir Press. Swe-agent: Agent-computer inter-faces enable automated software engineering. In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024. [57] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems, 35:20744–20757, 2022. [58] Shunyu Yao, Jeffrey Zhao, Dian Yu, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. React: Syn-ergizing reasoning and acting in language models. In NeurIPS 2022 Foundation Models for Decision Making Workshop, 2022. [59] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing Systems, 38:113222–113244, 2026. [60] Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, et al. Group sequence pol-icy optimization. arXiv preprint arXiv:2507.18071, 2025. [61] Qihao Zhu, Zeyu Sun, Yuan-an Xiao, Wenjie Zhang, Kang Yuan, Yingfei Xiong, and Lu Zhang. A syntax-guided edit decoder for neural pro-gram repair. In Proceedings of the 29th ACM joint meeting on European software engineering conference and symposium on the foundations of software engineering, pages 341–353, 2021. [62] Siyuan Zhu, Chao Yu, Rongxin Yang, Zongkai Liu, Jinjun Hu, Qiwen Chen, and Yibo Zhang. Gagpo: Generalized advantage grouped policy optimization. arXiv preprint arXiv:2605.13217, 2026. 
+
+12 A Proofs for Theoretical Foundations 
+
+A.1 Proof of Theorem 1 
+
+Proof A.1 Fix one prompt and consider a DiDPO group G induced by one selected anchor. By assump-tion, every sub-diff s ∈ G is within correspondence dis-tance ϵ of the anchor prototype a, namely ∆( s, a ) ≤ ϵ.By the triangle inequality for the induced correspon-dence distance, any two sub-diffs s, u ∈ G satisfy 
+
+∆( s, u ) ≤ ∆( s, a ) + ∆( a, u ) ≤ 2ϵ. 
+
+Since the local reward contribution r(·) is L-Lipschitz with respect to ∆,
+
+|r(s) − r(u)| ≤ L∆( s, u ) ≤ 2Lϵ. 
+
+Let the ideal local contrast for s be 
+
+A⋆(s) = r(s) − 1
+
+|G| 
+
+X
+
+> u∈G
+
+r(u).
+
+If exact matches were available, the group baseline would compare only identical causal code changes. Anchor-based matching replaces exact equality by ϵ-accurate correspondences. The above Lipschitz bound implies that every local reward term in the anchor-based contrast differs from its exact-match counterpart by at most a constant multiple of Lϵ . Averaging over 
+
+G preserves the same order, hence 
+
+E ˆAD (s) − A⋆(s) ≤ CLϵ, 
+
+for a constant C independent of rollout length and group size. This gives the stated O(Lϵ ) bound. 
+
+A.2 Proof of Theorem 2 
+
+Proof A.2 For rollout i, write the step return as 
+
+Ri = r(si) + ξi,
+
+where si is the matched sub-diff and ξi collects non-causal trajectory effects, including copied context, ir-relevant edits, exploration commands, and formatting behavior. Assume E[ξi] = 0 and Var( ξi) = σ2 
+
+> ξ
+
+.Consider a DiDPO group G of size m > 1 whose matched sub-diffs have correspondence error at most ϵ.By Theorem 1, replacing the ideal local contrast with an anchor-based sub-diff contrast introduces squared bias 
+
+O(L2ϵ2).
+
+It remains to bound the residual variance. The group baseline averages the returns of m matched sub-diffs. Since the non-causal terms are zero mean and are averaged within the matched group, their contribution scales as 
+
+Var 
+
+ 1
+
+m
+
+X 
+
+> sj∈G
+
+ξj
+
+ = O(σ2 
+
+> ξ
+
+/m ),
+
+with the same order under bounded weak correlation among matched rollouts. Combining the squared bias and the residual variance yields 
+
+MSE( ˆADi ) ≤ O(L2ϵ2) + O(σ2 
+
+> ξ
+
+/m ).
+
+For episode-level broadcasting, the same scalar re-turn Ri is assigned to all response tokens. Tokens inside the matched sub-diff therefore receive a signal that still contains ξi. Since this estimator does not condition on the sub-diff group, it has no averaging mechanism that removes non-causal variation from unrelated parts of the trajectory. Its error conse-quently retains an O(σ2 
+
+> ξ
+
+) contamination term. Thus, when reliable matched sub-diffs exist and m > 1, the DiDPO local estimator has a lower credit-error order for tokens in the causal code region. 
+
+## B Greedy Selection for Anchors 
+
+Equation 10 selects a small set of anchors that covers as many useful matched sub-diffs as possible without repeatedly counting the same occurrence. Let I
+
+denote all candidate sub-diffs and let C denote all anchor candidates. For a selected anchor set A, define 
+
+F (A) = X
+
+> s∈I
+
+max  
+
+> a∈A
+
+1[s ∈ O (a)]GS( a).
+
+This objective is monotone because adding an anchor cannot reduce the best covered score of any sub-diff. It is also submodular. To see this, fix one candidate sub-diff s and define 
+
+Fs(A) = max  
+
+> a∈A
+
+1[s ∈ O (a)]GS( a).
+
+If A ⊆ B , then B already covers s at least as well as A. Adding a new anchor a can therefore improve 
+
+Fs(B) no more than it improves Fs(A):
+
+Fs(A ∪ { a}) − Fs(A) ≥ Fs(B ∪ { a}) − Fs(B).
+
+Summing over all s ∈ I preserves this diminishing-return property, so F is a monotone submodular func-tion. The exact maximizer under |A| ≤ K requires a combinatorial search over anchor subsets, which is unnecessary here because the objective belongs to the 13 Algorithm 1 Greedy Anchor Selection  
+
+> 1:
+
+Initialize A ← ∅ .  
+
+> 2: while
+
+|A| < K do  
+
+> 3:
+
+Choose a⋆ = arg max a∈C\A 
+
+ F (A ∪ { a}) −
+
+F (A).  
+
+> 4: if
+
+F (A ∪ { a⋆}) = F (A) then  
+
+> 5:
+
+Break.   
+
+> 6: end if
+> 7:
+
+Update A ← A ∪ { a⋆}.  
+
+> 8: end while
+> 9:
+
+Return A.standard cardinality-constrained submodular maxi-mization family. DiDPO therefore uses greedy selec-tion, which is the canonical approximation method for this setting. By the classical result of Nemhauser et al. [36], this greedy procedure obtains a (1 − 1/e ) approximation to the best anchor set under the budget K. Thus the greedy rule is not merely a heuristic: for the objective in Eq. 10, repeatedly choosing the largest marginal gain is the standard guaranteed solution strategy. In practice, DiDPO computes marginal gains using the currently best covered score of each candidate sub-diff, so each greedy step only updates sub-diffs covered by the newly added anchor. 
+
+## C Evaluation Benchmarks 
+
+We evaluate DiDPO on eight coding bench-marks, ranging from compact Python functions to competition-level programming. All results are based on execution correctness, which requires the code gen-erated by agents to pass all of the test cases. When a benchmark provides meaningful difficulty partitions, we report both the overall score and the correspond-ing subcategory scores.  
+
+> APPS.
+
+APPS [18] contains 10,000 programming prob-lems collected from coding challenge platforms. Its difficulty split is central to our evaluation: intro-ductory problems mostly test routine implementa-tion, interview problems require more deliberate algo-rithm design, and competition problems stress longer reasoning. We use 500 APPS examples in Table 1, including 120 introductory, 250 interview, and 130 competition problems.  
+
+> HumanEval.
+
+HumanEval [7] contains 164 hand-written Python function synthesis tasks with unit tests. Since its problems are compact, it mainly checks whether DiDPO preserves ordinary function-level generation while improving longer coding tra-jectories.  
+
+> MBPP.
+
+MBPP [1] consists of crowd-sourced Python tasks intended for entry-level programmers. It covers basic programming patterns and standard-library usage more broadly than HumanEval. We report the 399-example evaluation subset shown in Table 1.  
+
+> LiveCodeBench.
+
+LiveCodeBench [21] continuously collects recent problems from platforms such as Leet-Code, AtCoder, and CodeForces. This temporal design makes it useful for testing contamination-resistant code generation. We use its code-generation setting with 150 processed examples.  
+
+> LeetCode.
+
+We use LeetCode problems from Leet-CodeDataset [54]. The dataset curates Python prob-lems with rich metadata, extensive tests, and tem-poral splits. Our evaluation includes 112 examples, which mainly examine self-contained data-structure and algorithmic reasoning.  
+
+> USACO.
+
+USACO [40] evaluates problems from USA Computing Olympiad contests. We use the full 307-problem benchmark and report its official tier struc-ture: 123 Bronze, 100 Silver, 63 Gold, and 21 Plat-inum problems. The tiered results are important be-cause higher levels increasingly require non-obvious algorithms and careful implementation.  
+
+> OJBench.
+
+OJBench [49] dataset targets competition-level code reasoning with strict online-judge evalu-ation. We use 159 examples, split into 20 Easy, 53 Medium, and 86 Hard problems.  
+
+> ICPC.
+
+ICPC-Eval [55] focuses on problems selected from ICPC contests. These tasks are typically less template-like than short interview questions and often require both algorithm selection and implementation discipline. We evaluate on 106 ICPC instances. 
+
+## D Baselines 
+
+We compare DiDPO with three groups of baselines. Large models provide reference performance. Prompt-ing and agent-format methods test whether better inference alone is sufficient. RL baselines are used to isolate the effect of our sub-diff credit assignment.  
+
+> Large model references.
+
+Kimi-K2.6 is a frontier coding-oriented model from the Kimi series. Qwen3.6-27B is a dense coding model from the Qwen family, with strong instruction following and code-generation ability. GLM-5.2 and GPT-5.5 are general-purpose large models with strong reasoning and programming 14 Table 4 Evaluation datasets used in DiDPO experiments. “Reported subsets” lists the partitions shown in the main tables.                              
+
+> Benchmark Type Samples Reported subsets APPS Mixed programming challenge 500 All / Intro / Interview / Competition HumanEval Function-level synthesis 164 All MBPP Basic Python synthesis 399 All LiveCodeBench Temporal contest code generation 150 All LeetCode Interview-style algorithmic reasoning 112 All USACO Olympiad programming 307 All / Bronze / Silver / Gold / Platinum OJBench Online-judge competition programming 159 All / Easy / Medium / Hard ICPC ICPC-style competitive programming 106 All Step 30 Step 60 Step 90
+
+Figure 6 Evolution of group mass over training. We show the evolution dynamics at step 30, 60 and 90 respectively. 
+
+performance. Skywork-OR1 [17] is an open reasoning model trained with reinforcement learning. We report these models as reference systems and do not further train them in our pipeline. 
+
+Base backbones and SFT. Qwen2.5-Coder-7B [20] is a code-specialized open model trained on large-scale code data and code-related instruction data. Qwen3.5-4B is a smaller Qwen backbone used to test whether DiDPO remains effective under a more compact model scale. For each backbone, we report the raw model and the SFT variant. The SFT model is trained on trajectories written in the same thought-action format used by DiDPO, so it reflects format alignment before RL optimization. 
+
+Code-reasoning baselines. Chain-of-Thought (CoT) [51] lets the model reason before writing code. CodeAct [44] represents actions as executable code and feeds execution observations back to the agent. Self-Planning [23] first plans the solution and then implements it step by step. Together, these base-lines test the foundational capabilities of LLMs with training-free harness. 
+
+Coding and agentic RL baselines. CodeRL+ [24] adds execution-semantics alignment to RLVR for code gen-eration. GRPO [16, 39] is the closest episode-level baseline because it also uses group-relative advan-tages without a critic. GiGPO [14] is the strongest agentic credit-assignment baseline, since it builds step-level groups from recurring environment states. DiDPO differs by forming groups inside code diffs, where one coding action may contain several func-tional sub-diffs. 
+
+Controlled comparison. For trainable baselines, we keep the task distribution, executable reward, thought-action format, and evaluation protocol aligned with DiDPO whenever applicable. The com-parison with GRPO measures the gain from adding sub-diff credit to episode-level advantages. The com-parison with GiGPO tests whether state-level group-ing is sufficient once the action becomes a structured code diff. 
+
+## E Hyperparameter Settings 
+
+The main DiDPO run uses Qwen2.5-Coder-7B ini-tialized from the SFT checkpoint. We train on the multi-turn coding environment with rollout group size 32. Each rollout can take at most eight interac-tion steps, and each edit is followed by executable feedback. This setting keeps the task long enough to expose multi-step code revision behavior while keeping the training budget controlled. For DiDPO-specific grouping, we set the diff-level advantage weight to λ = 1 .2. We also use a soft matching for sub-diffs, where the sub-diff similarity threshold is η = 0 .8, which avoids grouping loosely related edits. The groupability score uses the satu-rating form in Eq. 10; in implementation we add an extra length scale s0 = 8 .0 and support scale g0 = 8 .0.For tokens covered by multiple candidate groups, we select the group with the largest groupability score. We allow at most 64 anchors per task group. 15 For the shared policy optimization setting, we use discount factor γ = 0 .95 , learning rate 1 × 10 −6,PPO clipping ratio 0.2, KL coefficient 0.01, and en-tropy coefficient 0.001. PPO is run for one epoch per batch with mini-batch size 48. Invalid actions receive a small penalty with coefficient 0.01. The training rollout temperature is 1.0, while validation uses temperature 0.6 with sampling enabled. Valida-tion accuracy is averaged over 5 runs. The maximum prompt length is 8192 and the maxi-mum response length is 4096. We train on one node with 8@H20 GPUs, tensor parallel size 2, and 120 total training steps. Checkpoints are saved every 20 steps, and the main run keeps at most three actor checkpoints. 
+
+## F Evolution of Group Mass Distribu-tions 
+
+Figure 6 shows how group mass distributes across training steps. At Step 30, the distribution con-centrates at small group sizes, dominated by short fragment-level matches typical of early policy out-puts. By Step 60, medium and large groups emerge as the policy produces more diverse edits and the groupability score promotes anchors with broader semantic scope. At Step 90, the distribution becomes markedly more uniform across group sizes, indicating that DiDPO forms credit groups at multiple granu-larities rather than collapsing to a single scale. This diversification follows from the design of the groupability score (Eq. 9). Early in training, homo-geneous diffs restrict matching to small, highly similar sub-diffs. As the policy explores more varied edits, the groupability score selects anchors that balance semantic scope with group mass, yielding groups at multiple scales. The resulting uniformity connects to the bias-variance decomposition in Section 3.5: larger groups reduce variance through cross-rollout averag-ing ( O(σ2 
+
+> ξ
+
+/m )), while well-aligned smaller groups supply low-bias credit signals ( O(Lϵ )). The coexis-tence of both types at convergence explains DiDPO’s sustained improvement beyond the plateau of single-scale credit assignment methods. 16

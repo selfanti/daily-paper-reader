@@ -1,0 +1,745 @@
+Title: Hi-TTRL: Regulating Consensus with Hints for Test-Time Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.03545v1
+
+Published Time: Wed, 05 Aug 2026 00:59:37 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Hi-TTRL: Regulating Consensus with Hints for Test-Time Reinforcement Learning 
+
+## Kunbin Xu, Xingzuo Li, Xuefeng Bai, Kehai Chen ∗
+
+School of Computer Science and Technology, Harbin Institute of Technology, Shenzhen, China {26B951004, 24S051028}@stu.hit.edu.cn, {chenkehai, baixuefeng}@hit.edu.cn 
+
+Abstract 
+
+Test-time reinforcement learning (TTRL) improves the rea-soning capabilities of large language models without labeled data by updating the policy with pseudo-labels constructed through majority voting. While effective, the reward signal assigned from majority voting is highly sensitive to consen-sus strength, defined as the frequency of the most common answer within a rollout group. In TTRL, consensus strength plays a dual role: it reflects both the reliability of the pseudo-label and the distribution of advantages. Low consensus can amplify updates from unreliable pseudo-labels through dis-proportionately large advantages, whereas high consensus re-duces reward contrast and ultimately yields vanishing gradi-ents. In this paper, we introduce Hi-TTRL, a test-time rein-forcement learning framework that utilizes hints during sam-pling to regulate rollout consensus strength. Hi-TTRL first es-timates consensus strength from a partial rollout group. When the consensus strength falls outside a target interval, it in-vokes a Markov chain Monte Carlo (MCMC) hint sampler. The sampler targets the power-transformed prefix distribution and uses finite-step approximate sampling to generate rollout prefixes as hints. By tuning the power exponent, Hi-TTRL generates hints with a sharpened or flattened power target, steering rollout consensus strength toward the target interval. Experiments on multiple datasets and backbones show that Hi-TTRL consistently improves over standard TTRL, with ablations and consensus-steering analyses validating the ef-fectiveness of adaptive hint-guided consensus regulation. 
+
+## Introduction 
+
+Reinforcement learning (RL) has emerged as a highly effec-tive paradigm for enhancing the complex reasoning capabili-ties of large language models (LLMs)(Guo et al. 2025; Yang et al. 2025a). In particular, reinforcement learning with ver-ifiable rewards (RLVR) provides a scalable way to optimize models on complex reasoning tasks(Shao et al. 2024). RLVR leverages ground-truth annotations to provide models with deterministic and verifiable reward signals. Driven by these unambiguous reward signals, RLVR has yielded substan-tial improvements such as mathematical reasoning and code generation(Wang et al. 2026a; Yang et al. 2025b). Despite its effectiveness, RLVR still relies on a large amount of labeled and verifiable data. The acquisition of such high-quality, 
+
+> ∗
+
+Corresponding author. 
+
+Figure 1: Motivation for consensus-strength regulation in TTRL. Majority-voting rewards fail at both extremes: satu-rated consensus weakens gradients, while weak consensus can amplify spurious majorities. domain-specific annotations usually incurs prohibitive hu-man and computational costs, making the training process difficult to scale to broader scenarios. To alleviate the label dependency of RLVR, test-time reinforcement learning (TTRL) has recently emerged as a promising alternative(Zuo et al. 2025). Instead of relying on external ground truth, TTRL dynamically constructs pseudo-labels by majority voting and assigns a rule based reward. Relying exclusively on these self-generated reward signals, the model’s policy is then updated through the Group Rela-tive Policy Optimization (GRPO) objective(Shao et al. 2024). By internalizing the reward generation process, TTRL breaks the reliance on costly human annotations. Despite its promise, the efficacy of TTRL is constrained by an intrinsic coupling between the reliability of its pseudo-labels and the advantage estimation within the GRPO ob-jective. We characterize this coupling through consensus strength, which measures the frequency of the most com-mon answer within a rollout group; we denote this quantity as c(Y) and formalize it in Eq. (1). As illustrated in Figure 1, arXiv:2608.03545v1 [cs.CL] 4 Aug 2026 this coupling introduces a critical optimization paradox: un-der saturated high consensus, pseudo-labels are highly reli-able, but uniform outcomes cause normalized advantages to vanish, depriving the policy of meaningful gradient signals. Conversely, under severely low consensus, majority-voted pseudo-labels are inherently noisy, yet the rare rollouts that match these spurious labels receive disproportionately large advantages, aggressively driving the policy toward flawed reasoning paths. Existing efforts to address this instability have largely explored the reward assignment and advan-tage estimation stages, employing techniques such as filter-ing pseudo-labels, reshaping rewards, or clipping advantages (Yan et al. 2026; Liu et al. 2025). While these mechanisms are effective, regulating the consensus strength directly during the sampling stage remains unexplored. To address this, we propose Hi-TTRL, a novel test-time reinforcement learning framework that explicitly regulates consensus strength during the sampling stage via an adaptive hint-generation mechanism. Instead of passively accepting the initial rollout distribution, Hi-TTRL actively monitors consensus strength online by evaluating an initial half-batch of sampled reasoning paths. When the resulting consensus strength falls outside a stable target interval, Hi-TTRL gener-ates prefix hints with a Markov chain Monte Carlo (MCMC) sampler constructed from the current policy whose finite-step transitions approximately target a power-transformed distri-bution (Karan and Du 2025). The shape of the distribution is tightly governed by a dynamic exponent α: under low con-sensus strength, an exponent α > 1 sharpens the target to encourage output convergence; conversely, under high con-sensus strength, an exponent α < 1 flattens the distribution to promote exploratory divergence. The current policy model is then utilized to complete these MCMC-sampled hints. By proactively intervening before the final voting and reward as-signment, Hi-TTRL effectively steers the rollout distribution toward an optimal consensus-strength range, mitigating both noisy pseudo-labels and vanishing advantages. Our main contributions are summarized as follows: 
+
+• We identify consensus strength extremes as a source of instability in TTRL, which may contribute to amplifying noisy pseudo-labels and vanishing policy gradients. 
+
+• We adopt an adaptive MCMC hint sampler that relies solely on the old policy while approximately targeting a power-transformed prefix distribution. 
+
+• We propose Hi-TTRL, a test-time reinforcement learn-ing framework that proactively regulates the consensus strength before majority voting and reward assignment. 
+
+## Related Works 
+
+Reinforcement Learning for Reasoning. Reinforcement learning has become a central paradigm for improving the reasoning and instruction-following abilities of LLMs. RLHF aligns models with human preferences through an-notated comparisons and learned reward models (Ouyang et al. 2022), with policy and preference optimization meth-ods such as PPO, DPO, and SimPO (Schulman et al. 2017; Rafailov et al. 2023; Meng, Xia, and Chen 2024). More re-cently, RLVR replaces preference rewards with deterministic outcome signals and has proven effective for mathematical and code reasoning (Shao et al. 2024; Jaech et al. 2026; Guo et al. 2025; Yang et al. 2025a; Wang et al. 2026a; Yang et al. 2025b). It has also motivated group-relative objectives such as GRPO (Shao et al. 2024), reward design with synthetic or partially reliable data (Gao et al. 2024; Setlur et al. 2024), and methods that improve sample efficiency or credit assignment through multi-token reasoning units, informative one-shot examples, high-entropy minority tokens, process–outcome reward harmonization, or adversarial critics (Xu et al. 2026; Wang et al. 2025b,a; Ye et al. 2026; Wu et al. 2025). However, most RLVR-style methods still rely on ground-truth answers, external verifiers, curated examples, or auxiliary critics, mo-tivating test-time reinforcement learning where rewards must be constructed from the model’s own rollouts. 
+
+Unsupervised Reinforcement Learning and TTRL. Test-time reinforcement learning (TTRL) extends unsupervised self-improvement to unlabeled test streams by sampling mul-tiple rollouts, constructing pseudo-labels through majority voting, and updating the policy with pseudo-rewards (Wang et al. 2023; Zuo et al. 2025). Existing work improves pseudo-label quality either by augmenting majority voting with inter-nal signals such as self-certainty or entropy-based rewards, reasoning topology, and distribution matching (Zhao et al. 2026b; Zhang et al. 2025; Wang et al. 2026d; Chen et al. 2026), or by revising voting through self-play, self-rewriting, generator-verifier co-evolution, strict consensus criteria, neg-ative pseudo-labeling, and confidence-weighted subgroup estimation (Wang et al. 2026b; Yao et al. 2026; Pan et al. 2026; Yan et al. 2026; Wang et al. 2026c). Other methods mitigate early-stage noise by filtering low-support or uncer-tain samples, or by clipping and recalibrating advantages from noisy pseudo-labels (Zhang et al. 2025; Huang et al. 2026; Liu et al. 2025; Zhao et al. 2026a). These approaches mainly score, filter, revise, or reshape pseudo-labels after rollouts have been sampled. In contrast, Hi-TTRL targets the sampling stage, using power-transformed hints to steer con-sensus strength before final voting and reward assignment. 
+
+## Preliminary Experiments 
+
+Before introducing Hi-TTRL, we conduct a diagnostic pilot study to examine how different levels of consensus strength affect the pseudo-label reliability and gradient informative-ness in real TTRL training. Specifically, we train Qwen2.5-Math-1.5B (Yang et al. 2024) on AMC2023 (Li et al. 2024). At each training step, we sample a batch of 8 prompts, gener-ate 32 rollouts per prompt for majority voting, and select 16 of these rollouts for the GRPO update. For each update rollout set, we first compute its consensus strength and then cate-gorize it as low [0 , 0.25) , mid [0 .25 , 0.75) , or high [0 .75 , 1] .Figure 2 compares the training dynamics across the three consensus branches. The wrong-promoted rate measures the fraction of update rollouts within each branch that receive positive normalized advantages despite producing incorrect final answers. Ground-truth answers are used only for diag-nostic evaluation, not reward construction. As shown in Figure 2, the low- and high-consensus branches exhibit opposite training dynamics. Low-consensus 1 50 100 150 200 250 299 020 40 60 80 100                           
+
+> Step value
+> Branch Sample Count
+> low mid high 150 100 150 200 250 299 0123
+> Step value
+> Advantage Distribution
+> low mid high 150 100 150 200 250 299 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35
+> Step value
+> Wrong Promoted Rate
+> low mid high 150 100 150 200 250 299 0.0 0.2 0.4 0.6 0.8 1.0
+> Step value
+> Branch Accuracy
+> low mid high
+
+Figure 2: Diagnostic study of consensus-strength levels in majority-voting TTRL on AMC2023 with Qwen2.5-Math-1.5B. Prompt groups are partitioned into low-, mid-, and high-consensus branches. From left to right, the panels report the branch sample count, maximum positive normalized GRPO advantage, wrong-promoted rate, and ground-truth branch accuracy. Detailed metric definitions are provided in the Appendix. samples are frequent at the beginning of training and grad-ually decrease, but this branch consistently shows lower ground-truth accuracy, a higher wrong-promoted rate, and the largest maximum positive advantages. In contrast, high-consensus samples gradually become dominant, with high branch accuracy and near-zero wrong-promoted rate, yet their maximum positive advantages remain consistently small. These patterns reveal complementary limitations of the two extreme consensus levels. Low-consensus groups combine unreliable pseudo-labels with excessively large pos-itive advantages, leading to strongly amplified incorrect updates, whereas high-consensus groups produce reliable pseudo-labels but insufficient reward contrast, leaving only weak gradient signals for GRPO optimization. This moti-vates Hi-TTRL to control consensus strength during sam-pling by promoting convergence for low-consensus groups and controlled divergence for high-consensus groups. 
+
+## Method 
+
+Preliminaries 
+
+We adopt Group Relative Policy Optimization (GRPO) as the policy optimization backbone. Given a query x, the old policy πθold samples a rollout group Y = {yi}mi=1 , where each rollout yi is mapped to a final answer ai = Ans( yi).The majority answer ˆa is used as the pseudo-label, and its frequency defines the consensus strength: 
+
+c(Y) = 1
+
+m
+
+> m
+
+X
+
+> i=1
+
+I[ai = ˆ a], ˆa = arg max 
+
+> a∈A
+> m
+
+X
+
+> i=1
+
+I[ai = a]. (1) TTRL rewards rollouts that match ˆa and normalizes their advantages within the group. Consequently, low consensus couples an unreliable pseudo-label with large advantages, while saturated consensus leaves little reward contrast. We retain the standard GRPO update (Shao et al. 2024) and instead regulate the rollout distribution during sampling. Following the solution-space view of StepHint (Zhang et al. 2026), we regard autoregressive reasoning as a pro-gressive exploration of candidate solutions: each generated prefix conditions subsequent decisions and prunes incom-patible continuations. A prefix hint can therefore guide de-coding toward a more promising subspace without speci-fying the complete reasoning trajectory. Its length controls the strength of this pruning: a longer prefix imposes more constraints and narrows the remaining search space more ag-gressively, whereas a shorter prefix provides lighter guidance and preserves greater freedom for exploration. This reduces the search difficulty while preserving flexibility for the model to complete the remaining reasoning. To control the direction of this search, we consider power sampling, which draws a complete reasoning trajectory from 
+
+pα(y | x) ∝ πθold (y | x)α. The power transformation pre-serves the ranking of trajectories but changes their relative probability gaps: α > 1 amplifies high-likelihood paths and concentrates search on a smaller set of directions, whereas 
+
+0 < α < 1 compresses these gaps and allocates more mass to alternative policy-supported paths. The exponent there-fore provides direct control over the direction and breadth of search. Karan and Du (2025) operationalize this target with an MCMC sampler that progressively resamples token subsequences. We adapt their construction from complete trajectories to prefixes, using power-targeted hints to steer the subspace explored by subsequent decoding. 
+
+Hi-TTRL: Sampling-Stage Consensus Regulation 
+
+To avoid the failure modes arising from extreme consensus strength, Hi-TTRL proactively regulates consensus strength at the sampling stage. As illustrated in Figure 3, Hi-TTRL first estimates consensus strength from a partial rollout group; groups within the target interval are updated directly, while low- or high-consensus groups trigger a power-target MCMC hint sampler that adds convergence- or divergence-oriented prefixes before the final vote and policy update. Let G denote the full rollout-group size when the second sampling stage is activated. For each query x, Hi-TTRL ini-tially samples G/ 2 responses from the old policy to form the first-stage rollout group. It then extracts the answers, performs an intermediate majority vote, and computes the first-stage consensus strength using Eq. (1): 
+
+c(1) = c(Y(1) ), Y(1) = {yi}G/ 2 
+
+> i=1
+
+, (2) where yi denotes a response sampled from πθold (· | x).The consensus strength c(1) provides an online estimate of whether the current rollout group lies within a healthy con-sensus range. If c(1) falls inside a target interval [τlow , τ high ],Majority Voting 
+
+> Half Sampling
+> weak consensus saturated consensus healthy consensus
+
+321 4  
+
+> Before MCMC Sampling After MCMC Sampling Before MCMC Sampling After MCMC Sampling
+> sharpen
+> flatten Weak Consensus
+> Saturated Consensus
+> for sharpening
+> for flattening
+> MCMC Sampler MCMC Sampler
+> query x
+> query x
+> step1 step2 step3 step4
+> Block-wise prefix generation
+> final hint
+> step1 step2 final hints group
+> multiple parallel prefixes
+> query xhint
+> prefix completion
+> Another Half Sampling
+
+First stage One long sharpened prefix Multi short flattened prefixes Second stage 
+
+> Whole Group Whole Update Half Update
+
+Figure 3: Overview of Hi-TTRL. Based on partial-rollout consensus, Hi-TTRL directly updates in-range groups and applies anchor or exploratory MCMC hints to low- or high-consensus groups. Hi-TTRL regards the first-stage samples as exhibiting a rea-sonable trade-off between pseudo-label reliability and ad-vantage diversity. In this case, no additional intervention is applied, and the policy is updated directly using the first-stage rollout group. When the first-stage consensus strength falls outside the target interval, Hi-TTRL triggers a second hint-guided sampling stage. The goal of this stage is to ac-tively reshape the remaining rollout distribution before final voting and reward assignment. The second-stage rollouts are generated by the old policy conditioned on prefix hints pro-duced by the power-target MCMC sampler. More details of the sampler will be described in the following subsection. We finally define the rollout group used for the policy-gradient update as a consensus-adaptive composition of the two stages. Let the second-stage hint-guided completions produced by this sampler be 
+
+Y(2) hint = {yi}Gi=G/ 2+1 . (3) The samples used to compute the final majority vote, rewards, GRPO advantages, and policy gradient are then 
+
+Yupd (x) = 
+
+(
+
+Y(1) , τlow ≤ c(1) ≤ τhigh ,
+
+Y(1) ∪ Y (2) hint , c(1) < τ low or c(1) > τ high .
+
+(4) Thus, the number of update rollouts is adaptive: 
+
+nupd (x) = |Y upd (x)| =
+
+G/ 2, c(1) ∈ [τlow , τ high ],G, c(1) /∈ [τlow , τ high ]. (5) The final majority vote and advantage normalization are al-ways computed over Yupd (x). This adaptive update size is intentional: Hi-TTRL allocates additional samples only when the first-stage consensus falls outside the target interval. 
+
+Power-Target MCMC Hint Sampling 
+
+We adapt the power-sampling approximation of Karan and Du (2025) from complete responses to short prefixes. For a query x, the power-target hint distribution is 
+
+qα(h | x) ∝ πθold (h | x)α, (6) where h denotes a partial reasoning prefix and the power exponent α controls the shape of the hint distribution. When α > 1, the distribution is sharpened: prefixes with higher likelihood under the rollout policy are further up-weighted, making second-stage rollouts more likely to share a coherent reasoning direction. This is useful under weak first-stage consensus, where stronger guidance is needed to promote rollout convergence. When α < 1, the distribution is flattened: lower-likelihood but still policy-supported prefixes receive relatively more mass, creating alternative reasoning branches. This is useful under saturated first-stage consensus, where the rollout group needs more diversity. The hint is then concatenated with the original query and completed by the same rollout policy: 
+
+y = [ h; ˜ y], ˜y ∼ πθold (· | x, h ). (7) In this way, the MCMC approximation to the power target only determines the prefix-level steering signal, while the remaining response tokens are still generated by πθold .Following the MCMC approximation of Karan and Du (2025), we use a lightweight block-wise sampler to approxi-mate the power-target hint distribution. Rather than applying MCMC to complete reasoning traces, we restrict it to short prefix hints, thereby avoiding repeated long-sequence infer-ence calls. Let B be the block size and L be the number of hint blocks. The sampler grows a hint block by block, ap-plying a small number of MCMC resampling steps at each block. After the hint is constructed, the remaining tokens are autoregressively sampled from πθold .Models / Methods 
+
+AMC-2023 MATH-500 AIME-2024 MINERVA GAOKAO2023-en Average 
+
+greedy mean greedy mean greedy mean greedy mean greedy mean greedy mean 
+
+I. Math-Specialized Backbone Qwen2.5-Math-1.5B Baseline 33.73 27.26 32.04 34.32 16.33 9.58 8.82 8.46 20.00 21.79 22.18 20.28 TTRL 44.58 44.88 73.92 71.35 13.67 15.88 16.91 17.14 62.60 62.11 42.34 42.27 Intuitor 37.35 36.45 70.80 67.63 11.67 9.29 25.37 22.04 64.16 58.86 41.87 38.85 
+
+Hi-TTRL 51.81 48.12 78.00 76.86 24.33 18.25 36.76 35.96 70.13 69.17 52.21 49.67 
+
+∆ +7.23 +3.24 +4.08 +5.51 +10.66 +2.37 +19.85 +18.82 +7.53 +7.06 +9.87 +7.40 
+
+∆% ↑16.22% ↑7.22% ↑5.52% ↑7.72% ↑77.98% ↑14.92% ↑117.39% ↑109.80% ↑12.03% ↑11.37% ↑23.31% ↑17.51% II. General Base Backbones Qwen3-1.7B-Base Baseline 26.51 22.29 44.52 39.07 4.33 2.08 5.88 8.07 25.45 23.28 21.34 18.96 TTRL 32.53 36.37 69.80 69.17 9.67 7.50 30.51 30.63 59.40 59.38 40.38 40.61 Intuitor 30.12 26.51 56.80 56.65 4.33 4.58 24.26 22.52 49.87 48.17 33.08 31.69 
+
+Hi-TTRL 38.55 39.76 71.40 71.26 12.67 11.25 34.19 32.74 61.82 61.56 43.73 43.31 
+
+∆ +6.02 +3.39 +1.60 +2.09 +3.00 +3.75 +3.68 +2.11 +2.42 +2.18 +3.34 +2.70 
+
+∆% ↑18.51% ↑9.32% ↑2.29% ↑3.02% ↑31.02% ↑50.00% ↑12.06% ↑6.89% ↑4.07% ↑3.67% ↑8.28% ↑6.66% Qwen3-4B-Base Baseline 24.10 18.75 34.72 31.89 13.33 7.50 12.13 13.40 14.55 12.73 19.77 16.85 TTRL 46.69 48.19 81.68 81.67 21.67 21.04 41.18 42.37 71.17 71.10 52.48 52.87 Intuitor 51.81 53.09 74.40 74.92 9.33 9.52 29.04 29.50 69.09 68.39 46.73 47.08 
+
+Hi-TTRL 54.22 54.49 82.76 82.57 23.33 20.83 44.12 43.27 70.65 70.65 55.02 54.36 
+
+∆ +7.53 +6.30 +1.08 +0.90 +1.66 -0.21 +2.94 +0.90 -0.52 -0.45 +2.54 +1.49 
+
+∆% ↑16.13% ↑13.07% ↑1.32% ↑1.10% ↑7.66% ↓1.00% ↑7.14% ↑2.12% ↓0.73% ↓0.63% ↑4.84% ↑2.81% 
+
+Table 1: Main results on five mathematical reasoning benchmarks. Scores are answer accuracy (%). In each column within a backbone, the best completed result is in bold , and the second-best is underlined. The ∆ row reports signed absolute differences, and the ∆% row reports relative changes with arrows, both comparing Hi-TTRL with TTRL. Throughout this process, the sampler remains grounded in the old policy πθold . The power target reshapes only the relative probabilities of prefixes supported by πθold . At each MCMC resampling step, both prefix generation and likeli-hood evaluation are performed with πθold . Once a hint is selected, πθold (· | x, h ) generates the remainder of the re-sponse. The resulting rollouts therefore rely solely on the old policy, without drawing on samples, probabilities, or trajec-tories from any external or stale policy. 
+
+Consensus-Adaptive Hint Configuration 
+
+Low consensus requires stronger pruning toward a common subtree, whereas high consensus requires several lightweight entry points into alternative subtrees. Accordingly, we de-sign distinct hint configurations for different consensus levels to further steer solution-space search toward either stronger pruning or broader exploration. We use q(m) 
+
+> α
+
+(· | x) to denote the approximate power-target hint distribution restricted to prefixes of length m tokens. When c(1) < τ low , the rollout group lacks a stable answer distribution, and the pseudo-label may be weakly supported. In this case, Hi-TTRL uses a sharpened power target with 
+
+αlow > 1 and samples a single long anchor hint: 
+
+Hlow (x) = {hconv }, hconv ∼ q(4 B) 
+
+> αlow
+
+(· | x). (8) The hint contains four blocks. A longer prefix imposes a stronger shared conditioning signal on the second-stage com-pletions, shrinking the search space toward a high-likelihood reasoning subspace and encouraging answer convergence. When c(1) > τ high , the rollout group is already overly concentrated around a dominant answer. Although this may indicate a reliable pseudo-label, it also reduces reward con-trast and weakens the advantage signal. In this case, Hi-TTRL uses a flattened power target with αhigh < 1 and samples multiple short exploratory hints: 
+
+Hhigh (x) = {hdiv  
+
+> j
+
+}4
+
+> j=1
+
+, hdiv  
+
+> j
+
+∼ q(2 B) 
+
+> αhigh
+
+(· | x). (9) Each hint contains two blocks, and four such hints are gener-ated. Compared with one long prefix, multiple short prefixes create several lightweight branching directions while leav-ing enough freedom for the policy to complete the reasoning in different ways. This promotes controlled divergence and helps recover advantage diversity. The resulting hint pool is 
+
+H(x, c (1) ) = 
+
+Hlow (x), c(1) < τ low ,
+
+Hhigh (x), c(1) > τ high . (10) For each second-stage rollout, Hi-TTRL assigns a hint from H(x, c (1) ) and lets the old rollout policy complete the remaining reasoning conditioned on this hint. Thus, low consensus triggers a stronger shared prefix to promote con-vergence, whereas high consensus triggers multiple weaker prefixes to promote diversity. 
+
+## Experiments 
+
+Experimental Setup 
+
+We evaluate Hi-TTRL on three open-weight backbones, Qwen2.5-Math-1.5B (Yang et al. 2024), Qwen3-1.7B-Base (Yang et al. 2025a), and Qwen3-4B-Base (Yang et al. 2025a). Main experiments are conducted on multiple mathe-matical reasoning benchmarks, including AMC2023 (Li et al. 2024), AIME2024 (Li et al. 2024), GAOKAO2023-en (Liao et al. 2024), MATH-500 (Hendrycks et al. 2021) and MIN-ERVA (Lewkowycz et al. 2022). Together, these benchmarks span diverse problem sources and difficulty levels, allowing us to evaluate whether consensus regulation remains effec-tive across heterogeneous mathematical reasoning settings. We compare Hi-TTRL against two label-free baselines: stan-dard TTRL (Zuo et al. 2025), which constructs pseudo-rewards from majority-voted answers, and Intuitor (Zhao et al. 2026b), which uses the model’s self-certainty as an in-ternal reward signal. All the runs are optimized with GRPO under the same training configuration and are evaluated using both mean@16 and greedy@1 . We repeat each evaluation ten times and report the average results. Further details on the implementation and the standard deviations of each eval-uation runs are provided in the Appendix. 
+
+Main Results 
+
+Based on the experimental results in Table 1, Hi-TTRL demonstrates consistent advantages across model families and evaluation metrics. It achieves the best average perfor-mance for all three backbones, improving over TTRL by 9.87/7.40 points on Qwen2.5-Math-1.5B, 3.34/2.70 points on Qwen3-1.7B-Base, and 2.54/1.49 points on Qwen3-4B-Base under greedy@1 /mean@16 , respectively. The gains are most pronounced on the smaller math-specialized backbone, where Hi-TTRL raises the average greedy@1 score from 42.34 to 52.21 and the average mean@16 score from 42.27 to 49.67. At the benchmark level, Hi-TTRL generally matches or surpasses TTRL, with only minor drops on Qwen3-4B-Base for AIME-2024 mean@16 and GAOKAO2023-en. These results suggest that consensus-adaptive hinting strengthens label-free test-time adaptation by regulating roll-out consensus before majority voting and reward assignment. 
+
+Ablation Study 
+
+Branch-Level Ablation. Table 2 reports a branch-level ab-lation of the consensus-triggered hint mechanisms on AMC-2023. The with-low variant enables only the low-consensus convergence branch, the with-high variant enables only the high-consensus diversity branch. On Qwen2.5-Math-1.5B, both single-branch variants improve over TTRL, with 
+
+with-low slightly stronger under greedy@1 and with-high slightly stronger under mean@16 . On Qwen3-4B-Base, with-high is the dominant single-branch variant, improving TTRL from 46.69/48.19 to 53.86/53.70 under 
+
+Model Qwen2.5-Math-1.5B Qwen3-4B-Base 
+
+greedy mean greedy mean 
+
+Baseline 33.73 27.26 24.10 18.75 TTRL 44.58 44.88 46.69 48.19 with-low 48.19 45.02 46.02 47.62 with-high 48.07 45.11 53.86 53.70 
+
+Hi-TTRL 51.81 48.12 54.22 54.49 
+
+Table 2: Ablation of consensus-triggered hint branches on AMC-2023. Scores are answer accuracy (%). The best result is in bold , and the second-best result is underlined. 
+
+Method AMC-2023 MINERVA 
+
+greedy mean greedy mean 
+
+Baseline 26.51 22.29 5.88 8.07 TTRL 32.53 36.37 30.51 30.63 TTRL + Temp. 37.35 36.90 22.98 23.66 TTRL + Top-p 37.35 37.95 24.56 24.06 
+
+Hi-TTRL 38.55 39.76 34.19 32.74 
+
+Table 3: Comparison with direct sampling-control variants on Qwen3-1.7B-Base. Scores are answer accuracy (%). The best result is in bold , and the second-best result is underlined. 
+
+greedy@1 /mean@16 , whereas with-low does not improve over TTRL on this backbone. Across both backbones, full Hi-TTRL achieves the best results in every column, showing that adaptive use of the low- and high-consensus branches is more effective than relying on either branch alone. 
+
+Comparison with Direct Sampling Controls. To deter-mine whether simpler consensus-dependent decoding ad-justments can reproduce the gains of Hi-TTRL, we evaluate temperature- and top-p-based variants of TTRL with Qwen3-1.7B-Base. Standard TTRL samples training rollouts with temperature T = 1 .0 and top-p = 0 .95 . TTRL + Temp 
+
+keeps top-p = 0 .95 but uses T = 0 .5 for the low-consensus branch and T = 2 .0 for the high-consensus branch. TTRL + Top-p keeps T = 1 .0 but uses top-p = 0 .8 and 1.0 for the low- and high-consensus branches, respectively. As shown in Table 3, both direct controls improve over TTRL on AMC-2023, but remain below Hi-TTRL. On MINERVA, both direct controls degrade substantially relative to TTRL, whereas Hi-TTRL improves over TTRL on both metrics. These results indicate that branch-dependent entropy adjustment alone is insufficient; the structured prefix-level steering of Hi-TTRL provides more effective and robust consensus regulation. 
+
+Mechanism Analysis 
+
+Consensus-Steering Effect. To investigate how Hi-TTRL effectively regulates consensus strength and yields more in-formative policy updates, we conduct a mechanism analysis on Qwen3-1.7B-Base trained on MINERVA. Specifically, at each step, we measure the in-target rate and distance to 0 25 50 75 100 125 150 0.0 0.2 0.4 0.6 0.8 1.0    
+
+> In-target rate
+> Step 0.000 0.025 0.050 0.075 0.100 0.125 0.150 0.175
+> Distance to target
+> Adaptive Hints Steer Consensus Toward Target Interval
+> In-target before In-target after Distance before Distance after Low branch High branch 00.2 0.4 0.6 0.8 1
+> Majority-label changed rate
+> 50.0% 0.0%
+> -10 -5 0510
+> +1.65 pp -2.97 pp
+> Adaptive Hints Correct Low Consensus and Diversify High Consensus
+> Box: label-change rate Dots: GT acc.
+
+Figure 4: Mechanism analysis of adaptive hints for Qwen3-1.7B-Base on MINERVA. 
+
+target over all samples before and after the hint stage. The 
+
+in-target rate measures the fraction of samples whose con-sensus strength lies within [τlow , τ high ], while the distance to target is the average distance from each sample’s consensus strength to this interval, with a distance of zero assigned to samples inside it. As Figure 4 illustrates, the in-target rate is markedly higher after the hint stage, indicating that hint-guided sampling moves a larger fraction of samples into the target interval. Meanwhile, the distance to target is markedly lower after the hint stage, showing that sample consensus strength is closer to the target interval overall. These results indicate that the hint sampler does not merely add extra roll-outs, but actively steers both under- and over-concentrated groups back toward the healthy consensus range. 
+
+Quality of Consensus-Steered Samples. We further ex-amine whether consensus steering improves the quality of update samples. We assess update-sample quality using the change in majority-label rate and ground-truth accuracy from before to after hinting. As shown in Figure 4, the major-ity label changes for a substantial fraction of low-consensus prompts, accompanied by an increase in average ground-truth rollout accuracy. In contrast, the majority label remains stable in the high-consensus branch even as rollout accuracy decreases, indicating that flattened hints introduce informa-tive minority samples without corrupting the pseudo-label. These complementary effects show that Hi-TTRL enhances pseudo-label reliability when consensus is weak and restores advantage contrast when consensus is saturated. 
+
+Case Study 
+
+To further understand how our method works, we conduct a case study. We study reward-hacking dynamics on MIN-ERVA with Qwen2.5-Math-1.5B by tracking majority-voting (MV) reward, ground-truth (GT) reward, and the shares of low-, mid-, and high-consensus updates. As shown in Fig-ure 5, standard TTRL progressively migrates from low to high consensus: its MV reward saturates near one while its GT reward collapses to nearly zero. This divergence shows that weakly supported pseudo-labels can be consolidated into confident but incorrect behavior. 20 40 60 80 100 120 140 0.00 0.25 0.50 0.75 1.00       
+
+> reward / branch share Step
+> Reward hacking Hi-TTRL TTRL MV reward GT reward MV reward GT reward
+> Reward Hacking Emerges with the Low-to-High Branch Shift
+> .
+> Low branch share Mid branch share High branch share
+
+Figure 5: Reward-hacking dynamics of Qwen2.5-Math-1.5B on MINERVA. Shading shows branch shares; curves show majority-voting and ground-truth rewards. For Hi-TTRL, sharpened hints steer low-consensus roll-outs toward a more coherent reasoning region before voting, preventing noisy majorities from becoming recurring tem-plates. Consequently, its MV reward remains below satura-tion while its GT reward continues to improve. The compari-son supports our central mechanism: sampling-stage consen-sus regulation interrupts erroneous low-to-high-consensus consolidation while preserving an informative GRPO signal. 
+
+## Conclusion 
+
+We identify consensus instability as a key bottleneck in test-time reinforcement learning: weak consensus amplifies noisy pseudo-labels, while excessive consensus diminishes the ad-vantage contrast. Hi-TTRL addresses this issue by estimating first-stage consensus and using power-target hints to induce convergence for low-consensus groups or controlled diversity for high-consensus groups. Across backbones and datasets, Hi-TTRL consistently improves over standard TTRL, with ablations, the case study, and mechanism analysis validating the effectiveness of its adaptive hint design. References 
+
+Chen, R.; Chen, Y.; Li, Z.; and Huang, L. 2026. PowerFlow: Unlocking the Dual Nature of LLMs via Principled Distri-bution Matching. In Forty-third International Conference on Machine Learning .Gao, J.; Xu, S.; Ye, W.; Liu, W.; He, C.; Fu, W.; Mei, Z.; Wang, G.; and Wu, Y. 2024. On Designing Effec-tive RL Reward at Training Time for LLM Reasoning. arXiv:2410.15115. Guo, D.; Yang, D.; Zhang, H.; Song, J.; Wang, P.; Zhu, Q.; Xu, R.; Zhang, R.; Ma, S.; Bi, X.; et al. 2025. DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. Nature , 645(8081): 633–638. Hendrycks, D.; Burns, C.; Kadavath, S.; Arora, A.; Basart, S.; Tang, E.; Song, D.; and Steinhardt, J. 2021. Measuring Mathematical Problem Solving With the MATH Dataset. arXiv:2103.03874. Huang, C.; Yu, W.; Wang, X.; Zhang, H.; Li, Z.; Li, R.; Huang, J.; Mi, H.; and Yu, D. 2026. R-Zero: Self-Evolving Reasoning LLM from Zero Data. arXiv:2508.05004. Jaech, A.; Kalai, A.; Lerer, A.; Richardson, A.; El-Kishky, A.; Low, A.; Helyar, A.; Madry, A.; Beutel, A.; Carney, A.; et al. 2026. OpenAI o1 System Card. arXiv:2412.16720. Karan, A.; and Du, Y. 2025. Reasoning with Sampling: Your Base Model is Smarter Than You Think. arXiv:2510.14901. Lewkowycz, A.; Andreassen, A.; Dohan, D.; Dyer, E.; Michalewski, H.; Ramasesh, V.; Slone, A.; Anil, C.; Schlag, I.; Gutman-Solo, T.; et al. 2022. Solving quantitative rea-soning problems with language models. Advances in neural information processing systems , 35: 3843–3857. Li, J.; Beeching, E.; Tunstall, L.; Lipkin, B.; Soletskyi, R.; Huang, S.; Rasul, K.; Yu, L.; Jiang, A. Q.; Shen, Z.; et al. 2024. Numinamath: The largest public dataset in ai4maths with 860k pairs of competition math problems and solutions. 
+
+Hugging Face repository , 13(9): 9. Liao, M.; Li, C.; Luo, W.; Jing, W.; and Fan, K. 2024. Mario: Math reasoning with code interpreter output-a reproducible pipeline. In Findings of the Association for Computational Linguistics: ACL 2024 , 905–924. Liu, J.; He, C.; Lin, Y.; Yang, M.; Shen, F.; and Liu, S. 2025. ETTRL: Balancing Exploration and Exploitation in LLM Test-Time Reinforcement Learning Via Entropy Mechanism. arXiv:2508.11356. Meng, Y.; Xia, M.; and Chen, D. 2024. Simpo: Simple pref-erence optimization with a reference-free reward. Advances in Neural Information Processing Systems , 37: 124198– 124235. Ouyang, L.; Wu, J.; Jiang, X.; Almeida, D.; Wainwright, C.; Mishkin, P.; Zhang, C.; Agarwal, S.; Slama, K.; Ray, A.; et al. 2022. Training language models to follow instructions with human feedback. Advances in neural information processing systems , 35: 27730–27744. Pan, T.; Yan, Y.; Wang, Z.; Zhang, R.; Hou, G.; Zhang, W.; Lu, W.; Xiao, J.; and Shen, Y. 2026. Coverrl: Breaking the consensus trap in label-free reasoning via generator-verifier co-evolution. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 29833–29853. Rafailov, R.; Sharma, A.; Mitchell, E.; Manning, C. D.; Er-mon, S.; and Finn, C. 2023. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36: 53728–53741. Rein, D.; Hou, B. L.; Stickland, A. C.; Petty, J.; Pang, R. Y.; Dirani, J.; Michael, J.; and Bowman, S. R. 2023. GPQA: A Graduate-Level Google-Proof Q&A Benchmark. arXiv:2311.12022. Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017. Proximal Policy Optimization Algorithms. arXiv:1707.06347. Setlur, A.; Garg, S.; Geng, X.; Garg, N.; Smith, V.; and Kumar, A. 2024. Rl on incorrect synthetic data scales the efficiency of llm math reasoning by eight-fold. Advances in Neural Information Processing Systems , 37: 43000–43031. Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y. K.; Wu, Y.; and Guo, D. 2024. DeepSeekMath: Pushing the Limits of Mathematical Rea-soning in Open Language Models. arXiv:2402.03300. Wang, P.-Y.; Liu, T.-S.; Wang, C.; Li, Z.; Wang, Y.; Yan, S.; Jia, C.; Liu, X.-H.; Chen, X.; Xu, J.; et al. 2026a. A survey on large language models for mathematical reasoning. ACM Computing Surveys , 58(8): 1–35. Wang, R.; Huang, W.; Cao, Q.; Iwasawa, Y.; Matsuo, Y.; and Guo, J. 2026b. Self-Harmony: Learning to Harmonize Self-Supervision and Self-Play in Test-Time Reinforcement Learning. arXiv:2511.01191. Wang, S.; Yu, L.; Gao, C.; Zheng, C.; Liu, S.; Lu, R.; Dang, K.; Chen, X.-H.; Yang, J.; Zhang, Z.; Liu, Y.; Yang, A.; Zhao, A.; Yue, Y.; Song, S.; Yu, B.; Huang, G.; and Lin, J. 2025a. Beyond the 80/20 Rule: High-Entropy Minority Tokens Drive Effective Reinforcement Learning for LLM Reasoning. In Belgrave, D.; Zhang, C.; Lin, H.; Pascanu, R.; Koniusz, P.; Ghassemi, M.; and Chen, N., eds., Advances in Neural Information Processing Systems , volume 38, 115452– 115486. Curran Associates, Inc. Wang, W.; Wang, Y.; Chen, K.; and Huang, H. 2026c. Be-yond majority voting: Towards fine-grained and more reliable reward signal for test-time reinforcement learning. In Pro-ceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 37251– 37265. Wang, X.; Wei, J.; Schuurmans, D.; Le, Q. V.; Chi, E. H.; Narang, S.; Chowdhery, A.; and Zhou, D. 2023. Self-Consistency Improves Chain of Thought Reasoning in Lan-guage Models. In The Eleventh International Conference on Learning Representations .Wang, Y.; Li, B.; Cho, D.; Zhang, R.; Sui, F.; and Grama, A. 2026d. SARL: Label-Free Reinforcement Learning by Rewarding Reasoning Topology. arXiv:2603.27977. Wang, Y.; Yang, Q.; Zeng, Z.; Ren, L.; Liu, L.; Peng, B.; Cheng, H.; He, X.; Wang, K.; Gao, J.; Chen, W.; Wang, S.; Du, S.; and shen, y. 2025b. Reinforcement Learning for Reasoning in Large Language Models with One Training Example. In Belgrave, D.; Zhang, C.; Lin, H.; Pascanu, R.; Koniusz, P.; Ghassemi, M.; and Chen, N., eds., Advances in Neural Information Processing Systems , volume 38, 122721– 122764. Curran Associates, Inc. Wu, M.; Zhang, G.; Min, S.; Levine, S.; and Kumar, A. 2025. RLAC: Reinforcement Learning with Adversarial Critic for Free-Form Generation Tasks. arXiv:2511.01758. Xu, M.; Chen, K.; Bai, X.; Niu, Z.; Yang, M.; Zhao, T.; and Zhang, M. 2026. Beyond Token-Level Policy Gradi-ents for Complex Reasoning with Large Language Models. arXiv:2602.14386. Yan, D.; Liang, J.; Wang, Y.; Lu, S.; He, R.; and Tan, T. 2026. What if consensus lies? selective-complementary re-inforcement learning at test time. In Proceedings of the 64th Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , 28957–28970. Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.; Huang, C.; Lv, C.; et al. 2025a. Qwen3 Technical Report. arXiv:2505.09388. Yang, A.; Zhang, B.; Hui, B.; Gao, B.; Yu, B.; Li, C.; Liu, D.; Tu, J.; Zhou, J.; Lin, J.; et al. 2024. Qwen2.5-Math Technical Report: Toward Mathematical Expert Model via Self-Improvement. arXiv:2409.12122. Yang, D.; Liu, T.; Zhang, D.; Simoulin, A.; Liu, X.; Cao, Y.; Teng, Z.; Qian, X.; Yang, G.; Luo, J.; et al. 2025b. Code to think, think to code: A survey on code-enhanced reasoning and reasoning-driven code intelligence in llms. In Proceed-ings of the 2025 Conference on Empirical Methods in Natural Language Processing , 2586–2616. Yao, J.; Huang, H.; Zeng, S.; Luo, C.; You, W.; Tang, J.; Liu, Q.; Guo, Y.; and Kang, Y. 2026. Incorporating self-rewriting into large language model reasoning reinforcement. In Pro-ceedings of the AAAI Conference on Artificial Intelligence ,40, 34405–34413. Ye, C.; Yu, Z.; Zhang, Z.; Chen, H.; Sadagopan, N.; Huang, J.; Zhang, T.; and Beniwal, A. 2026. Beyond Correctness: Harmonizing Process and Outcome Rewards through RL Training. arXiv:2509.03403. Zhang, K.; Lv, A.; Li, J.; Wang, Y.; Wang, F.; Hu, H.; and Yan, R. 2026. Stephint: Multi-level stepwise hints enhance reinforcement learning to reason. In Proceedings of the 64th Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , 37846–37864. Zhang, Q.; Wu, H.; Zhang, C.; Zhao, P.; and Bian, Y. 2025. Right Question is Already Half the Answer: Fully Unsu-pervised LLM Reasoning Incentivization. In Belgrave, D.; Zhang, C.; Lin, H.; Pascanu, R.; Koniusz, P.; Ghassemi, M.; and Chen, N., eds., Advances in Neural Information Process-ing Systems , volume 38, 67345–67372. Curran Associates, Inc. Zhao, C.; Yang, E.; Liu, Y.; Zhao, J.; and Guo, G. 2026a. ECHO: Entropy-Confidence Hybrid Optimization for Test-Time Reinforcement Learning. arXiv:2602.02150. Zhao, X.; Kang, Z.; Feng, A.; Levine, S.; and Song, D. 2026b. Learning to Reason without External Rewards. arXiv:2505.19590. Zuo, Y.; Zhang, K.; Sheng, L.; Qu, S.; Cui, G.; Zhu, X.; Li, H.; zhang, y.; Long, X.; Hua, E.; Qi, B.; Sun, Y.; Ma, Z.; Yuan, L.; Ding, N.; and Zhou, B. 2025. TTRL: Test-Time Reinforcement Learning. In Belgrave, D.; Zhang, C.; Lin, H.; Pascanu, R.; Koniusz, P.; Ghassemi, M.; and Chen, N., eds., Advances in Neural Information Processing Systems ,volume 38, 131459–131483. Curran Associates, Inc. A : Detailed Experimental Setup 
+
+This section provides the detailed experimental settings for the main results reported in the paper. We describe the back-bones, benchmark suites, baselines, evaluation metrics, and training hyperparameters used in the main experiments. 
+
+Models. We evaluate Hi-TTRL on three open-weight back-bones: Qwen2.5-Math-1.5B (Yang et al. 2024), Qwen3-1.7B-Base (Yang et al. 2025a), and Qwen3-4B-Base (Yang et al. 2025a). Qwen2.5-Math-1.5B represents a compact math-specialized model, while Qwen3-1.7B-Base and Qwen3-4B-Base provide lightweight and stronger general base-model settings before instruction tuning. This choice allows us to test whether consensus-strength regulation remains effective across both math-specialized and general base policies. 
+
+Benchmarks. We conduct the experiments on five mathe-matical reasoning benchmarks: AMC2023 (Li et al. 2024), AIME2024 (Li et al. 2024), GAOKAO2023-en (Liao et al. 2024), MATH-500 (Hendrycks et al. 2021), and MIN-ERVA (Lewkowycz et al. 2022). Each benchmark is treated as an unlabeled test stream during policy optimization: the model receives only the problem statements, derives training signals from its own rollouts, and never uses ground-truth for reward construction. 
+
+Baselines. Following recent TTRL evaluations (Zuo et al. 2025; Wang et al. 2026c; Yan et al. 2026), we compare Hi-TTRL with three baselines for each benchmark–backbone pair. The unadapted backbone is evaluated without parameter updates and therefore preserves the original policy, provid-ing a fixed reference for quantifying the benefit introduced by adaptation. TTRL (Zuo et al. 2025) samples multiple answers, uses the most frequent answer as a pseudo-label, and assigns binary rewards according to answer agreement; these self-supervised rewards are then optimized with GRPO. Intuitor (Zhao et al. 2026b) replaces answer voting with a sequence-level self-certainty reward derived from token-averaged KL( U ∥ pθ ); after group-wise normalization, these intrinsic rewards define the GRPO advantages. 
+
+Evaluation Metrics. We report two answer-accuracy met-rics: mean@16 and greedy@1 . For mean@16 , each ques-tion is decoded 16 times with stochastic sampling; each gen-erated response is scored against the benchmark answer after final-answer extraction, and the metric is the average sam-ple accuracy over the 16 responses, further averaged over all questions. For greedy@1 , each question is decoded once with deterministic greedy decoding and scored in the same way. We report both mean@16 and greedy@1 in the fi-nal evaluation. For every method–backbone–benchmark con-figuration and each decoding protocol, we repeat the com-plete evaluation ten times. Each repetition first produces one benchmark-level accuracy by aggregating over all questions and, for mean@16 , over the 16 sampled responses per ques-tion. We report the arithmetic mean of the ten repetition-level accuracies and compute the standard deviation over the same ten values. Table 4 provides the resulting mean and standard deviation for every configuration. 
+
+Hyperparameter Configuration. All methods are opti-mized with GRPO using the same training configuration. We set the maximum prompt length to 1,024 tokens and the maximum response length to 3,072 tokens. For each prompt, the rollout pool contains 32 responses for pseudo-label vot-ing, from which 16 responses are used for policy updates. The actor learning rate is 5 × 10 −7 with a cosine schedule and a warmup ratio of 0.03; the critic learning rate is 9 × 10 −6.During training, rollouts are sampled with temperature 1.0 and top-p = 0 .95 . During evaluation, sampled decoding for 
+
+mean@16 uses temperature 0.6 and top-p = 0 .95 , while 
+
+greedy@1 uses temperature 0 and top-p = 1 .0. We cap evaluation generations at 3,072 tokens with a 4,096-token context window. For Hi-TTRL, the consensus thresholds are set to τlow =0.25 and τhigh = 0 .75 . When adaptive hints are enabled, the high-consensus branch uses αhigh = 0 .25 , while the low-consensus branch uses αlow = 4 .0. Each hint block contains B = 128 tokens, and we perform NMCMC = 10 
+
+Metropolis–Hastings transitions after adding each block. The low-consensus branch uses four hint blocks, and the high-consensus branch uses two hint blocks with four candidate hints. All experiments are run on a single SLURM node with 4 or 8 NVIDIA L20 GPUs, depending on the backbone and benchmark. 
+
+## B : Full Results with Standard Deviations 
+
+Table 4 complements Table 1 by reporting the run-to-run variability over ten repeated evaluations. Each entry gives the mean answer accuracy together with its standard deviation across the ten repetition-level scores. The upper and lower panels contain the deterministic greedy@1 and stochas-tic mean@16 evaluations, respectively. For each backbone, the blue ∆/∆% row compares Hi-TTRL with TTRL: the value before the slash is the signed absolute accuracy dif-ference, and the value after the slash is the corresponding relative change. Bold and underlined entries denote the best and second-best mean within each backbone, benchmark, and decoding protocol. 
+
+## C : Algorithmic Details 
+
+Relation to Power Sampling 
+
+Our MCMC implementation directly follows the autoregres-sive power-sampling approximation of Karan and Du (2025). Specifically, we retain its sequence-level power target, pro-gressive block-wise intermediate targets, and random-suffix Metropolis–Hastings (MH) transitions. The distinction is how this sampler is used. The original method applies power sampling to a complete inference-time response and stud-ies sharpening with α > 1. Hi-TTRL restricts the MCMC approximation to a short prefix h, allows either αlow > 1
+
+or αhigh < 1, and invokes the sampler only when c(1) lies outside [τlow , τ high ]. The sampled prefix is then used as a hint, and the remainder of the rollout is generated normally by πθold . Thus, the MCMC transition rule is inherited from power sampling, whereas consensus-adaptive routing, flat-tening, prefix truncation, and hint-conditioned policy updates are specific to Hi-TTRL. 
+
+Block-wise Metropolis–Hastings Transitions 
+
+Given a query x and a branch-specific exponent α, the sam-pler produces a hint h of at most M = LB tokens. It ini-Greedy Decoding (greedy@1 )
+
+Models / Methods AMC-2023 MATH-500 AIME-2024 MINERVA GAOKAO2023-en 
+
+I. Math-Specialized Backbone Qwen2.5-Math-1.5B Baseline 33 .73 ± 1.70 32 .04 ± 0.78 16 .33 ± 3.99 8.82 ± 0.60 20 .00 ± 0.81 
+
+TTRL 44 .58 ± 0.99 73 .92 ± 0.65 13 .67 ± 1.89 16 .91 ± 0.61 62 .60 ± 0.26 
+
+Intuitor 37 .35 ± 1.53 70 .80 ± 0.56 11 .67 ± 1.89 25 .37 ± 0.87 64 .16 ± 0.85 
+
+Hi-TTRL 51 .81 ± 1.27 78 .00 ± 0.56 24 .33 ± 3.22 36 .76 ± 0.25 70 .13 ± 0.25 
+
+∆/∆% +7 .23 / ↑ 16 .22% +4 .08 / ↑ 5.52% +10 .66 / ↑ 77 .98% +19 .85 / ↑ 117 .39% +7 .53 / ↑ 12 .03% 
+
+II. General Base Backbones Qwen3-1.7B-Base Baseline 26 .51 ± 2.14 44 .52 ± 0.78 4.33 ± 4.17 5.88 ± 0.18 25 .45 ± 0.83 
+
+TTRL 32 .53 ± 1.52 69 .80 ± 0.42 9.67 ± 1.05 30 .51 ± 0.68 59 .40 ± 0.32 
+
+Intuitor 30 .12 ± 2.11 56 .80 ± 0.75 4.33 ± 2.83 24 .26 ± 0.46 49 .87 ± 1.03 
+
+Hi-TTRL 38 .55 ± 1.63 71 .40 ± 0.40 12 .67 ± 1.72 34 .19 ± 0.78 61 .82 ± 0.66 
+
+∆/∆% +6 .02 / ↑ 18 .51% +1 .60 / ↑ 2.29% +3 .00 / ↑ 31 .02% +3 .68 / ↑ 12 .06% +2 .42 / ↑ 4.07% 
+
+Qwen3-4B-Base Baseline 24 .10 ± 2.26 34 .72 ± 1.22 13 .33 ± 1.05 12 .13 ± 0.63 14 .55 ± 0.49 
+
+TTRL 46 .69 ± 0.84 81 .68 ± 0.29 21 .67 ± 1.05 41 .18 ± 0.31 71 .17 ± 0.23 
+
+Intuitor 51 .81 ± 0.68 74 .40 ± 0.75 9.33 ± 3.31 29 .04 ± 0.80 69 .09 ± 0.86 
+
+Hi-TTRL 54 .22 ± 1.02 82 .76 ± 0.16 23 .33 ± 0.00 44 .12 ± 0.51 70 .65 ± 0.28 
+
+∆/∆% +7 .53 / ↑ 16 .13% +1 .08 / ↑ 1.32% +1 .66 / ↑ 7.66% +2 .94 / ↑ 7.14% −0.52 / ↓ 0.73% 
+
+Sampled Decoding (mean@16 )
+
+Models / Methods AMC-2023 MATH-500 AIME-2024 MINERVA GAOKAO2023-en 
+
+I. Math-Specialized Backbone Qwen2.5-Math-1.5B Baseline 27 .26 ± 1.06 34 .32 ± 0.31 9.58 ± 0.62 8.46 ± 0.30 21 .79 ± 0.37 
+
+TTRL 44 .88 ± 0.69 71 .35 ± 0.32 15 .88 ± 0.88 17 .14 ± 0.32 62 .11 ± 0.43 
+
+Intuitor 36 .45 ± 0.83 67 .63 ± 0.30 9.29 ± 0.88 22 .04 ± 0.11 58 .86 ± 0.22 
+
+Hi-TTRL 48 .12 ± 0.69 76 .86 ± 0.36 18 .25 ± 0.79 35 .96 ± 0.36 69 .17 ± 0.24 
+
+∆/∆% +3 .24 / ↑ 7.22% +5 .51 / ↑ 7.72% +2 .37 / ↑ 14 .92% +18 .82 / ↑ 109 .80% +7 .06 / ↑ 11 .37% 
+
+II. General Base Backbones Qwen3-1.7B-Base Baseline 22 .29 ± 0.84 39 .07 ± 0.42 2.08 ± 0.64 8.07 ± 0.12 23 .28 ± 0.41 
+
+TTRL 36 .37 ± 0.55 69 .17 ± 0.19 7.50 ± 0.97 30 .63 ± 0.36 59 .38 ± 0.22 
+
+Intuitor 26 .51 ± 1.18 56 .65 ± 0.26 4.58 ± 1.02 22 .52 ± 0.14 48 .17 ± 0.33 
+
+Hi-TTRL 39 .76 ± 0.43 71 .26 ± 0.12 11 .25 ± 0.44 32 .74 ± 0.19 61 .56 ± 0.26 
+
+∆/∆% +3 .39 / ↑ 9.32% +2 .09 / ↑ 3.02% +3 .75 / ↑ 50 .00% +2 .11 / ↑ 6.89% +2 .18 / ↑ 3.67% 
+
+Qwen3-4B-Base Baseline 18 .75 ± 0.51 31 .89 ± 0.30 7.50 ± 0.99 13 .40 ± 0.12 12 .73 ± 0.33 
+
+TTRL 48 .19 ± 0.41 81 .67 ± 0.12 21 .04 ± 0.43 42 .37 ± 0.26 71 .10 ± 0.06 
+
+Intuitor 53 .09 ± 0.46 74 .92 ± 0.23 9.52 ± 0.95 29 .50 ± 0.08 68 .39 ± 0.35 
+
+Hi-TTRL 54 .49 ± 0.46 82 .57 ± 0.05 20 .83 ± 0.34 43 .27 ± 0.25 70 .65 ± 0.17 
+
+∆/∆% +6 .30 / ↑ 13 .07% +0 .90 / ↑ 1.10% −0.21 / ↓ 1.00% +0 .90 / ↑ 2.12% −0.45 / ↓ 0.63% 
+
+Table 4: Full greedy@1 and mean@16 results with standard deviations on five mathematical reasoning benchmarks. The upper and lower panels report the two decoding protocols, respectively. Entries are mean answer accuracy (%) ± standard deviation over ten repeated evaluations. In each column within a backbone and decoding protocol, the best mean is in bold , and the second-best mean is underlined. In each blue ∆/∆% row, the values before and after the slash report the signed absolute and relative changes of Hi-TTRL over TTRL, respectively. tializes h as an empty sequence and constructs the hint in L
+
+stages. At stage k, the current hint contains (k − 1) B tokens. The sampler first appends B tokens drawn from πθold , ob-taining an initial state of length kB . It then applies NMCMC 
+
+updates to this state. In each update, the sampler chooses a position m, keeps the tokens before m, and autoregressively regenerates every token from m through kB . The resulting sequence replaces the current state only if it passes the MH acceptance test for the power target πθold (h | x)α; otherwise, the current state is retained. After these updates, the resulting 
+
+kB -token state becomes the starting prefix for stage k + 1 .The state obtained after stage L is returned as the final hint. This construction adapts the progressive power-sampling procedure of Karan and Du (2025). Instead of initializing MCMC with an independently sampled full-length hint, each stage reuses the prefix refined at the preceding stage and samples only one new block before applying MH updates. Both Hi-TTRL routes use this same transition mechanism: 
+
+α determines whether the target distribution is sharpened or flattened, while the branch-specific hint lengths and reuse strategies are specified below. 
+
+Intermediate targets and warm starts. For a prefix con-taining k blocks, define its old-policy log-likelihood as 
+
+ℓk(h | x) = 
+
+> kB
+
+X
+
+> t=1
+
+log πθold (ht | x, h <t ). (11) Consistent with Eq. (6), the k-th unnormalized intermediate target is 
+
+qα,k (h1: kB | x) ∝ exp {αℓ k(h | x)} = πθold (h1: kB | x)α.
+
+(12) These targets form a length-increasing path from the empty sequence to the desired M -token hint distribution. To initial-ize the chain for qα,k , we retain the accepted first (k − 1) B
+
+tokens and draw only the next B tokens autoregressively from πθold . Thus, the previous block supplies the prefix of the new state, while ordinary old-policy sampling supplies its newly added suffix. 
+
+Suffix proposals and MH correction. Given the initialized 
+
+kB -token state h, each MH transition samples a resampling position m uniformly from {1, . . . , kB }. It keeps h<m fixed and proposes a new suffix from the old policy, 
+
+h′ 
+
+> m:kB
+
+∼ πθold (· | x, h <m ), h′ 
+
+> <m
+
+= h<m . (13) Conditioned on the sampled position m, the proposal kernel has support only on sequences satisfying h′ 
+
+> <m
+
+= h<m . On this support, the forward and reverse suffix-proposal proba-bilities are 
+
+rm(h′ | h, x ) = 
+
+> kB
+
+Y
+
+> t=m
+
+πθold (h′ 
+
+> t
+
+| x, h ′
+
+> <t
+
+),rm(h | h′, x ) = 
+
+> kB
+
+Y
+
+> t=m
+
+πθold (ht | x, h <t ).
+
+(14) Because rm is conditioned on m, these expressions do not in-clude the factor 1/(kB ) for selecting the resampling position; that factor is identical in the forward and reverse transitions Algorithm 1: Power-Target MCMC Hint Sampler  
+
+> 1:
+
+Input: query x, old policy πθold , exponent α, block size 
+
+B, number of blocks L, transitions NMCMC  
+
+> 2:
+
+Initialize the accepted prefix h ← ∅ 
+
+> 3:
+
+for k = 1 to L do  
+
+> 4:
+
+Extend h by B tokens sampled from πθold (· | x, h ) 
+
+> 5:
+
+for s = 1 to NMCMC do  
+
+> 6:
+
+Sample m ∼ Uniform {1, . . . , kB } 
+
+> 7:
+
+Set h′ 
+
+> <m
+
+= h<m and resample h′ 
+
+> m:kB
+
+from 
+
+πθold (· | x, h <m ) 
+
+> 8:
+
+Compute log Aα(h′, h ) using Eq. (16)  
+
+> 9:
+
+Draw u ∼ Uniform(0 , 1)  
+
+> 10:
+
+if log u ≤ log Aα(h′, h ) then  
+
+> 11:
+
+Accept the proposal: h ← h′ 
+
+> 12:
+
+end if  
+
+> 13:
+
+end for  
+
+> 14:
+
+end for  
+
+> 15:
+
+return hint h
+
+and would cancel in the MH ratio. The candidate is accepted with probability 
+
+Aα(h′, h ) = min 
+
+
+
+1, qα,k (h′ | x) rm(h | h′, x )
+
+qα,k (h | x) rm(h′ | h, x )
+
+
+
+. (15) Here, we use u ∼ Uniform(0 , 1) as an independent auxiliary draw used for the accept–reject decision: accept h′ if u ≤
+
+Aα(h′, h ), and otherwise retain h. Since h and h′ share the same prefix before m, their full old-policy likelihood ratio reduces to the likelihood ratio of the two suffixes. Moreover, the forward and reverse suffix proposals use that same old policy. The proposal correction therefore cancels one power of the old-policy likelihood, reducing Eq. (15) to 
+
+log Aα(h′, h ) = min {0, (α − 1) [ ℓk(h′ | x) − ℓk(h | x)] } .
+
+(16) 
+
+Routing behavior and implementation. We evaluate Eq. (16) in log space for numerical stability. Its behavior is directly controlled by α: when α > 1, higher-likelihood proposals are favored, concentrating hints in high-probability regions of the old policy; when α < 1, likelihood-decreasing moves are favored, flattening the hint distribution and en-couraging exploration. At α = 1 , every proposal is accepted, recovering ordinary old-policy sampling. For each block, we apply NMCMC transitions and carry the resulting state—including an unchanged state after a rejection—into the next block. We do not discard a sep-arate burn-in segment, because the progressive initializa-tion provides the warm start at each sequence length. After block L, the final state is returned as one hint. Indepen-dent chains produce the four high-consensus hints, which are assigned as evenly as possible across the G/ 2 second-stage rollouts; the single low-consensus anchor is shared by all G/ 2 second-stage rollouts. In our experiments, B = 128 
+
+and NMCMC = 10 , with L = 4 for the low-consensus branch and L = 2 for the high-consensus branch. Algorithm 1 gives the complete block-wise procedure. Overall Training Procedure 
+
+Algorithm 2 summarizes the complete Hi-TTRL training step. Hi-TTRL first samples a half group of rollouts and uses its consensus strength to determine whether a direct update is appropriate or a second sampling stage is required. For an out-of-interval group, the MCMC sampler targeting the selected power distribution generates either anchor or exploratory hints, which guide the remaining rollouts toward the desired consensus regime. The resulting adaptive rollout group is then used for the final majority vote, pseudo-reward computation, advantage normalization, and clipped GRPO update. Algorithm 2: Hi-TTRL Training Step  
+
+> 1:
+
+Input: query x, old policy πθold , rollout budget G,thresholds τlow , τ high , exponents αlow , α high  
+
+> 2:
+
+Sample first-stage rollouts Y(1) = {yi}G/ 2 
+
+> i=1
+
+from 
+
+πθold (· | x) 
+
+> 3:
+
+Extract answers, compute intermediate majority vote, and compute c(1) = c(Y(1) ) 
+
+> 4:
+
+if c(1) ∈ [τlow , τ high ] then  
+
+> 5:
+
+Set Yupd (x) = Y(1)  
+
+> 6:
+
+else  
+
+> 7:
+
+if c(1) < τ low then  
+
+> 8:
+
+Set α = αlow > 1 and sample anchor hints with the power-target MCMC sampler  
+
+> 9:
+
+else  
+
+> 10:
+
+Set α = αhigh < 1 and sample exploratory hints with the power-target MCMC sampler  
+
+> 11:
+
+end if  
+
+> 12:
+
+Complete each hint with πθold (· | x, h ) to obtain 
+
+Y(2) hint = {yi}Gi=G/ 2+1  
+
+> 13:
+
+Set Yupd (x) = Y(1) ∪ Y (2) hint  
+
+> 14:
+
+end if  
+
+> 15:
+
+Compute the final majority vote, pseudo-rewards, and normalized GRPO advantages on Yupd (x) 
+
+> 16:
+
+Recompute old-policy log probabilities for all hint and completion tokens  
+
+> 17:
+
+Update θ with the standard clipped GRPO surrogate over 
+
+Yupd (x)
+
+## D : Sample-Budget Control 
+
+This section provides an additional control experiment on AMC-2023 to test whether the gains of Hi-TTRL come merely from using more samples for policy-gradient updates. In Hi-TTRL, samples routed to the normal branch update the policy with 16 rollouts, while samples that trigger the adaptive-hint branch update the policy with 32 rollouts after hint-conditioned completion. This mixed update size raises a possible alternative explanation: the improvement may come from increasing the number of update rollouts rather than from adaptive hinting itself. To isolate this factor, we compare Hi-TTRL with two stan-dard TTRL variants that do not use adaptive hints. The first variant, TTRL 32 /16 , follows the default setting: it uses 32 
+
+Method Qwen2.5-Math-1.5B Qwen3-1.7B-Base 
+
+greedy mean greedy mean 
+
+Baseline 33.73 27.26 26.51 22.29 TTRL 32 /16 44.58 44.88 32.53 36.37 TTRL 64 /32 49.40 46.91 36.27 36.07 
+
+Hi-TTRL 51.81 48.12 38.55 39.76 
+
+Table 5: Control experiment on rollout and update sample counts on AMC-2023. TTRL 32 /16 uses 32 voting rollouts and 16 update rollouts, while TTRL 64 /32 uses 64 voting rollouts and 32 update rollouts. Hi-TTRL uses the normal adaptive setting, where non-triggered samples use 16 update rollouts and triggered adaptive-hint samples use 32 update rollouts. Scores are answer accuracy (%). In each column, the best result is in bold , and the second-best result is underlined. rollouts for majority voting and 16 rollouts for GRPO up-dates. The second variant, TTRL 64 /32 , doubles both the vot-ing and update budgets, using 64 rollouts for majority vot-ing and 32 rollouts for GRPO updates. Thus, TTRL 64 /32 
+
+gives standard TTRL at least as many update rollouts as the adaptive-hint branch of Hi-TTRL, but without changing the sampling distribution through hints. All methods use the same optimization configuration and evaluation protocol. Table 5 shows that increasing the TTRL sample budget alone does not explain the gains of Hi-TTRL. On Qwen2.5-Math-1.5B, expanding standard TTRL from TTRL 32 /16 
+
+to TTRL 64 /32 improves AMC-2023 performance from 44.58/44.88 to 49.40/46.91 under greedy@1 /mean@16 ,confirming that a larger rollout budget can strengthen stan-dard TTRL. However, Hi-TTRL further improves the result to 51.81/48.12, outperforming the larger-budget TTRL 64 /32 
+
+setting on both metrics, even though Hi-TTRL does not use 32 update rollouts for every problem. On Qwen3-1.7B-Base, TTRL 64 /32 reaches 36.27/36.07, while Hi-TTRL further im-proves the result to 38.55/39.76. These results indicate that Hi-TTRL’s advantage is not sim-ply a consequence of larger policy-gradient batches. Rather, adaptive hinting changes which reasoning prefixes are com-pleted before voting and reward assignment, allowing the method to regulate the rollout distribution more effectively than standard TTRL with a uniformly larger sample budget. 
+
+## E : Experiment Scaling to Larger Models 
+
+This section examines whether Hi-TTRL generalizes beyond the model scales covered by the main experiments. Due to computational constraints, the main results focus on back-bones up to the 4B scale, including Qwen2.5-Math-1.5B, Qwen3-1.7B-Base, and Qwen3-4B-Base. To further test scal-ability, we introduce an additional 7B-scale model, Qwen2.5-Math-7B, on AMC-2023. We also include the Qwen2.5-Math-1.5B TTRL and Hi-TTRL trajectories as a lower-scale reference under the same validation protocol. This compari-son allows us to assess whether the adaptive-hint mechanism remains effective when moving from the sub-4B setting to a larger 7B-scale backbone. 0 50 100 150 200 250 300 
+
+> Training step
+> 0.20 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 0.65 0.70
+> mean@16
+> AMC Validation Across Model Sizes
+> Hi-TTRL 7B TTRL 7B Hi-TTRL 1.5B TTRL 1.5B
+
+Figure 6: Generalization to a 7B-scale model on AMC-2023. Curves report validation mean@16 during test-time adap-tation, including Qwen2.5-Math-1.5B TTRL and Hi-TTRL trajectories together with the Qwen2.5-Math-7B result. Figure 6 reports the validation mean@16 trajectories dur-ing adaptation. The key purpose of this figure is to verify that Hi-TTRL is not limited to the model scales used in the main-result table. On Qwen2.5-Math-1.5B, the compar-ison with TTRL gives a reference point for the benefit of replacing passive majority-voting updates with consensus-adaptive hinting. The Qwen2.5-Math-7B result then extends the evaluation to a larger model scale, showing that the same adaptation strategy can still provide useful gains beyond the model scales of up to 4B parameters studied in the main experiments. Overall, this result strengthens the model-scale general-ization claim of Hi-TTRL. The 7B experiment uses the same design principle as the smaller-scale experiments: estimate rollout consensus, intervene only when the group falls out-side the target consensus interval, and use hint-conditioned completions before reward assignment. Its effectiveness on Qwen2.5-Math-7B indicates that Hi-TTRL’s gains are not an artifact of a particular small backbone. Together with the sample-budget control in Appendix D, this supports the in-terpretation that adaptive rollout steering remains beneficial as model scale increases. 
+
+## F : Generalization to Non-Mathematical Scientific Reasoning 
+
+Experimental Setup. To evaluate whether consensus-adaptive test-time reinforcement learning extends beyond mathematical problem solving, we conduct an additional experiment on GPQA (Rein et al. 2023), a graduate-level multiple-choice benchmark written and validated by domain experts in biology, physics, and chemistry. We use the two general-purpose backbones, Qwen3-1.7B-Base and Qwen3-4B-Base, and compare the unadapted backbone, TTRL, In-tuitor, and Hi-TTRL. As in the main experiments, GPQA is treated as an unlabeled test stream during policy optimiza-
+
+Method Qwen3-1.7B-Base Qwen3-4B-Base 
+
+greedy mean greedy mean 
+
+Baseline 1.97 2.41 2.53 2.45 TTRL 23.69 23.63 37.42 38.07 Intuitor 6.87 7.01 8.89 9.42 
+
+Hi-TTRL 28.79 28.24 44.95 40.15 
+
+Table 6: Answer accuracy (%) on GPQA under greedy@1 
+
+and mean@16 . The best result in each column is in bold ,and the second-best result is underlined. tion: the methods receive the question and answer choices but not the correct choice or expert explanation, and ground-truth answers are used only for final evaluation. We retain the GRPO, rollout, adaptive-hint, and decoding configura-tions described in Appendix A, and report answer accuracy under greedy@1 and mean@16 .
+
+Results. Table 6 shows that Hi-TTRL achieves the highest accuracy for both backbones and decoding protocols. Rel-ative to TTRL, it improves Qwen3-1.7B-Base by 5.10 and 4.61 percentage points under greedy@1 and mean@16 , re-spectively, and improves Qwen3-4B-Base by 7.53 and 2.08 points. The largest gain occurs with Qwen3-4B-Base under greedy decoding, where accuracy increases from 37.42% to 44.95%. TTRL is the strongest baseline in every setting, while Hi-TTRL consistently adds further gains, indicating that regulating rollout consensus before pseudo-label con-struction is also beneficial for expert-level scientific question answering. Although this experiment covers only GPQA and two general-purpose backbones, it provides initial evidence that the mechanism is not confined to mathematical bench-marks. 
+
+## G : Computational Cost Analysis 
+
+This section measures the computational overhead of Hi-TTRL relative to standard TTRL on AIME-2024 with Qwen2.5-Math-1.5B. Because Hi-TTRL invokes power-target hint generation and second-stage completion only when first-stage consensus falls outside the target interval, its overhead depends on the trigger rate rather than uniformly doubling the pipeline. As shown in Figure 7, Hi-TTRL uses 75.3 GPU-hours compared with 48.8 GPU-hours for TTRL, a 1.54 × increase in end-to-end allocated GPU time. Panel (a) isolates actor-update compute: Hi-TTRL reaches 0.0089 PF-days versus 0.0057 PF-days for TTRL, corre-sponding to 1.57 ×. This ratio closely tracks the 1.58 × in-crease in training tokens, and both curves grow approxi-mately linearly. Panel (b) includes the full training and eval-uation pipeline. Its similar 1.54 × ratio indicates that the addi-tional cost primarily reflects computation on hint-augmented rollouts rather than idle time or scheduling overhead. Panels (c) and (d) further localize this overhead. The ad-ditional GPU time is concentrated in rollout generation, ac-tor update, and log-probability/reference computation, while initialization remains small. Relative to TTRL, Hi-TTRL uses 1.57 × actor compute, 1.54 × allocated GPU time, 0 50 100 150 200               
+
+> Training step
+> 0.000 0.002 0.004 0.006 0.008 0.010
+> Estimated compute (PF-days)  0.0089 0.0057
+> (a) Cumulative actor-update compute
+> Hi-TTRL TTRL 050 100 150 200
+> Training step
+> 020 40 60
+> Allocated GPU time (GPU-hours)  75.3 48.8
+> (b) End-to-end GPU allocation
+> 020 40 60 80
+> Allocated GPU time (GPU-hours)
+> TTRL Hi-TTRL 75.3 48.8
+> (c) GPU-time breakdown by pipeline stage
+> 1.0 1.2 1.4 1.6
+> Hi-TTRL / TTRL (ratio)
+> Actor compute GPU time Train tokens GPU energy Peak GPU memory Throughput Actor MFU
+> 1.57x 1.54x 1.58x 1.48x 0.99x 1.02x 0.98x
+> (d) Relative compute-cost pivot
+> Cost / workload Efficiency Rollout generation Actor update Validation Log-prob + reference Other / initialization
+
+Figure 7: Computational cost comparison between Hi-TTRL and standard TTRL on AIME-2024 with Qwen2.5-Math-1.5B. The panels report cumulative actor-update compute, end-to-end GPU allocation, GPU-time breakdown by pipeline stage, and relative cost/efficiency ratios. 
+
+1.58 × training tokens, and 1.48 × GPU energy. In contrast, peak memory ( 0.99 ×), throughput ( 1.02 ×), and actor MFU (0.98 ×) remain nearly unchanged. Hi-TTRL therefore in-creases total computation without materially reducing hard-ware efficiency. Together with the sample-budget control in Appendix D, this result attributes the added cost to selective consensus-adaptive sampling rather than uniform or ineffi-cient scaling of the entire pipeline. 
+
+## H : Preliminary-Experiment Metrics 
+
+Figure 2 tracks four branch-level diagnostics during stan-dard TTRL training. At each training step, every prompt is assigned to the low-, mid-, or high-consensus branch accord-ing to the consensus strength of its rollout group. The 16 rollouts selected from that group for the GRPO update in-herit the same branch label, and the following metrics are computed separately for each branch. 
+
+Branch Sample Count. This metric counts the update roll-outs assigned to a branch at a given training step. Since every prompt contributes the same number of update roll-outs, it also reflects how frequently prompt groups fall into each consensus range over the course of training. 
+
+Maximum Positive Advantage. This metric records the largest positive normalized GRPO advantage among the up-date rollouts in a branch. It captures the strongest probability-increasing signal produced by that branch and therefore in-dicates how aggressively a single rewarded rollout can influ-ence the policy update. 
+
+Wrong-Promoted Rate. This metric measures the fraction of branch-assigned update rollouts that receive a positive nor-malized advantage despite having an incorrect final answer under the ground-truth annotation. It quantifies how often the majority-voting reward promotes an erroneous rollout. 
+
+Ground-Truth Branch Accuracy. This metric measures the fraction of update rollouts in a branch whose extracted fi-nal answers match the ground-truth answers, regardless of the signs of their advantages. It reflects the underlying an-swer quality of each consensus branch. Ground-truth annota-tions are used only to compute the wrong-promoted rate and branch accuracy for this diagnostic analysis; they are never used to construct rewards or update the policy.

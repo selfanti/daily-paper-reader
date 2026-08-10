@@ -1,0 +1,570 @@
+Title: Contextual Information Policy Optimization for Search Agents
+
+URL Source: https://arxiv.org/pdf/2608.06128v1
+
+Published Time: Fri, 07 Aug 2026 01:06:14 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Contextual Information Policy Optimization for Search Agents 
+
+## Xingyu Guo 1, Wei Chen 2, Linlin Yang 3∗, Baochang Zhang 2
+
+1National College for Excellent Engineers, Beihang University, Beijing, China 
+
+2School of Artificial Intelligence, Beihang University, Beijing, China 
+
+3State Key Laboratory of Media Convergence and Communication, Communication University of China, Beijing, China 22373140@buaa.edu.com 
+
+Abstract 
+
+Search agents extend large language models beyond static parametric memory by enabling them to acquire and use ex-ternal evidence during multi-step reasoning. For knowledge-intensive tasks involving complex or evolving information, their reliability depends not only on retrieving relevant ev-idence but also on using it to guide subsequent reasoning. However, existing methods primarily reward final-answer cor-rectness or intermediate progress, without directly assessing whether post-retrieval actions are grounded in the retrieved evidence. This misalignment encourages prior-driven reason-ing: agents form conclusions based on internal knowledge and use retrieval mainly to confirm them, resulting in confirma-tion bias and inefficient evidence use. To address this issue, we propose Contextual Information Policy Optimization (CIPO), an evidence-oriented reinforcement learning framework that explicitly aligns policy optimization with external evidence use. CIPO assigns dense, turn-level credit to reasoning ac-tions influenced by retrieved information, while combining this evidence-use signal with a global outcome reward to pre-serve answer correctness. With this manner, CIPO discourages evidence-detached guesses and promotes reasoning trajecto-ries in which retrieved facts can guide or revise subsequent reasoning. Importantly, CIPO requires neither human process annotations nor an additional reward model. Extensive exper-iments on seven in-domain and out-of-domain benchmarks show that CIPO reduces the prevalence of prior-driven rea-soning and achieves excellent performance on most tasks. 
+
+Code — https://github.com/gxingyu/cipo 
+
+## 1 Introduction 
+
+Large language models (LLMs) are increasingly equipped with external retrieval tools (Lewis et al. 2020), transform-ing them from passive text generators into search agents that actively interact with external knowledge sources during rea-soning (Yao et al. 2022; Trivedi et al. 2023). For tasks requir-ing complex or up-to-date knowledge, these agents can miti-gate the limitations of static parametric memory by dynami-cally determining when and what to retrieve, extracting use-ful evidence from noisy retrieval results, and incorporating external information into their reasoning trajectories (Mallen et al. 2023; Asai et al. 2024). However, effective search re-quires agents to coordinate retrieval and reasoning through 
+
+> ∗
+
+Corresponding author. The German who is credited with inventing the V-2 rocket and Saturn V was also a supervisor of what NASA program?               
+
+> <think>… Wernher von Braun …
+> The answer may be the Mercury program …</think>
+> <search>Wernher von Braun supervised the Mercury program</search>
+> <information>…Von Braun planned
+> to design a Mercury
+> spacecraft …</information>
+> <think>… they do not prove …
+> Another possible answer is the Apollo
+> program …</think>
+> <search>… Wernher von Braun
+> supervised the Apollo
+> program…</search>
+> <information>… Understanding von Braun’s role in the Apollo
+> program …</information>
+> <answer> Apollo program </answer>
+> <think> … First, identify who the German described in the clue is …
+> </think>
+> <search>German engineer V-2
+> rocket Saturn V </search>
+> <information> … Wernher von
+> Braun …V -2 rocket … Saturn V
+> launch vehicle... </information>
+> <think> …. search for the NASA program that Wernher von Braun
+> supervised ... </think>
+> <search>… Wernher von Braun
+> supervises NASA program …
+> </search>
+> <information> ... Applications Technology Satellites …supervision of
+> Wernher von Braun.…</information>
+> Prior-Driven Reasoning Evidence-Driven Reasoning
+> <answer> Applications Technology
+> Satellites </answer>
+
+Figure 1: Illustrative case for the same question. Prior-driven reasoning uses retrieval mainly to confirm a parametric guess, whereas evidence-driven reasoning lets retrieved evi-dence change the next action. a complex, dynamic sequence of decisions. Reinforcement learning (Jin et al. 2025) provides a natural paradigm for training search agents, as it enables them to explore this de-cision space through trial and error, and learn how to inter-leave tool use with multi-step reasoning (Wang et al. 2026b; He et al. 2026). In this way, search agents can progressively develop the ability to solve knowledge-intensive tasks with reduced human intervention. Existing reinforcement learning approaches for search agents broadly fall into two paradigms. The first relies pri-marily on sparse outcome rewards (Jin et al. 2025; Zheng et al. 2025), and optimizes multi-turn interaction trajecto-ries by evaluating the correctness of the final answer. How-ever, the credit assignment problem in long-context reasoning makes supervision based solely on the final outcome exces-sively sparse. To address this limitation, the second paradigm (Feng et al. 2026; Wang et al. 2026b) introduces denser su-pervision at reasoning steps in addition to outcome rewards. These methods seek to assign process rewards to intermediate arXiv:2608.06128v1 [cs.AI] 6 Aug 2026 reasoning steps that move the trajectory toward the correct answer. Although both paradigms can improve agent per-formance, they share a fundamental limitation: prior driven reasoning caused by reward misalignment. Specifically, ex-isting objectives assess only final answer correctness or the probability that a trajectory converges toward the correct an-swer. They do not directly evaluate whether reasoning actions after retrieval genuinely depend on newly retrieved evidence. Consequently, an agent can receive high rewards even when it forms a hypothesis solely from internal parametric knowl-edge and reduces subsequent retrieval to a mere confirmation procedure for that generated hypothesis. This reward misalignment substantially degrades the use of external knowledge and predisposes agents to confirma-tion bias. A model can reach a conclusion entirely from its internal prior knowledge, while retrieval merely endorses that conclusion and fails to correct or guide subsequent reasoning claims. As illustrated in Figure 1, prior driven reasoning dif-fers fundamentally from the desired evidence driven reason-ing. In a prior driven trajectory, the model appears to invoke a search, and relevant supporting facts appear in the context, but its actual reasoning does not incorporate this external in-formation and merely confirms its initial hypothesis. When the model has uncertain parametric memory or hallucinated knowledge about facts in the long tail, such seemingly valid but spurious reasoning is harmful and leaves high-quality retrieved evidence entirely unused (Mallen et al. 2023). Con-tinuing to assign full rewards to such misaligned trajectories further reinforces confirmation bias. This limitation creates an urgent need for a new training mechanism that penalizes reasoning that ignores newly retrieved evidence and assigns appropriate credit to steps that genuinely use it. To this end, we propose Contextual Information Policy Optimization (CIPO), an evidence-oriented reinforcement learning framework that rewards search agents for substan-tively using retrieved external evidence at intermediate rea-soning steps. For each reasoning step after retrieval, CIPO constructs a local contrastive signal by comparing the gen-eration likelihood of an action when evidence is visible with that when evidence is masked. This comparison yields the Evidence-Access Log-Likelihood Ratio (EALR), which di-rectly quantifies the sensitivity of the current reasoning ac-tion to the most recently retrieved passages without requiring an external reward model or human annotations. CIPO con-verts EALR into dense rewards at each reasoning turn and combines these rewards with global outcome supervision for the final answer. It therefore penalizes ineffective reasoning steps that make guesses from internal parametric knowledge without actually using retrieved external evidence. In summary, the main contributions of this paper are as fol-lows: (i) We identify reward misalignment caused by prior-driven reasoning and propose CIPO, an evidence-oriented reinforcement learning framework that promotes the use of retrieved evidence. (ii) We develop EALR, a dense step-level reward that compares action likelihoods with and without retrieved evidence, requiring neither human annotations nor additional rollouts. (iii) Experiments on seven in-domain and out-of-domain benchmarks show that CIPO substantially re-duces prior-driven reasoning and outperforms state-of-the-art baselines on most tasks. 
+
+## 2 Related Work 
+
+Search-Integrated Reasoning. RAG systems condition language-model outputs on passages retrieved from external corpora (Lewis et al. 2020), with subsequent studies sur-veying its broader design space and empirical best practices (Gao et al. 2023; Wang et al. 2024b). ReAct (Yao et al. 2022), IRCoT (Trivedi et al. 2023), and Self-RAG (Asai et al. 2024) further integrate retrieval with iterative reason-ing, while EviNote-RAG (Dai et al. 2025) and CoRAG (Wang et al. 2024c) improve evidence organization and retrieval ef-ficiency. More recent RL-based agents, including Search-R1 (Jin et al. 2025), R1-Searcher (Song et al. 2025), DeepRe-searcher (Zheng et al. 2025), and Search-R2 (He et al. 2026), learn to formulate queries and interact with external search environments. Recent work further jointly optimizes retriev-ers and reasoners or introduces retrieval-aware intermediate supervision (Zeng et al. 2026; Goel et al. 2026; Wang et al. 2026a). This direction has expanded to web, tool-use, and deep-research settings (Qi et al. 2025; Li, Zou, and Liu 2025; Dai et al. 2026; Deng et al. 2025; Zhang et al. 2025b), with recent surveys providing broader taxonomies of these agents (Huang et al. 2025; Ning et al. 2025; Qu et al. 2025; Zheng et al. 2024). Despite this progress, these methods primarily optimize retrieval behavior, answer accuracy, or retrieval-derived credit signals, without directly measuring whether a specific retrieved observation changes the distribution of the agent’s subsequent reasoning action. 
+
+Credit Assignment in Multi-Turn RL. LLM agents are commonly optimized with PPO (Schulman et al. 2017), GRPO (Shao et al. 2024) and RLOO (Ahmadian et al. 2024), while systems such as DeepSeek-R1 (Guo et al. 2025) and DAPO (Yu et al. 2026) demonstrate the scalability of re-inforcement learning with verifiable rewards. However, ter-minal rewards provide limited guidance for long interaction trajectories, motivating process supervision in mathemati-cal reasoning and agentic RAG (Wang et al. 2024a; Zhang et al. 2026). Search-specific methods provide denser feed-back through intermediate rewards or finer-grained advan-tage estimation: StepSearch (Wang et al. 2025) introduces step-wise optimization, ReasonRAG (Zhang et al. 2026) su-pervises multiple stages of retrieval and generation, GiGPO (Feng et al. 2026) estimates group-relative step advantages, and IGPO (Wang et al. 2026b) measures turn-wise progress toward the correct answer. Related analyses connect interme-diate probability gains with reasoning progress (Gan, Liao, and Liu 2025), and broader surveys summarize emerging agentic RL objectives (Zhang et al. 2025a). Yet, these sig-nals primarily measure task progress or correctness rather than the dependence of reasoning actions on newly retrieved evidence available to the agent at each reasoning step. 
+
+## 3 Proposed Method 
+
+In this section, we present CIPO, an evidence-oriented re-inforcement learning framework for search agents. The key idea is to distinguish actions that genuinely depend on re-trieved evidence from those driven primarily by the model’s Visible  ＋ ＋
+
+Masked  ＋ ＋
+
+𝑥 𝑘  𝐸 𝑘  𝑎 𝑘  ℓ𝑣𝑖𝑠 
+
+𝑥 𝑘  𝐸 𝑘  𝑎 𝑘  ℓ𝑚𝑎𝑠𝑘 
+
+> loglik
+> loglik
+
+Turn 1 
+
+Turn k-1 
+
+Turn k 
+
+Turn T 
+
+> … …
+> … …
+> ……
+
+Policy Update 
+
+Question 
+
+Search Agent 
+
+Rollout Group 
+
+# …
+
+think  search  response 
+
+# … answer 
+
+𝑟 𝑜 
+
+# -
+
+𝑟 𝑜 
+
+𝑠 𝑖 1
+
+𝑠 𝑖 
+
+> 𝑘−1
+> Norm
+> GAE
+
+𝑟 𝑜 
+
+𝑟 𝑜 
+
+𝑟 𝑜 
+
+𝑠 𝑖 
+
+> 𝑘
+
+𝑠 𝑖 
+
+> 𝑇
+
+𝐴 𝑖 1
+
+𝐴 𝑖 
+
+> k−1
+
+𝐴 𝑖 𝑘 
+
+𝐴 𝑖 𝑇  
+
+> ℓ𝑣𝑖𝑠 − ℓ 𝑚𝑎𝑠𝑘
+
+𝑠 𝑘  
+
+> Prior -Driven Evidence -Driven
+
+𝑠 𝑘 Figure 2: The overall architecture of CIPO. It evaluates each post-retrieval reasoning step under evidence-visible and evidence-masked conditions, computes an EALR-based reward, and integrates it with outcome supervision for policy optimization. parametric prior. CIPO first quantifies the effect of retrieved information on subsequent actions through EALR, and then integrates this turn-level signal with outcome supervision for policy optimization, as illustrated in Figure 2. 
+
+3.1 EALR Reward 
+
+To measure whether retrieved information affects subsequent decisions, we first represent each trajectory τi as a sequence of Ti interaction turns. This turn-level formulation allows us to compare the model’s post-retrieval reasoning and search actions under evidence-visible and evidence-masked condi-tions, with all preceding trajectory context held fixed: 
+
+Ri,t = Bthink  
+
+> i,t
+
+⊕ Bsearch  
+
+> i,t
+
+⊕ Ei,t , t = 1 , . . . , T i, (1) where the three spans correspond to the tagged <think> ,
+
+<search> , and <information> blocks, respectively, and ⊕ denotes sequence concatenation. For each t < T i, let hi,t denote the complete trajectory prefix ending at the <search> block of turn t. Thus, hi,t 
+
+contains the original query, all preceding turns, and the cur-rent <think> and <search> blocks, but not the current information block Ei,t .We evaluate whether Ei,t affects the policy-generated blocks in the next turn. We further analyze the choice of next-turn action as the EALR target and compare it with full-trajectory scoring in Appendix D. Specifically, the tar-get action is 
+
+ai,t +1 = Bthink  
+
+> i,t +1
+
+⊕ Bsearch  
+
+> i,t +1
+
+= ( y1, . . . , y m). (2) The target includes all tokens in the next <think> 
+
+and <search> blocks. Environment-generated 
+
+<information> tokens are never included in the scored action. We score the same observed action under two otherwise identical conditions. In the evidence-visible condition, the action has normal causal access to the information block from the preceding turn: 
+
+ℓvis (ai,t +1 ) = 
+
+> m
+
+X
+
+> j=1
+
+log πθold (yj | hi,t , E i,t , y <j ) . (3) In the evidence-masked condition, we retain the original token sequence and apply an additive attention mask during teacher-forced scoring. At every Transformer layer and atten-tion head, each token in the target action ai,t +1 is prevented from attending to any token in the preceding information block Ei,t by setting the corresponding attention logits to 
+
+−∞ before the softmax operation. All other attention rela-tions remain unchanged: target tokens retain access to the trajectory prefix hi,t and to preceding target tokens y<j .We denote this attention-masked condition by M (Ei,t ).Its action log-likelihood is 
+
+ℓmask (ai,t +1 ) = 
+
+> m
+
+X
+
+> j=1
+
+log πθold (yj | hi,t , M (Ei,t ), y <j ) .
+
+(4) Masking does not delete or replace the information tokens. Token identities, sequence length, position indices, preceding trajectory history, and model parameters remain unchanged. Only the next-turn action tokens’ attention access to the im-mediately preceding <information> block is removed. We define the token-averaged EALR for the transition from turn t to turn t + 1 as 
+
+sealr  
+
+> i,t
+
+= 1
+
+m [ℓvis (ai,t +1 ) − ℓmask (ai,t +1 )] = 1
+
+m log πθold (ai,t +1 | hi,t , E i,t )
+
+πθold (ai,t +1 | hi,t , M (Ei,t )) .
+
+(5) Both likelihoods are computed by teacher forcing the same collected next-turn action through the frozen rollout policy πθold . Therefore, EALR requires neither an additional tra-jectory rollout nor an external reward model. The resulting reward is detached and kept fixed during the corresponding policy update to maintain a fixed credit signal. A positive EALR means that access to the retrieved in-formation increases the likelihood of the observed next-turn reasoning and search action. A value near zero indicates that the same action is almost equally likely without access to that information, while a negative value indicates that masking the information makes the action more likely. For the sequence-level log-likelihood ratio, 
+
+S(a; h, E ) = log πθold (a | h, E )
+
+πθold (a | h, M (E)) . (6) Its expectation under the evidence-visible policy is 
+
+Ea∼πθold [S(a; h, E )] = DKL 
+
+
+
+πθold (· | h, E ) ∥
+
+πθold (· | h, M (E)) 
+
+
+
+.
+
+(7) EALR is a length-normalized policy-level evidence-access signal. It quantifies the likelihood contrast between evidence-visible and evidence-masked conditions for the same post-retrieval reasoning and search action. 
+
+3.2 Turn-Level Advantage Allocation 
+
+Having obtained an EALR score for each post-retrieval tran-sition, we next combine this evidence-use signal with the terminal outcome reward. This design provides dense turn-level feedback while retaining supervision for final-answer correctness. To ensure that neither reward type dominates because of scale differences, we normalize them separately within each rollout group before constructing advantages. For each query q, we sample a group of G trajectories. Each trajectory i yields a terminal outcome reward rout i at turn Ti
+
+and EALR scores {sealr  
+
+> i,k
+
+}k<T i at post-retrieval turns. We use 
+
+realr  
+
+> i,k
+
+= sealr  
+
+> i,k
+
+as the step-level reward. The EALR reward is detached and remains fixed during the corresponding policy update. Since realr and rout differ in scale, normalizing them inde-pendently within the rollout group G ensures stable relative advantage estimates. The normalized reward ˜ri,k for the k-th turn is computed by standardizing the respective rewards across all valid turns in the group: 
+
+˜ri,k =
+
+  
+
+> realr
+> i,k −mean (realr )
+> std (realr )
+
+, 1 ≤ k < T i,  
+
+> rout i−mean (rout )
+> std (rout )
+
+, k = Ti. (8) While ˜ri,k captures the relative quality of each individual turn, it ignores the impact of current decisions on future turns. To incorporate such long-horizon dependencies, we compute the turn-level discounted return (advantage) ˆAi,t 
+
+for turn t via discounted accumulation: 
+
+ˆAi,t =
+
+> Ti
+
+X
+
+> j=t
+
+γj−t ˜ri,j , (9) where γ ∈ (0 , 1] is the discount factor. This formulation integrates local evidence-dependence feedback with global task-success supervision, yielding turn-level advantages that propagate both signals across the full reasoning trajectory. 
+
+3.3 Policy Optimization Objective 
+
+Building on the turn-level advantages defined above, CIPO optimizes the policy using a clipped objective. Because re-trieved evidence is returned by the environment rather than generated by the policy, its tokens serve only as contextual observations and are excluded from the optimization loss. We apply each turn-level advantage to the model-generated reasoning and search tokens within the corresponding turn of the collected trajectory. We broadcast the advantage ˆAi,t to all model-generated decision tokens within turn t. Let Mi denote the set of model-generated token indices in trajectory i, and let t(s) be a mapping function from token index s to its corresponding turn. For each decision token yi,s , the importance sampling ratio is defined as ρi,s (θ) = πθ (yi,s |hi,s )  
+
+> πθold (yi,s |hi,s )
+
+, where hi,s de-notes the historical context encompassing the query and all preceding tokens up to step s in trajectory i. Here, θ and θold 
+
+represent the parameters of the current policy and the old behavior policy used for trajectory sampling, respectively. We first define the clipped loss for a single decision token s:
+
+LCLIP i,s (θ) = min 
+
+
+
+ρi,s (θ) ˆAi,t (s),
+
+clip (ρi,s (θ), 1 − ϵ, 1 + ϵ) ˆAi,t (s)
+
+
+
+,
+
+(10) where ϵ is a hyperparameter determining the clipping bound to prevent destructively large policy updates. The overall CIPO objective is then defined as the expected return minus a KL divergence penalty: 
+
+JCIP O (θ) = Eq,τ 
+
+"
+
+1
+
+G
+
+> G
+
+X
+
+> i=1
+
+1
+
+|M i|
+
+X
+
+> s∈M i
+
+LCLIP i,s (θ)
+
+− βDKL (πθ || πref )
+
+#
+
+,
+
+(11) where Eq,τ is shorthand for Eq∼D ,τ ∼πθold , indicating the expectation over queries q from the dataset D and trajec-tories τ sampled from the old policy. G is the group size of rollouts per query. β is the coefficient for the per-token Kullback-Leibler (KL) divergence penalty against the refer-ence model πref , which prevents policy over-optimization and preserves generation fluency. Optimizing JCIP O com-bines task-success supervision with relative credit for actions that are more sensitive to accessible external evidence. 
+
+## 4 Experiments 
+
+4.1 Experimental Setup 
+
+Datasets & Metrics. We evaluate the effectiveness of the proposed framework across both in-domain and out-of-domain question-answering benchmarks within an agentic search setting. The in-domain evaluation comprises Natu-ral Questions (Kwiatkowski et al. 2019), TriviaQA (Joshi et al. 2017), HotpotQA (Yang et al. 2018), and 2WikiMulti-HopQA (Ho et al. 2020). For the out-of-domain evaluation, we utilize MuSiQue (Trivedi et al. 2022), Bamboogle (Press et al. 2023), and PopQA (Mallen et al. 2023). We train on the Methods In-domain Out-of-domain Avg. NQ TQ HotpotQA 2Wiki MuSiQue Bamboogle PopQA 
+
+Qwen2.5-7B-Base/Instruct 
+
+CoT 0.252 0.301 0.284 0.261 0.155 0.354 0.372 0.283 CoT+RAG 0.312 0.385 0.364 0.342 0.201 0.402 0.461 0.352 Search-R1-base 0.331 0.447 0.457 0.434 0.265 0.450 0.430 0.402 Search-R1-instruct 0.285 0.362 0.401 0.382 0.223 0.481 0.472 0.372 R1-searcher 0.345 0.461 0.462 0.441 0.281 0.472 0.456 0.417 DeepResearcher 0.362 0.483 0.471 0.452 0.274 0.488 0.455 0.426 StepSearch-base 0.381 0.521 0.482 0.461 0.291 0.485 0.438 0.437 StepSearch-instruct 0.321 0.422 0.425 0.401 0.252 0.463 0.428 0.387 ReasonRAG 0.401 0.552 0.493 0.421 0.302 0.490 0.465 0.446 GiGPO 0.423 0.601 0.491 0.412 0.285 0.495 0.461 0.453 IGPO 0.447 0.683 0.482 0.385 0.213 0.501 0.488 0.457 
+
+CIPO(Ours) 0.467 0.726 0.521 0.460 0.322 0.552 0.482 0.504 Qwen2.5-3B-Base/Instruct 
+
+CoT 0.247 0.270 0.239 0.248 0.148 0.274 0.364 0.256 CoT+RAG 0.306 0.346 0.306 0.325 0.192 0.311 0.450 0.319 Search-R1-base 0.325 0.401 0.384 0.412 0.253 0.348 0.420 0.363 Search-R1-instruct 0.279 0.325 0.337 0.363 0.213 0.372 0.461 0.336 R1-searcher 0.338 0.414 0.388 0.419 0.268 0.365 0.446 0.377 DeepResearcher 0.355 0.434 0.396 0.429 0.261 0.380 0.445 0.386 StepSearch-base 0.374 0.468 0.405 0.440 0.277 0.375 0.428 0.395 StepSearch-instruct 0.315 0.379 0.357 0.381 0.240 0.358 0.418 0.350 ReasonRAG 0.393 0.496 0.414 0.400 0.288 0.381 0.454 0.404 GiGPO 0.415 0.540 0.413 0.391 0.272 0.383 0.450 0.409 IGPO 0.438 0.613 0.405 0.366 0.203 0.388 0.387 0.400 
+
+CIPO(Ours) 0.458 0.652 0.438 0.437 0.307 0.427 0.471 0.456 
+
+Table 1: Main results on in-domain and out-of-domain question answering benchmarks. We report F1 scores. Bold numbers indicate the best result within each backbone block, and underlined numbers indicate the second-best result. training splits of the in-domain datasets and evaluate on the test splits of all seven datasets. To ensure consistency with prior work (Wang et al. 2026b), We report the word-level F1 score as the primary evaluation metric, which is computed as the harmonic mean of precision and recall between the predicted responses and the reference answers. 
+
+Baselines. We compare CIPO with three categories of baselines. The first category contains methods without search-specific RL training: chain-of-thought (CoT) (Wei et al. 2022) and CoT augmented with retrieved evidence (CoT+RAG) (Lewis et al. 2020). The second category con-tains outcome-only RL search agents, including Search-R1 (Jin et al. 2025), R1-Searcher (Song et al. 2025), and DeepRe-searcher (Zheng et al. 2025), which optimize search trajecto-ries using final-answer rewards. The third category contains process-supervised RL methods that combine outcome re-wards with intermediate supervision, including StepSearch (Wang et al. 2025), ReasonRAG (Zhang et al. 2026), GiGPO (Feng et al. 2026), and IGPO (Wang et al. 2026b). 
+
+Implementation Details. We evaluate all methods with Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct (Yang et al. 2024) as backbone models. Training is conducted with the verl framework (Sheng et al. 2025) on 8 × NVIDIA A100-80G GPUs, using a discount factor of γ = 1 .0. At each training step, we sample 32 prompts and generate 16 rollouts per prompt, with at most five interaction turns per rollout. We use a local retrieval service consistent with the Search-R1 environment architecture to provide reproducible search in-teractions. All implemented RL methods use the same train-ing data, retrieval environment, rollout-group size, maximum number of turns, and training budget. Detailed optimization settings and prompt templates for training and inference are provided in Appendix C for full reproducibility. 
+
+4.2 Performance Comparison 
+
+Table 1 reports word-level F1 on four in-domain and three held-out out-of-domain question-answering bench-marks. CIPO consistently achieves the highest macro-average F1 scores for both evaluated model sizes. Specifically, utiliz-ing the Qwen2.5-7B-Instruct model allows CIPO to reach a score of 0.504, which exceeds the next best method (IGPO at 0.457) by 4.7 F1 points. Similarly, the Qwen2.5-3B-Instruct backbone enables CIPO to score 0.456, surpassing its strongest competitor (GiGPO at 0.409) by an identical mar-gin of 4.7 points. This consistent improvement demonstrates that CIPO’s advantages are effective across model scales rather than being exclusive to larger architectures within the evaluated Qwen2.5 model family. When analyzing the individual datasets, the 7B iteration of CIPO secures the highest results on Natural Questions, TriviaQA, HotpotQA, MuSiQue, and Bamboogle. The 3B 0 20 40 60 80 Training Step 0.3 0.4 0.5 0.6 0.7 0.8 F1 Score 
+
+> TQ
+> IGPO CIPO
+
+(a) TriviaQA (ID) 0 20 40 60 80 Training Step 0.24 0.32 0.40 0.48 F1 Score  
+
+> HotpotQA
+> IGPO CIPO
+
+(b) HotpotQA (ID) 0 20 40 60 80 Training Step 0.08 0.16 0.24 0.32 F1 Score  
+
+> MuSiQue
+> IGPO CIPO
+
+(c) MuSiQue (OOD) 0 20 40 60 80 Training Step 0.16 0.24 0.32 0.40 0.48 F1 Score  
+
+> Bamboogle
+> IGPO CIPO
+
+(d) Bamboogle (OOD) 
+
+Figure 3: Representative step-wise validation-set F1 trajectories on two in-domain and two out-of-domain benchmarks. Each panel compares CIPO with IGPO over 80 training steps. The vertical scale is selected separately for each dataset. iteration replicates this success across these five bench-marks and additionally claims the top score on PopQA. Al-though StepSearch performs marginally better on 2WikiMul-tiHopQA for both model scales, and IGPO achieves the top 7B result on PopQA, CIPO still maintains the most substan-tial overall performance gains across the evaluated bench-marks under both model configurations. Importantly, CIPO demonstrates strong generalization capabilities in held-out, out-of-domain evaluations. Even though the training process relies entirely on in-domain datasets, the 7B model outperforms competitors on MuSiQue and Bamboogle, and the 3B model leads across all three out-of-domain benchmarks, including PopQA. These robust out-of-domain results validate the effectiveness of employing EALR-based turn-level credit to improve the performance of search agents under the evaluated retrieval setting. 
+
+4.3 Ablation Study 
+
+Table 2 evaluates the individual and combined effects of terminal outcome supervision and EALR. We addition-ally report evidence utilization metrics, including answer-supportive evidence utilization (Sup.) and irrelevant evi-dence utilization (Irr.), their definitions and evaluation pro-tocol are provided in Appendix E. Compared with outcome-only training, EALR-only training improves the average F1 from 0.336 to 0.393 for the 3B model and from 0.372 to 0.430 for the 7B model. It also substantially increases supportive-evidence utilization, from 18.6% to 43.8% for the 3B model and from 21.9% to 48.5% for the 7B model. However, the cor-responding irrelevant-evidence utilization rates increase to 31.7% and 28.9%, respectively, indicating that EALR alone encourages evidence responsiveness but does not fully dis-tinguish useful evidence from irrelevant content. Combining EALR with outcome supervision yields the strongest performance across all reported metrics. Relative to EALR-only training, the combined objective improves the average F1 from 0.393 to 0.456 for the 3B model and from 0.430 to 0.504 for the 7B model. More importantly, it further increases supportive-evidence utilization to 55.2% and 60.7%, while reducing irrelevant-evidence utilization to 10.6% and 9.1%, respectively. These results demonstrate the complementary roles of the two rewards: EALR encour-ages the policy to respond to retrieved information, whereas outcome supervision favors evidence use that contributes to correct task completion, resulting in more selective use of 0 40 80 120 160 Training Step 40 50 60 70 80 Prior Rate (%)     
+
+> 73.2% (+8.2) 44.0% (-21.0)
+> IGPO CIPO 040 80 120 160 Training Step 20 30 40 50 Prior Rate (%)
+> 45.7% (+10.7) 17.1% (-17.9)
+> IGPO CIPO
+
+(a) All validation samples (b) Correctly answered samples 
+
+Figure 4: Prior-driven rates during training. CIPO maintains lower measured rates than IGPO on both all validation sam-ples and correctly answered samples. answer-supportive evidence. We further investigate whether CIPO promotes selective rather than indiscriminate evidence dependence through counterfactual masking experiments in Appendix E. 
+
+Model Outcome EALR Sup. ↑ Irr. ↓ ID OOD Avg. 3B 
+
+✓ 18.6 12.4 0.326 0.349 0.336 
+
+✓ 43.8 31.7 0.407 0.374 0.393 
+
+✓ ✓ 55.2 10.6 0.496 0.402 0.456 
+
+7B 
+
+✓ 21.9 11.3 0.358 0.392 0.372 
+
+✓ 48.5 28.9 0.437 0.422 0.430 
+
+✓ ✓ 60.7 9.1 0.544 0.452 0.504 
+
+Table 2: Reward ablation summarized by domain-level F1. ID and OOD are averages over the four in-domain and three out-of-domain benchmarks. Full results are in Appendix A. 
+
+4.4 Analysis of Prior-Driven and Evidence-Driven 
+
+We evaluate prior-driven reasoning on the test sets of all seven benchmarks using an LLM-assisted evaluation pipeline. All details are provided in Appendix F. Figure 4 traces prior-driven rates during training on all validation samples and on the subset of correctly answered samples. In both views, IGPO’s measured prior-driven rate increases over train-ing, whereas CIPO maintains a lower rate and decreases steadily. The widening gap shows that CIPO more consis-tently discourages trajectories whose answer-supporting ev-idence originates from the model’s parametric knowledge rather than from retrieved responses, including among tra-jectories that reach the correct final answer. Figure 5 provides the complementary test-set analy-sis across the seven benchmarks. CIPO achieves higher TQ PopQA HotpotQA MuSiQue NQ Bamboogle 2Wiki 0 10 20 30 40 50 IGPO CIPO TQ PopQA HotpotQA MuSiQue NQ Bamboogle 2Wiki 0 20 40 60 80 100 IGPO CIPO (a) All test samples (b) Correctly answered samples 
+
+Figure 5: Evidence-driven rates on the test sets across seven benchmarks. CIPO improves the measured rate on all test samples and on correctly answered trajectories. 
+
+Algorithm In-domain Out-of-domain Avg. NQ 2Wiki MuSiQue Bamboogle RLOO 0.378 0.323 0.227 0.457 0.410 PPO 0.394 0.322 0.233 0.489 0.421 GRPO 0.411 0.346 0.255 0.476 0.429 DAPO 0.401 0.358 0.264 0.501 0.443 GSPO 0.422 0.353 0.290 0.498 0.454 CIPO 0.467 0.460 0.322 0.552 0.504 
+
+Table 3: Comparison with alternative RL algorithms on Qwen2.5-7B-Instruct. Full results are in Appendix A. evidence-driven rates than IGPO on both all test samples and correctly answered trajectories, yielding a larger radar area in both panels. In particular, the overall evidence-driven rate increases from 29.9% for IGPO to 41.9% for CIPO, while the rate among correct trajectories increases from 59.4% to 70.2%. Under this diagnostic, these results indicate that CIPO more often grounds its subsequent reasoning steps in evidence returned by the retrieval service. 
+
+4.5 Comparison with RL Algorithms 
+
+We compare CIPO with RLOO, PPO, GRPO, DAPO, and GSPO using Qwen2.5-7B-Instruct as the base model. Ta-ble 3 reports representative single-hop and multi-hop re-sults from both the in-domain and out-of-domain evalua-tion regimes. Complete results on all seven benchmarks are provided in Appendix A. Among the evaluated approaches, CIPO achieves the highest average F1 of 0.504, exceeding the strongest competing average, achieved by GSPO (0.454), by 5.0 F1 points. The improvement is also reflected across all four representative benchmarks: CIPO improves over the strongest alternative from 0.422 to 0.467 on NQ, from 0.358 to 0.460 on 2Wiki, from 0.290 to 0.322 on MuSiQue, and from 0.501 to 0.552 on Bamboogle. These gains cover both single-hop and multi-hop question answering in the two evaluation regimes, demonstrating stronger aggregate per-formance under the reported experimental configuration. 
+
+4.6 Training Dynamics Across Benchmarks 
+
+Figure 3 tracks validation-set F1 over 80 training steps for CIPO and IGPO on two in-domain benchmarks, Triv-iaQA and HotpotQA, and two out-of-domain benchmarks, MuSiQue and Bamboogle. Across all four representative 
+
+Model Time (s) ∆Time ∆F1 G/C Qwen2.5-3B-Instruct 223.6 →244.1 9.17% 12.00% 1.31 Qwen2.5-7B-Instruct 417.2 →436.5 4.63% 17.48% 3.78 
+
+Table 4: Training efficiency of CIPO relative to GRPO. datasets, CIPO reaches higher F1 than IGPO early in training and maintains this advantage at later training steps. Despite dataset-specific fluctuations, this separation persists after the early training phase and remains visible near the final evalua-tion step. The trajectory-level comparison shows that the final performance gains of CIPO are reflected throughout training in both evaluation regimes rather than emerging only at the final checkpoint. Curves for the remaining benchmarks are provided in Appendix B for a complete benchmark-level view of training behavior across all evaluated settings. 
+
+4.7 Efficiency Analysis 
+
+Following the efficiency analysis in Search-R2 (He et al. 2026), we assess the practical training overhead of EALR relative to GRPO. EALR requires one additional evidence-masked scoring pass during training. Table 4 reports the resulting per-step wall-clock time relative to GRPO, together with the relative average-F1 improvement. The G/C met-ric is defined as the relative F1 gain divided by the rel-ative training-time increase. For Qwen2.5-3B-Instruct, the per-step time increases from 223.6 to 244.1 seconds, corre-sponding to a 9.17% overhead, while the relative average-F1 gain is 12.00%. For Qwen2.5-7B-Instruct, the per-step time increases from 417.2 to 436.5 seconds, or 4.63%, together with a 17.48% relative average-F1 gain. The gain-to-cost ra-tios are 1.31 and 3.78, respectively, indicating that the relative F1 improvements exceed the corresponding relative training-time increases for both backbones. EALR is used only to construct training rewards. At inference time, CIPO requires neither evidence masking nor additional scoring passes be-yond the standard search-agent interaction loop. 
+
+## 5 Conclusion 
+
+In this work, we proposed CIPO, a reinforcement learning framework for search agents that rewards evidence-sensitive reasoning while retaining outcome supervision. CIPO as-signs dense credit to actions whose generation depends on retrieved evidence. Across seven benchmarks, it improves performance and reduces prior-driven reasoning. All results highlight the value of explicitly rewarding evidence use. In the future, we plan to expand CIPO to handle longer tasks with multiple tools and test it with different search tools, types of data and constantly changing information. We’ll also work on better ways to make the training process for evidence-masked scoring less costly. 
+
+## References 
+
+Ahmadian, A.; Cremer, C.; Gallé, M.; Fadaee, M.; Kreutzer, J.; Pietquin, O.; Üstün, A.; and Hooker, S. 2024. Back to ba-sics: Revisiting REINFORCE-style optimization for learning from human feedback in LLMs. In Proceedings of the 62nd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , 12248–12267. Asai, A.; Wu, Z.; Wang, Y.; Sil, A.; and Hajishirzi, H. 2024. Self-rag: Learning to retrieve, generate, and critique through self-reflection. In International conference on learning rep-resentations , volume 2024, 9112–9141. Dai, Y.; Wang, G.; Wang, Y.; Dou, K.; Zhou, K.; Zhang, Z.; Yang, S.; Tang, F.; Yin, J.; Zeng, P.; et al. 2025. EviNote-RAG: Enhancing RAG Models via Answer-Supportive Evi-dence Notes. arXiv preprint arXiv:2509.00877 .Dai, Y.; Yang, S.; Wang, G.; Deng, Y.; Zhang, Z.; Yin, J.; Zeng, P.; Ying, Z.; Meng, C.; Yi, C.; et al. 2026. Careful queries, credible results: Teaching rag models advanced web search tools with reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence .Deng, Y.; Wang, G.; Ying, Z.; Wu, X.; Lin, J.; Xiong, W.; Dai, Y.; Yang, S.; Zhang, Z.; Wang, Q.; et al. 2025. Atom-searcher: Enhancing agentic deep research via fine-grained atomic thought reward. arXiv preprint arXiv:2508.12800 .Feng, L.; Xue, Z.; Liu, T.; and An, B. 2026. Group-in-group policy optimization for llm agent training. NeurIPS .Gan, Z.; Liao, Y.; and Liu, Y. 2025. Rethinking external slow-thinking: From snowball errors to probability of correct reasoning. arXiv preprint arXiv:2501.15602 .Gao, Y.; Xiong, Y.; Gao, X.; Jia, K.; Pan, J.; Bi, Y.; Dai, Y.; Sun, J.; Wang, M.; and Wang, H. 2023. Retrieval-augmented generation for large language models: A survey. 
+
+arXiv preprint arXiv:2312.10997 .Goel, H.; Udathu, A.; Jabbireddy, S.; Kalkar, P.; and Parulekar, A. 2026. S3-R1: Learning to Retrieve and An-swer Step-by-Step with Synthetic Data. arXiv preprint arXiv:2605.01248 .Guo, D.; Yang, D.; Zhang, H.; Song, J.; Wang, P.; Zhu, Q.; Xu, R.; Zhang, R.; Ma, S.; Bi, X.; et al. 2025. DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. Nature , 645(8081): 633–638. He, B.; Hu, M.; Xu, Z.; Wang, H.; Zong, L.; Chen, Y.; Ma, C.; Liu, X.; Zhou, P.; and King, I. 2026. Search-R2: Enhancing Search-Integrated Reasoning via Actor-Refiner Collabora-tion. ICML .Ho, X.; Nguyen, A.-K. D.; Sugawara, S.; and Aizawa, A. 2020. Constructing a multi-hop qa dataset for comprehen-sive evaluation of reasoning steps. In Proceedings of the 28th International Conference on Computational Linguis-tics , 6609–6625. Huang, Y.; Chen, Y.; Zhang, H.; Li, K.; Zhou, H.; Fang, M.; Yang, L.; Li, X.; Shang, L.; Xu, S.; et al. 2025. Deep re-search agents: A systematic examination and roadmap. arXiv preprint arXiv:2506.18096 .Jin, B.; Zeng, H.; Yue, Z.; Yoon, J.; Arik, S.; Wang, D.; Zamani, H.; and Han, J. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 .Joshi, M.; Choi, E.; Weld, D. S.; and Zettlemoyer, L. 2017. Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension. In Proceedings of the 55th An-nual Meeting of the Association for Computational Linguis-tics (Volume 1: Long Papers) , 1601–1611. Kwiatkowski, T.; Palomaki, J.; Redfield, O.; Collins, M.; Parikh, A.; Alberti, C.; Epstein, D.; Polosukhin, I.; Devlin, J.; Lee, K.; et al. 2019. Natural questions: a benchmark for question answering research. Transactions of the Association for Computational Linguistics .Lewis, P.; Perez, E.; Piktus, A.; Petroni, F.; Karpukhin, V.; Goyal, N.; Küttler, H.; Lewis, M.; Yih, W.-t.; Rocktäschel, T.; et al. 2020. Retrieval-augmented generation for knowledge-intensive nlp tasks. NeurIPS .Li, X.; Zou, H.; and Liu, P. 2025. Torl: Scaling tool-integrated rl. arXiv preprint arXiv:2503.23383 .Mallen, A.; Asai, A.; Zhong, V.; Das, R.; Khashabi, D.; and Hajishirzi, H. 2023. When not to trust language models: Investigating effectiveness of parametric and non-parametric memories. In ACL .Ning, L.; Liang, Z.; Jiang, Z.; Qu, H.; Ding, Y.; Fan, W.; Wei, X.-y.; Lin, S.; Liu, H.; Yu, P. S.; et al. 2025. A survey of webagents: Towards next-generation ai agents for web automation with large foundation models. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2 , 6140–6150. Press, O.; Zhang, M.; Min, S.; Schmidt, L.; Smith, N. A.; and Lewis, M. 2023. Measuring and narrowing the composition-ality gap in language models. In Findings of the Association for Computational Linguistics: EMNLP 2023 , 5687–5711. Qi, Z.; Liu, X.; Iong, I. L.; Lai, H.; Sun, X.; Sun, J.; Yang, X.; Yang, Y.; Yao, S.; Xu, W.; et al. 2025. Webrl: Training llm web agents via self-evolving online curriculum reinforce-ment learning. In International Conference on Learning Representations , volume 2025, 79791–79821. Qu, C.; Dai, S.; Wei, X.; Cai, H.; Wang, S.; Yin, D.; Xu, J.; and Wen, J.-R. 2025. Tool learning with large language models: A survey. Frontiers of Computer Science , 19(8): 198343. Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017. Proximal policy optimization algorithms. 
+
+arXiv preprint arXiv:1707.06347 .Shao, Z.; Wang, P.; Zhu, Q.; Xu, R.; Song, J.; Bi, X.; Zhang, H.; Zhang, M.; Li, Y.; Wu, Y.; et al. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open lan-guage models. arXiv preprint arXiv:2402.03300 .Sheng, G.; Zhang, C.; Ye, Z.; Wu, X.; Zhang, W.; Zhang, R.; Peng, Y.; Lin, H.; and Wu, C. 2025. Hybridflow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Systems , 1279–1297. Song, H.; Jiang, J.; Min, Y.; Chen, J.; Chen, Z.; Zhao, W. X.; Fang, L.; and Wen, J.-R. 2025. R1-searcher: Incentivizing the search capability in llms via reinforcement learning. arXiv preprint arXiv:2503.05592 .Trivedi, H.; Balasubramanian, N.; Khot, T.; and Sabharwal, A. 2022. MuSiQue: Multihop Questions via Single-hop Question Composition. Transactions of the Association for Computational Linguistics , 10: 539–554. Trivedi, H.; Balasubramanian, N.; Khot, T.; and Sabharwal, A. 2023. Interleaving retrieval with chain-of-thought reason-ing for knowledge-intensive multi-step questions. In Pro-ceedings of the 61st annual meeting of the association for computational linguistics (volume 1: long papers) , 10014– 10037. Wang, B.; Huang, H.; Li, Y.; Tang, W.; Zhang, Y.; Li, W.; Gao, M.; Shi, G.; and Feng, C. 2026a. PathRouter: Aligning Rewards with Retrieval Quality in Agentic Graph Retrieval-Augmented Generation. arXiv preprint arXiv:2606.16409 .Wang, G.; Dai, S.; Ye, G.; Gan, Z.; Yao, W.; Deng, Y.; Wu, X.; and Ying, Z. 2026b. Information Gain-based Policy Optimization: A Simple and Effective Approach for Multi-Turn LLM Agents. ICLR .Wang, P.; Li, L.; Shao, Z.; Xu, R.; Dai, D.; Li, Y.; Chen, D.; Wu, Y.; and Sui, Z. 2024a. Math-shepherd: Verify and reinforce llms step-by-step without human annotations. In 
+
+Proceedings of the 62nd Annual Meeting of the Associa-tion for Computational Linguistics (Volume 1: Long Papers) ,9426–9439. Wang, X.; Wang, Z.; Gao, X.; Zhang, F.; Wu, Y.; Xu, Z.; Shi, T.; Wang, Z.; Li, S.; Qian, Q.; et al. 2024b. Searching for best practices in retrieval-augmented generation. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 17716–17736. Wang, Z.; Yuan, H.; Dong, W.; Cong, G.; and Li, F. 2024c. Corag: A cost-constrained retrieval optimization system for retrieval-augmented generation. arXiv preprint arXiv:2411.00744 .Wang, Z.; Zheng, X.; An, K.; Ouyang, C.; Cai, J.; Wang, Y.; and Wu, Y. 2025. Stepsearch: Igniting llms search ability via step-wise proximal policy optimization. arXiv preprint arXiv:2505.15107 .Wei, J.; Wang, X.; Schuurmans, D.; Bosma, M.; Xia, F.; Chi, E.; Le, Q. V.; Zhou, D.; et al. 2022. Chain-of-thought prompt-ing elicits reasoning in large language models. NeurIPS .Yang, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Li, C.; Liu, D.; Huang, F.; Wei, H.; Lin, H.; Yang, J.; Tu, J.; Zhang, J.; Yang, J.; Yang, J.; Zhou, J.; Lin, J.; Dang, K.; Lu, K.; Bao, K.; Yang, K.; Yu, L.; Li, M.; Xue, M.; Zhang, P.; Zhu, Q.; Men, R.; Lin, R.; Li, T.; Xia, T.; Ren, X.; Ren, X.; Fan, Y.; Su, Y.; Zhang, Y.; Wan, Y.; Liu, Y.; Cui, Z.; Zhang, Z.; and Qiu, Z. 2024. Qwen2.5 Technical Report. arXiv preprint arXiv:2412.15115 .Yang, Z.; Qi, P.; Zhang, S.; Bengio, Y.; Cohen, W.; Salakhut-dinov, R.; and Manning, C. D. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In 
+
+Proceedings of the 2018 conference on empirical methods in natural language processing , 2369–2380. Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K.; and Cao, Y. 2022. React: Synergizing reasoning and acting in language models. ICLR .Yu, Q.; Zhang, Z.; Zhu, R.; Yuan, Y.; Zuo, X.; Yue, Y.; Dai, W.; Fan, T.; Liu, G.; Liu, L.; et al. 2026. Dapo: An open-source llm reinforcement learning system at scale. Advances in Neural Information Processing Systems , 38: 113222– 113244. Zeng, H.; Collins, L.; Kumar, B.; Shah, N.; and Zamani, H. 2026. CoSearch: Joint Training of Reasoning and Document Ranking via Reinforcement Learning for Agentic Search. 
+
+arXiv preprint arXiv:2604.17555 .Zhang, G.; Geng, H.; Yu, X.; Yin, Z.; Zhang, Z.; Tan, Z.; Zhou, H.; Li, Z.; Xue, X.; Li, Y.; et al. 2025a. The landscape of agentic reinforcement learning for llms: A survey. arXiv preprint arXiv:2509.02547 .Zhang, W.; Li, X.; Dong, K.; Wang, Y.; Jia, P.; Li, X.; Zhang, Y.; Xu, D.; Du, Z.; Guo, H.; et al. 2026. Process vs. outcome reward: Which is better for agentic rag reinforcement learn-ing. Advances in Neural Information Processing Systems ,38: 58701–58729. Zhang, W.; Li, Y.; Bei, Y.; Luo, J.; Wan, G.; Yang, L.; Xie, C.; Yang, Y.; Huang, W.-C.; Miao, C.; et al. 2025b. From web search towards agentic deep research: Incentivizing search with reasoning agents. arXiv preprint arXiv:2506.18959 .Zheng, Y.; Fu, D.; Hu, X.; Cai, X.; Ye, L.; Lu, P.; and Liu, P. 2025. Deepresearcher: Scaling deep research via reinforce-ment learning in real-world environments. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , 414–431. Zheng, Y.; Sun, S.; Qiu, L.; Ru, D.; Jiayang, C.; Li, X.; Lin, J.; Wang, B.; Luo, Y.; Pan, R.; et al. 2024. OpenResearcher: unleashing AI for accelerated scientific research. In Proceed-ings of the 2024 Conference on Empirical Methods in Natural Language Processing: System Demonstrations , 209–218. A Full Experimental Results 
+
+The main paper reports compact domain-level summaries for the reward ablation and RL-algorithm comparison. Tables 5 and 6 provide the complete per-dataset results. Table 5: Full per-dataset ablation results for the reward design. Checkmarks indicate whether final-answer outcome reward and the EALR evidence-access sensitivity reward are used. 
+
+Outcome EALR In-domain Out-of-domain Avg. NQ TQ HotpotQA 2Wiki MuSiQue Bamboogle PopQA 
+
+Qwen2.5-3B-Instruct 
+
+✓ 0.279 0.325 0.337 0.363 0.213 0.372 0.461 0.336 
+
+✓ 0.365 0.482 0.384 0.395 0.256 0.401 0.465 0.393 
+
+✓ ✓ 0.458 0.652 0.438 0.437 0.307 0.427 0.471 0.456 Qwen2.5-7B-Instruct 
+
+✓ 0.285 0.362 0.401 0.382 0.223 0.481 0.472 0.372 
+
+✓ 0.381 0.522 0.453 0.392 0.256 0.512 0.478 0.430 
+
+✓ ✓ 0.467 0.726 0.521 0.460 0.322 0.552 0.482 0.504 
+
+Table 6: Full per-dataset comparison with alternative reinforcement learning algorithms on Qwen2.5-7B-Instruct. Bold and underlined values indicate the best and second-best results, respectively. 
+
+## Algorithm In-domain Out-of-domain Avg. NQ TQ HotpotQA 2Wiki MuSiQue Bamboogle PopQA RLOO 0.378 0.655 0.443 0.323 0.227 0.457 0.384 0.410 PPO 0.394 0.637 0.448 0.322 0.233 0.489 0.423 0.421 GRPO 0.411 0.655 0.444 0.346 0.255 0.476 0.417 0.429 DAPO 0.401 0.686 0.462 0.358 0.264 0.501 0.431 0.443 GSPO 0.422 0.678 0.481 0.353 0.290 0.498 0.456 0.454 CIPO 0.467 0.726 0.521 0.460 0.322 0.552 0.482 0.504 
+
+## B Additional Training Dynamics 
+
+Figure 6 reports the three benchmark trajectories omitted from the main paper’s compact four-panel comparison. 0 20 40 60 80 Training Step 0.2 0.3 0.4 0.5 0.6 F1 Score           
+
+> NQ
+> IGPO CIPO
+> (a) Natural Questions (ID) 020 40 60 80 Training Step 0.16 0.24 0.32 0.40 0.48 F1 Score
+> 2Wiki
+> IGPO CIPO (b) 2WikiMultiHopQA (ID) 020 40 60 80 Training Step 0.2 0.3 0.4 0.5 0.6 F1 Score
+> PopQA
+> IGPO CIPO (c) PopQA (OOD)
+
+Figure 6: Additional step-wise validation-set F1 trajectories for the benchmarks not shown in the main paper. Each panel compares CIPO with IGPO over 80 training steps and uses a dataset-specific vertical scale. Table 7: Additional training hyperparameters. 
+
+Training Hyperparameters Value 
+
+Validation Batch Size 256 Maximum Prompt Length 30,767 Maximum Response Length 2,000 Maximum Model Length 32,768 Maximum Batched Tokens 32,768 Actor Learning Rate 1 × 10 −6
+
+Critic Learning Rate 1 × 10 −5
+
+PPO Mini-Batch Size 512 Actor PPO Micro-Batch / GPU 2Critic PPO Micro-Batch / GPU 2Rollout Log-Prob. Micro-Batch / GPU 1Reference Log-Prob. Micro-Batch / GPU 2Maximum PPO Tokens / GPU 12,288 Rollout Temperature 1.0 Actor KL Loss Enabled KL-Loss Coefficient 0.001 Actor Loss Aggregation token-mean 
+
+Tensor Parallel Size 1Ulysses Sequence Parallel Size 4vLLM GPU Memory Utilization 0.55 Padding Removal Enabled Dynamic Batch Size Enabled 
+
+## C Hyperparameter Settings and Prompt Template 
+
+Table 7 summarizes the important optimization, rollout, and system configurations. The following prompt is used for training, validation, and test-time rollouts. It is reproduced below verbatim to make the provenance of the prompt and the tool-use interface explicit. 
+
+* Today is {today} * You are an AI Assistant* The question I give you is a complex question that requires a *deep research* to answer. I will provide you with tools to help you answer the question: {%- for tool in tools.values() %} - {{ tool.name }}: {{ tool.description }} {%- endfor %} You don’t have to answer the question now, but you should first think about the research plan or what to search next. Your output format should be one of the following two formats: # Rollout <think> YOUR THINKING PROCESS </think> <answer> YOUR ANSWER AFTER GETTING ENOUGH INFORMATION </answer> or <think> YOUR THINKING PROCESS </think> Table 8: Comparison of different EALR target scopes on Qwen2.5-3B-Instruct. The proposed next-turn formulation consistently outperforms the full-trajectory variant. 
+
+EALR Target Scope In-domain Out-of-domain Avg. NQ TQ HotpotQA 2Wiki MuSiQue Bamboogle PopQA Full future trajectory 0.315 0.512 0.302 0.395 0.258 0.288 0.321 0.342 Next-turn action (Ours) 0.458 0.652 0.438 0.437 0.307 0.427 0.471 0.456 
+
+<tool_call> YOUR TOOL CALL WITH CORRECT FORMAT </tool_call> You should always follow the above two formats strictly. Only output the final answer (in words, numbers or phrase) inside the <answer></answer> tag, without any explanations or extra information. If this is a yes-or-no question, you should only answer yes or no. # Tools You may call one or more functions to assist with the user query. You are provided with function signatures within <tools></tools> XML tags: <tools> {%- for tool in tools.values() %} {{ ’{’ }}"type": "function", "function": {{ ’{’ }}"name": "{{ tool.name | replace("’", ’"’) {%- endfor %} </tools> For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags: <tool_call> {{ ’{’ }}"name": <function-name>, "arguments": <args-json-object>{{ ’}’ }} </tool_call> 
+
+## D Analysis of EALR Target Scope 
+
+EALR measures the influence of the most recently retrieved evidence Ei,t on the immediate next-turn action, rather than on the entire remaining trajectory. This local formulation provides a clearer turn-level attribution: by comparing the likelihood of the same next-turn action under evidence-visible and evidence-masked conditions, EALR directly evaluates whether the newly retrieved evidence affects the agent’s subsequent reasoning and search decision. In contrast, scoring the full future trajectory would mix the effects of later reasoning steps, newly retrieved evidence, and accumulated context, making it difficult to attribute the likelihood difference specifically to Ei,t .Restricting EALR to the next turn does not ignore the long-term influence of the current decision. CIPO separates local evidence sensitivity from global task optimization: EALR provides dense rewards for individual retrieval–decision transitions, while future intermediate rewards and the terminal outcome reward are propagated through the turn-level advantage 
+
+ˆAi,t =
+
+> Ti
+
+X
+
+> j=t
+
+γj−t ˜ri,j . (12) This separation also ensures that EALR is computed only over policy-generated <think> and <search> tokens, without introducing additional environment-generated <information> blocks from later turns. 
+
+Empirical Verification. We compare the proposed next-turn formulation with a full-trajectory variant that computes the evidence-visible and evidence-masked likelihood difference over all remaining model-generated actions. Both variants use the same backbone, training data, retrieval environment, and optimization settings. The next-turn formulation outperforms the full-trajectory variant on all seven benchmarks, improving the average F1 from 0.342 to 0.456. The substantial gain of 11.4 F1 points indicates that extending the scoring target to the full trajectory introduces Table 9: Counterfactual masking analysis on Qwen2.5-3B-Instruct. All variants use the same terminal outcome reward and differ only in the span masked when constructing the evidence-sensitivity reward. 
+
+Method Sup. ↑ Irr. ↓ Evidence Selectivity ↑ ID OOD Avg. F1 Random-context Mask 35.0 34.5 2.1 0.415 0.338 0.382 Supportive-Evidence-Only Mask 62.5 14.2 60.2 0.488 0.395 0.448 Non-supportive-Evidence-Only Mask 28.4 45.3 -20.5 0.375 0.305 0.345 CIPO (Ours) 55.2 10.6 66.7 0.496 0.402 0.456 
+
+interference from later decisions and retrieval results, thereby weakening turn-level credit assignment. These results support using the immediate next-turn action as the target of EALR. 
+
+## E Selective Evidence Dependence under Counterfactual Masking 
+
+Before presenting the counterfactual analysis, we define the evidence utilization metrics used throughout this section. Supportive evidence utilization (Sup.) measures the proportion of trajectories whose reasoning actions are judged to depend on retrieved evidence that directly supports the reference answer. Irrelevant evidence utilization (Irr.) measures the proportion of trajectories whose reasoning actions rely on retrieved evidence that does not contribute to solving the question or contradicts the required reasoning path. The evidence annotations are obtained using the same evidence identification procedure described in Appendix F. Higher Sup. and lower Irr. indicate more selective and task-relevant evidence dependence. Although EALR measures the sensitivity of policy actions to accessible evidence, an important question is whether CIPO merely encourages indiscriminate responsiveness to retrieved text. To examine this issue, we construct three counterfactual masking variants. Random-context Mask replaces the evidence mask with an equally sized randomly selected context span, testing whether the improvement can be attributed to generic context perturbation. Supportive-Evidence-Only Mask computes the sensitivity signal using only answer-supportive evidence spans, serving as an oracle-style variant that requires evidence-level annotations. Non-supportive-Evidence-Only Mask instead applies the mask only to irrelevant or non-supportive evidence. All variants retain the same terminal outcome reward and differ only in the context span used to construct the EALR reward. We evaluate the resulting policies using supportive-evidence utilization (Sup.), irrelevant-evidence utilization (Irr.), Evidence Selectivity, and question-answering performance. Evidence Selectivity measures whether the policy depends more strongly on answer-supportive evidence than on non-supportive evidence, with a higher value indicating more selective and task-relevant evidence dependence. As shown in Table 9, randomly masking an equally sized context span yields an Evidence Selectivity score of only 2.1, despite obtaining moderate supportive- and irrelevant-evidence utilization rates. This result indicates that generic masking or context perturbation does not naturally produce selective evidence use. Moreover, masking only non-supportive evidence leads to negative selectivity ( −20 .5), the highest irrelevant-evidence utilization (45.3), and the lowest average F1 (0.345). Thus, encouraging sensitivity to arbitrary retrieved content can reinforce dependence on unhelpful evidence and degrade task performance. The supportive-evidence-only variant substantially improves evidence utilization and reaches an average F1 of 0.448, con-firming that assigning credit to task-relevant evidence is beneficial. However, this variant requires explicit identification of answer-supportive evidence. In contrast, CIPO operates on the complete retrieved evidence block without evidence-level super-vision, yet achieves the lowest irrelevant-evidence utilization (10.6), the highest Evidence Selectivity (66.7), and the best average F1 (0.456). Although its supportive-evidence utilization is slightly lower than that of the oracle-style supportive-only variant, CIPO more effectively suppresses non-supportive evidence, resulting in stronger overall selectivity and task performance. These results show that CIPO does not simply increase the policy’s sensitivity to all retrieved text. Instead, combining evidence-access sensitivity with outcome supervision encourages the policy to retain dependencies that contribute to correct task completion while suppressing dependencies on irrelevant evidence. CIPO therefore promotes selective and task-relevant evidence dependence rather than indiscriminate evidence responsiveness. 
+
+## F LLM-assisted Evaluation Protocol 
+
+This appendix provides the detailed evaluation protocol for measuring prior-driven and evidence-driven reasoning behaviors described in Section 4.4. We use an LLM-assisted pipeline to classify whether an agent trajectory primarily relies on retrieved evidence or the model’s parametric knowledge. 
+
+F.1 Evaluation Pipeline 
+
+For each evaluated trajectory, we first identify evidence passages that support the reference answer. For datasets with existing evidence annotations, we directly use the provided annotations. For datasets without explicit supporting evidence annotations, we use DeepSeek-V4-Flash to extract evidence passages that support the reference answer. Each automatically identified evidence span is manually checked to remove incorrect or insufficient evidence annotations. The verified evidence annotations are used only for evaluation and are never provided as supervision during CIPO training. Therefore, the behavioral evaluation does not introduce additional evidence-level training signals. Given the retrieved evidence, reasoning trajectory, and final answer, we use GPT-5.5 as the external LLM judge to classify each trajectory as prior-driven or evidence-driven . The judge determines whether the key reasoning steps and final conclusion are primarily supported by the retrieved evidence or are generated mainly from the model’s parametric knowledge. The same evaluation procedure is applied to both training-time validation samples and final test samples. 
+
+F.2 GPT-5.5 Judge Criteria 
+
+The GPT-5.5 judge receives the question, retrieved evidence, reasoning trajectory, and final answer. It is instructed to determine whether the trajectory exhibits prior-driven or evidence-driven reasoning according to the following criteria: 
+
+• Evidence-driven reasoning: The agent’s intermediate reasoning steps and final conclusion are substantially influenced by retrieved evidence. The retrieved information is used to verify, revise, or construct the answer. 
+
+• Prior-driven reasoning: The agent reaches the conclusion mainly from its internal parametric knowledge, while retrieved evidence only confirms an existing hypothesis or has little influence on subsequent reasoning. The complete judging prompt used by GPT-5.5 is provided below. 
+
+[GPT-5.5 Judge Prompt] You are an expert evaluator for analyzing reasoning trajectories of search agents. Given: - Question: {question} - Retrieved Evidence: {evidence} - Agent Trajectory: {trajectory} - Final Answer: {answer} Determine whether the trajectory is primarily: (A) Evidence-driven: The reasoning process substantially uses retrieved evidence, and the evidence affects intermediate reasoning or the final answer. (B) Prior-driven: The reasoning process mainly relies on internal knowledge, while retrieved evidence only confirms or weakly affects the conclusion. Output: <classification> Evidence-driven or Prior-driven </classification> <explanation> Briefly explain the decision. </explanation>

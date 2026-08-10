@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-10</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 22 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>11</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-09 20:22:15 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-10 20:08:19 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦17篇AI论文，精读6篇、速读11篇；其中两篇高分研究（9.0/10）深入剖析自进化LLM智能体的经验组合风险与可验证记忆管理机制。最值得关注的方向是LLM智能体的自我演进安全性与记忆可靠性——经验组合在单任务有效时可能产生有害协同，而引入本地/全局验证器可提升长期记忆一致性。若想入门，可从速读的SyncPlan（长时程协调与自适应纠错）或SP3O（免奖励建模的片段偏好强化学习）入手，快速把握多智能体协作与偏好优化前沿。</p>
+<p>今日共读22篇论文，精读与速读各半，核心聚焦LLM智能体框架与多智能体协作。最值得关注的是两项满分之作：一个用于大规模解空间搜索的LLM智能体连续改进框架，以及基于互补拓扑分层稀疏协调的多智能体系统。建议优先精读这两篇高分论文，速读可关注测试时强化学习、行动意图嵌入与环境派生中训练等方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Benign Alone, Harmful Together: Exploiting Experience Composition in Self-Evolving LLM Agents">Benign Alone, Harmful Together: Exploiting Experience Composition in Self-Evolving LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Verifiable Memory: Learning Unified Memory Management with Local and Global Verifiers for Large Language Model Agents">Verifiable Memory: Learning Unified Memory Management with Local and Global Verifiers for Large Language Model Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="EvoHIL: Self-Evolving Reward and Flow-Matched Policy Optimization for Robust Human-in-the-Loop Reinforcement Learning">EvoHIL: Self-Evolving Reward and Flow-Matched Policy Optimization for Robust Human-in-the-Loop Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Continuous Improvement and Parallel Autonomous Exploration: An LLM-Agent Framework for Searching Large Solution Spaces">Continuous Improvement and Parallel Autonomous Exploration: An LLM-Agent Framework for Searching Large Solution Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="HELENA:Hierarchical Sparse Coordination over a Union of Complementary Topologies for MAS">HELENA:Hierarchical Sparse Coordination over a Union of Complementary Topologies for MAS</span></li><li><span class="dpr-home-dashboard-paper-title" title="EvolveNet: Collaborative Harness Evolution for Agent Self-Improvement">EvolveNet: Collaborative Harness Evolution for Agent Self-Improvement</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SyncPlan: Long-Horizon LLM Coordination with Explicit Synchronization and Adaptive Correction">SyncPlan: Long-Horizon LLM Coordination with Explicit Synchronization and Adaptive Correction</span></li><li><span class="dpr-home-dashboard-paper-title" title="SP3O: Reinforcement Learning from Segment Preferences without Reward Modeling">SP3O: Reinforcement Learning from Segment Preferences without Reward Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Neurosymbolic Reasoning with Incremental Knowledge for Sample Efficient Hierarchical Reinforcement Learning">Neurosymbolic Reasoning with Incremental Knowledge for Sample Efficient Hierarchical Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Hi-TTRL: Regulating Consensus with Hints for Test-Time Reinforcement Learning">Hi-TTRL: Regulating Consensus with Hints for Test-Time Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="InsightEmb: Learning Action-Intent Embeddings for Agentic Insight Retrieval">InsightEmb: Learning Action-Intent Embeddings for Agentic Insight Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="State2State: Environment-Derived Mid-Training for LLM Agents">State2State: Environment-Derived Mid-Training for LLM Agents</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
