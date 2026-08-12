@@ -1,0 +1,552 @@
+Title: Agentic Router: An Execution-Grounded Continual Learning Approach With Memory
+
+URL Source: https://arxiv.org/pdf/2608.09184v1
+
+Published Time: Tue, 11 Aug 2026 01:54:35 GMT
+
+Number of Pages: 6
+
+Markdown Content:
+# Agentic Router: An Execution-Grounded Continual Learning Approach With Memory 
+
+Yuxuan Chen, Rongpeng Li, Zhifeng Zhao, Yuntao Liu, Xing Xu and Honggang Zhang 
+
+Abstract —Large language model (LLM) agents provide apromising interface for command-line-based network operations, but a plausible command may still fail or introduce opera-tional risk after execution. Existing approaches mainly focus on command generation or final configuration correctness, and do not use execution-grounded experience to jointly improve candi-date coverage and action selection. We propose an execution-grounded dual-path consequence-aware agent for CLI-based SONiC operations, which generates multiple complete actions, predicts their execution consequences, and selects the final action through utility- and risk-aware reranking. The proposal-side path abstracts reusable operational lessons into retrievable guidance to improve feasible-action coverage without modifying the proposal LLM, while the selection-side path adapts the consequence predictor through session-level LoRA updates using real SSH feedback to improve conditional selection quality. Experiments over multi-turn SONiC operation sessions with different Qwen3 proposal models show that the framework improves feasible-action coverage and top-1 execution success, and that the two adaptation paths provide complementary gains over interaction. 
+
+Index Terms —Large language model agents, network automa-tion, consequence-aware decision making, agent memory 
+
+I. I NTRODUCTION 
+
+Modern networks increasingly rely on open and pro-grammable systems such as SONiC [1], where many opera-tional tasks are performed through command-line interfaces (CLIs). Recent progress in large language model (LLM) agents [2] brings a new opportunity for this process. An operator can describe an intent in natural language, and an agent can propose executable network actions. This idea is also aligned with the broader trend of intent-based networking [3] and LLM-assisted network management [4], [5]. However, CLI operation is not a static text-generation problem. Acommand may be syntactically valid and executable yet remain inappropriate for the current network state. For example, when only one Border Gateway Protocol (BGP) peer requires recovery, the CLI clear bgp * , which clears all peers, may cause route churn and transient reachability loss. Such a failure cannot be identified from linguistic plausibility alone; it becomes observable only through command responses and post-execution state verification. Reliable CLI agents therefore 
+
+Y. Chen and R. Li are with Zhejiang University, Hangzhou 310027, China (email: {cyx00, lirongpeng }@zju.edu.cn). Z. Zhao is with Zhejiang Lab, Hangzhou 310012, China, as well as Zhejiang University, Hangzhou 310027, China (email: zhaozf@zhejianglab.org). Y. Liu is with Zhejiang Lab, Hangzhou 310012, China (email: liuyt@zhejianglab.org). X. Xu is with State Grid Hebei Electric Power Co., Ltd., Hebei, China (email: 836240885@qq.com). H. Zhang is with Macau University of Science and Technology, Macau, China (email: hgzhang@must.edu.mo). 
+
+need to consider not only whether plausible actions can be generated, but also whether the action selected for execution has a satisfactory consequence under the observed device state. Recent LLM-based network automation studies [6], [7] have advanced intent-to-configuration translation and automated network updates. However, their LLM components mainly generate or validate outputs for the current task, rather than accumulate verified device-side outcomes to improve subse-quent operations. Beyond networking, interactive and embod-ied agents formulate decision-making as an action–observation loop. They select actions according to both task relevance and environmental feasibility, and use execution feedback to guide later decisions or retain reusable experience [2], [8], [9]. In interactive settings, agents should select complete actions according to their expected outcomes in the environment, rather than linguistic plausibility alone. These outcomes in-dicate whether an action can be executed to advance the task. However, existing methods do not provide an execution-grounded mechanism that uses such verified CLI outcomes to support reliable and continual improvement over multi-turn interaction in a stateful, environment-dependent network system. CLI-based network operations with feedback can be mod-eled as a multi-turn action-level decision process, where observed consequences provide evidence for later adaptation. However, a failed top-ranked execution is ambiguous for adaptation: it does not reveal whether the candidate set lacks a feasible action or whether an available feasible action is not ranked first. This ambiguity motivates separating candi-date action proposal from consequence-aware action selection, since the accompanied top-1 failure corresponds to different adaptation targets. Proposal-side omissions often reflect miss-ing reusable knowledge about command patterns, CLI con-straints, and verification procedures. Such knowledge should be explicit and reusable across tasks, rather than retained only in transient hidden states or raw histories [10]. Retrieval-based memory [11], [12] is therefore suitable for preserving execution-validated operational lessons and injecting them into future proposals. But, retrieval does not update the predictor’s state–action consequence mapping. It therefore cannot directly correct session-specific misranking errors among available candidates. Full-model online updating [13], [14] can be useful, but network-operation feedback is state-dependent and safety-critical. An update learned from one CLI context may disturb previously reliable judgments about other valid com-mand patterns or risk levels. Low-rank adaptation (LoRA) instead provides session-level plasticity while keeping the base arXiv:2608.09184v1 [cs.AI] 10 Aug 2026 predictor stable [15]. Based on these observations, we propose an execution-grounded dual-path adaptation framework for CLI-based net-work operations. The framework separates the candidate pro-posal from consequence-aware action selection. A proposal LLM first generates multiple complete candidate actions. A consequence predictor estimates their likely execution con-sequences, and utility- and risk-aware reranking selects the action to be executed. Observed consequences, then update the two adaptation paths. The proposal-side path abstracts reusable operational lessons into long-term memory and retrieves them as guidance for future proposals without modifying the pro-posal LLM. The selection-side path uses recent state–action– consequence records to apply session-level LoRA updates to the consequence predictor, correcting later reranking decisions. Experiments in multi-turn SONiC operation sessions show that the framework improves feasible-action coverage and top-1 execution success, and that the two adaptation paths provide complementary gains over interaction. This work is structured as follows. Section II presents the system model and formulates the consequence-aware decision problem. Section III details the proposed dual-path agent design and its proposal-side and selection-side adaptation mechanisms. Section IV evaluates the framework over multi-turn SONiC operation sessions, and Section V concludes this paper. II. S YSTEM MODEL AND PROBLEM FORMULATION 
+
+A. System Model 
+
+We consider a multi-turn network operation session in a SONiC environment. Without loss of generality, at turn t,the agent receives a natural-language user intent qt and an environment observation ot. For example, qt can be check counters on Ethernet76 , while ot may record the CLI context, recent command feedback, and the EthernetN 
+
+interface naming rule. The observation ot summarizes the current device and interaction state available before action selection. Let Ht−1 denote the interaction history before turn 
+
+t, and the information available for the current decision can be summarized as 
+
+xt = ( qt, o t, H t−1). (1) A basic intent-to-action agent maps the decision context to a single complete CLI action at:
+
+at = Gψ (xt), (2) where Gψ denotes the action generator, while the action 
+
+at may consist of a single command or a short executable command sequence. After executing at, the underlying SONiC environment Et returns its actual consequence zt, and a task-specific verifier yt determines whether the operation succeeds: 
+
+zt = Exec Et (at), yt = v(xt, z t) ∈ { 0, 1}. (3) The consequence zt records the device-side response pro-duced by executing at, including command outputs, er-ror messages, or observed state changes. For the counter-query example, the action show interfaces counter Ethernet76 yields an observed consequence containing the device error Unknown command ; the verifier therefore as-signs yt = 0 . By contrast, show interfaces counters -i Ethernet76 yields the expected interface-counter out-put, giving yt = 1 .Thus, (xt, a t, z t, y t) forms a basic execution record. It provides environment-grounded evidence about the state-dependent consequence of an action. However, a static single-action mapping does not indicate whether a failure is caused by not proposing a feasible action or by selecting an unsuit-able one. This motivates a multi-candidate formulation that separates candidate availability from action selection. 
+
+B. Problem Formulation 
+
+To reduce dependence on a single generation, the agent considers a set of complete candidate actions at each turn. Let 
+
+Mt denote the proposal-side operational guidance available for the current decision, which will be discussed lately. Given the decision context xt and Mt, the proposal generator produces 
+
+At = Gprop (xt, Mt) = 
+
+n
+
+a(1)  
+
+> t
+
+, a (2)  
+
+> t
+
+, . . . , a (K)
+
+> t
+
+o
+
+. (4) The candidate set expands the available action space, but it does not determine which action should be executed. Since the suitability of a CLI action depends on its device-side response, the agent estimates the consequence of each context–action pair: 
+
+ˆz(k) 
+
+> t
+
+= fθt
+
+
+
+xt, a (k)
+
+> t
+
+
+
+, a(k) 
+
+> t
+
+∈ A t, (5) where ˆz(k) 
+
+> t
+
+is the pre-execution estimate of the consequence that would be produced by executing a(k) 
+
+> t
+
+under context xt,and θt denotes the predictor parameters at turn t. These esti-mates provide the basis for scoring and reranking candidates before the selected action is submitted to the environment. Two scoring functions map the predicted consequence to expected task progress and operational risk: 
+
+ˆr(k) 
+
+> t
+
+= hr
+
+
+
+ˆz(k)
+
+> t
+
+
+
+, ˆρ(k) 
+
+> t
+
+= hρ
+
+
+
+ˆz(k)
+
+> t
+
+
+
+. (6) Here, operational risk refers to irreversible or highly disrup-tive changes to the network state. For example, when only one BGP peer requires recovery, clear bgp * should be assigned a high risk score because it may reset unrelated peers and cause transient route churn. The top-ranked action under the predicted score is selected as 
+
+a⋆t = arg max  
+
+> a(k)
+> t∈A t
+
+
+
+ˆr(k) 
+
+> t
+
+− λˆρ(k)
+
+> t
+
+
+
+, (7) where λ ≥ 0 controls the risk penalty. After selection, only the top-ranked action a⋆t is submitted for primary execution and evaluation: 
+
+z⋆t = Exec Et (a⋆t ) , y⋆t = v (xt, z ⋆t ) . (8) SONiC Environment       
+
+> SSH Execution
+> Verifier
+> Selection-Side
+> Consequence
+> LoRA Adaptation
+> User Intent &
+> State
+> Proposal LLM
+> ···
+> vtysh -c ...
+> show
+> interfaces ...
+> show ip bgp ...
+> Consequence
+> Predictor
+> Reward Head
+> Risk
+> Head
+> Reranker
+> Memory
+> Extractor
+> Execution Record
+> Retrieval Proposal -Side
+> Operational Memory
+
+selection-side update 
+
+proposal-side abstraction 
+
+abstract reusable lessons 
+
+retrieved    
+
+> 1) Main Inference &
+> Execution Pipeline
+> 2) Consequence Prediction
+> &Rerank
+> 3) Selection-Side
+> Consequence Adaptation
+> 4) Proposal-Side
+> Operational Memory Loop Fig. 1. Overall framework of the proposed consequence-aware agent with proposal-side and selection-side adaptation for CLI-based SONiC operations.
+
+Accordingly, z⋆t and y⋆t are its observed consequence and verified outcome. This equation defines the per-turn top-1 outcome used to evaluate whether the agent’s selected action succeeds. The operational objective is to improve verified top-1 suc-cess over a session of T interaction turns: 
+
+max  
+
+> π
+
+JT (π) = 1
+
+T
+
+> T
+
+X
+
+> t=1
+
+Eπ [y⋆t ] , (9) where π denotes the overall decision and adaptation pol-icy. Maximizing JT (π) requires reducing top-1 failures, i.e., events with y⋆t = 0. Such failures can arise at two distinct stages. Consider a request to inspect the detailed BGP neighbor state of 10.0.0.1 . If At contains only non-completing candidates, such as the unsupported form 
+
+show bgp neighbor 10.0.0.1 or the coarse summary command show ip bgp summary , while omitting show ip bgp neighbors 10.0.0.1 , then no reranking rule can select a task-completing action. This is a proposal-side coverage failure. In contrast, if the detailed neighbor query is included in At but the reranker places show ip bgp summary above it, the selected command may execute successfully yet fail to answer the requested neighbor-level question. This is a selection-side misranking failure. To separate these two failure sources, we define the feasible-action coverage indicator as 
+
+ct = I
+
+h
+
+∃ a(k) 
+
+> t
+
+∈ A t s.t. v
+
+
+
+xt, Exec Et
+
+
+
+a(k)
+
+> t
+
+ 
+
+= 1 
+
+i
+
+. (10) Thus, ct = 1 when the candidate set contains at least one action that can complete the current operation step. The indicator is used to diagnose candidate-set feasibility and to separate proposal coverage from the final top-ranked outcome. Since a successful top-ranked action implies feasible-action coverage, 
+
+Pr ( y⋆t = 1) = Pr ( ct = 1) Pr ( y⋆t = 1 | ct = 1) . (11) Eq. (11) implies two adaptation targets. On the proposal side, the agent should adapt the operational guidance Mt
+
+supplied to Gprop , so that the generated candidate set is more likely to contain a feasible action, improving Pr ( ct = 1) . On the selection side, the agent should adapt the consequence predictor parameters θt, so that the predicted consequences and derived scores rank an available feasible action higher (a larger Pr ( y⋆t = 1 | ct = 1) ). We will discuss how to implement execution-grounded dual-path adaptation in the next section. III. A GENTIC DESIGN WITH EXECUTION -G ROUNDED 
+
+CONTINUAL LEARNING 
+
+Building on the coverage–selection decomposition in Sec-tion II-B, we instantiate the two adaptation targets through an execution-grounded dual-path framework. 
+
+A. Operation Loop and Execution Record Collection 
+
+As stated in Section II-B, at turn t, the agent first retrieves a small set of proposal-side operational guidance Mt according to the current decision context xt. The proposal prompt then asks the LLM to return K complete and distinct CLI-level actions in a structured candidate list At. The generated candidates are then evaluated by the consequence predictor and reranked according to Eq. (7). Afterward, some selected action a⋆t is executed in the SONiC environment through SSH, and the verifier returns its actual consequence z⋆t and outcome 
+
+y⋆t . If the top-ranked action fails, the agent may execute lower-ranked candidates to collect additional execution feedback. Let 
+
+It denote the indices of all candidates actually executed at Task state       
+
+> user _input : " Check counters on Ethernet 76 "
+> task _type :query ;phase :query
+> recent _failed _commands :
+> [" show interfaces counter Ethernet 76 "]
+> recent _feedback _summary :
+> "Unknown command ;SONiC expects counters -i"
+> device _context :
+> "SONiC single device ;EthernetN names "
+
+Proposal Prompt              
+
+> <Role >You are SONiC /FRR proposal generator ...
+> <Target >Generate Kcomplete actions to ...
+> <Input >STATE _JSON
+> <Rules >use realistic SONiC CLI ;avoid unrelated
+> safe commands ...
+> <candidates >:[ {"command ":" show interfaces
+> counters -i Ethernet 76 "}, { "command ":" show
+> interfaces counter Ethernet 76 "}, ...] }
+
+State  + Action          
+
+> for each :
+> STATE _JSON :
+> user _input = " Check counters on Ethernet 76 "
+> task _type =query ;phase =query
+> feedback = " Unknown command ..."
+> ACTION _JSON :
+> {"command ":
+> "show interfaces counters -i Ethernet 76 "}
+
+Predictor Template              
+
+> <Role >You are consequence predictor ...
+> <Target >predict SONiC execution feedback ...
+> <Input >STATE _ACTION _JSON ={
+> "state ": {... }, "action ": {... }}
+> <Output >{ "command ": " show interfaces counters
+> -i Ethernet 76 ",
+> "output ": " IFACE RX _OK RX _ERR TX _OK ..." ,
+> "error ": null ,... }
+
+Proposal Generator  Consequence Predictor 
+
+Observed Execution Outcomes 
+
+Execution-Grounded Update 
+
+> Failed execution
+> "show interfaces counter Ethernet76"
+> {success: false,
+> error: "Unknown command",
+> consequence_type: "syntax_error",...}
+> Successful execution
+> "show interfaces counters -i Ethernet76"
+> {success: true, output: "IFACE RX_OK RX_ERR...
+> consequence_type: "success", ...}
+
+Session-level Update               
+
+> Selection-side update Proposal-side memory item
+> LoRA supervision: Compressed lesson :
+> Type :recovery _rule
+> Intent :interface _counters
+> Rule :use plural "counters "with "-i"
+> Prefer :"show interfaces counters -i
+> {Interface }"...
+> Avoid :"show interfaces counter
+> {interface }"…
+> Error cue :counter usage error
+
+Retrieved  Guidance 
+
+Abstract lesson Fig. 2. Prompt formulations and execution-grounded evidence routing for proposal-side memory and selection-side predictor adaptation. 
+
+turn t. As illustrated in Fig. 2, It consists of a failed com-mand show interfaces counter Ethernet76 and a successful command show interfaces counters -i Ethernet76 , further constituting a set of execution records 
+
+Dt =
+
+n 
+
+xt, a (k) 
+
+> t
+
+, z (k) 
+
+> t
+
+, y (k)
+
+> t
+
+o 
+
+> k∈I t
+
+. (12) Notably, these additional executions are used only for adapta-tion and do not change the top-1 outcome y⋆t . Afterward, Dt
+
+is appended to the memory update buffer B.
+
+B. Execution-Grounded Dual-Path Adaptation 
+
+As explained in Eq. (11), the collected execution records Dt
+
+will contribute to the dual-path adaptation: the proposal-side path updates reusable operational guidance Mt for candidate generation in Eq. (4), while the selection-side path updates the consequence predictor (i.e., hr and hρ) used for reranking in Eq. (6). 
+
+1) Proposal-Side Operational Memory: To ensure essential guidance in limited-length prompts, raw execution feedback shall be distilled into a concise description that preserves transferable command patterns and failure conditions. Follow-ing reasoning-memory abstraction [12], a lightweight LLM-based memory extractor performs this distillation and sum-marizes the buffered successful, failed, and recovery op-erations into structured operational lessons. For example, from the failed command show interfaces counter Ethernet76 and the successful recovery command show interfaces counters -i Ethernet76 , the extrac-tor abstracts a reusable lesson: for interface-counter queries on EthernetN interfaces, use the plural counters com-mand with the -i {Interface } option, and avoid sin-gular or direct-suffix variants such as show interfaces counter {Interface }. Consequently, the proposal-side operational memory bank M stores compact operational lessons extracted from accumulated execution records, wherein each item mi ∈ M contains a type, an intent description, an applicability condition, and reusable proposal guidance. For online retrieval, the current context xt is encoded as a compact retrieval query κt by the same extractor. The turn-specific guidance Mt ⊆ M is then retrieved from the memory bank, where each memory item mi is indexed by a key κi
+
+constructed from its type, intent, and applicability fields. The items are retrieved by 
+
+Mt = TopR mi∈M sim ( ϕ(κt), ϕ (κi)) , (13) where ϕ(·) is the text embedding function [16], sim( ·, ·)
+
+denotes cosine similarity, and R is the number of retrieved items. The retrieved items are inserted into the proposal prompt to guide the generation of At in Eq. (4). 
+
+2) Selection-Side Consequence Adaptation: Selection-side adaptation updates the consequence predictor θt so that the reranker can better distinguish feasible actions from failed alternatives when both are available in the candidate set. Based on state–action–consequence samples in Dt, we implement this path as session-level LoRA adaptation [15] of the consequence predictor. For each adapted linear layer in 
+
+θt, we insert a low-rank update: 
+
+Wt = W0 + ∆ Wt, ∆Wt = UtVt, (14) where W0 is the frozen base weight and Ut, V t are trainable session-level parameters. While freezing the proposal LLM and the reward and risk heads, we update θt by 
+
+Lsel = X
+
+> (x,a,z,y )∈D t
+
+ℓz (fθt (x, a ) , z ) , (15) where ℓz (·, ·) measures the discrepancy between the predicted and observed consequence representations. Algorithm 1 summarizes the resulting operation loop. No-tably, the proposal-side path periodically updates M from accumulated records, whereas the selection-side path updates 
+
+θt after each turn. 
+
+Algorithm 1 Execution-grounded continual learning approach. 
+
+Require: User intent qt, observation ot, session history Ht−1,predictor parameters θt, operational memory bank M,memory update buffer B 
+
+> 1:
+
+Construct the decision context xt ← (qt, o t, H t−1). 
+
+> 2:
+
+Retrieve Mt by Eq. (13) and generate At by Eq. (4).  
+
+> 3:
+
+Compute ˆz(k) 
+
+> t
+
+, ˆr(k) 
+
+> t
+
+, and ˆρ(k) 
+
+> t
+
+for all a(k) 
+
+> t
+
+∈ A t. 
+
+> 4:
+
+Rank At by Eq. (7) and set a⋆t as the top-ranked action, and initialize Dt ← ∅ . 
+
+> 5:
+
+Execute a⋆t and evaluate (z⋆t , y ⋆t ) by Eq. (8).  
+
+> 6:
+
+Add (xt, a ⋆t , z ⋆t , y ⋆t ) to Dt as in Eq. (12).  
+
+> 7:
+
+if y⋆t = 0 then  
+
+> 8:
+
+for each remaining candidate a(k) 
+
+> t
+
+in ranked order do  
+
+> 9:
+
+Execute a(k) 
+
+> t
+
+by Eq. (3), obtaining (z(k) 
+
+> t
+
+, y (k) 
+
+> t
+
+). 
+
+> 10:
+
+Add (xt, a (k) 
+
+> t
+
+, z (k) 
+
+> t
+
+, y (k) 
+
+> t
+
+) to Dt as in Eq. (12).  
+
+> 11:
+
+if y(k) 
+
+> t
+
+= 1 then  
+
+> 12:
+
+break  
+
+> 13:
+
+end if  
+
+> 14:
+
+end for  
+
+> 15:
+
+end if  
+
+> 16:
+
+Update the selection-side LoRA parameters using Dt and Eq. (15), yielding θt+1 . 
+
+> 17:
+
+B ← B ∪ D t. 
+
+> 18:
+
+if the proposal-side memory update interval is reached 
+
+then  
+
+> 19:
+
+Extract reusable operational items from B and update 
+
+M. 
+
+> 20:
+
+B ← ∅ . 
+
+> 21:
+
+end if  
+
+> 22:
+
+Ht ← Ht−1 ∪ { (qt, a ⋆t , z ⋆t )}. 
+
+> 23:
+
+return Top-1 outcome y⋆t , updated history Ht, predictor parameters θt+1 , and memory bank M.IV. E XPERIMENTAL RESULTS AND ANALYSIS 
+
+A. Experimental Settings 
+
+We evaluate the proposed framework over a fixed sequence of 140 interaction turns covering CLI query, configuration, and diagnosis operations. All compared methods use the same request sequence, initial environment states, candidate budget, SSH execution interface, and verifier rules. The agent gener-ates K = 5 candidate actions and evaluates the top-ranked  
+
+> Fig. 3. Comparison of candidate-set coverage and executed top-1 success across proposal model scales.
+
+action. We use Qwen3-1.7B, Qwen3-8B, and Qwen3-14B as proposal generators in Eq. (4), while the consequence predictor is built on Qwen3-0.6B. The consequence-aware scoring mod-ule is initialized from 300 execution records with manually annotated utility and risk labels. We use top-1 success as the primary metric, defined by the verified execution outcome y⋆t
+
+in Eq. (8). We also report Recall@ 5 as an initial proposal-side diagnostic: it measures whether the five candidates produced by the proposal generator before dual-path adaptation contain at least one feasible action, corresponding to the coverage indicator ct in Eq. (10). We consider the following baselines as a comparison. The single-proposal baseline directly executes the first generated candidate. The self-consistency [17] baseline samples K = 5 
+
+candidates and selects the most frequently generated action by voting, without access to execution feedback. The no-adaptation baseline disables both proposal-side retrieval and selection-side predictor adaptation. The interaction curves re-port the sliding-window top-1 success rate. 
+
+B. Result Analyses 
+
+Fig. 3 compares the proposed method and other baselines. The comparison shows that a multi-candidate proposal often makes a feasible action available, and that the full dual-path framework achieves the highest top-1 success across all tested model scales. This result shows that candidate coverage alone is insufficient; consequence-aware selection and execution-grounded adaptation are still needed to convert available feasible actions into successful top-ranked executions. Fig. 4 reports the end-to-end top-1 success of the no-adaptation and full dual-path variants over 140 interaction turns. The full framework shows sustained improvement across Qwen3-1.7B, Qwen3-8B, and Qwen3-14B, while the larger model achieves a higher absolute performance. Fig. 4. End-to-end performance of the dual-path framework across proposal model scales; dashed lines denote the average no-adaptation baselines. 
+
+Fig. 5. Adaptation-path ablation over multi-turn SONiC operation sessions. 
+
+Fig. 5 isolates the two adaptation paths using Qwen3-8B. The proposal-side-only variant changes only the retrieved guidance for candidate generation, and its gain is consistent with improved feasible-action coverage. The selection-side-only variant keeps proposal generation fixed and improves conditional selection quality by adapting the consequence predictor, but its performance remains bounded by the avail-able candidates. The full framework achieves the highest success rate, supporting the decomposition in Eq. (11): the two adaptation paths improve complementary factors of reliable top-1 execution. V. C ONCLUSION 
+
+In this paper, we have presented an execution-grounded continual learning agent for CLI-based SONiC network opera-tions. Guided by the feasible-action coverage and conditional selection quality formulation, the framework has adopted a dual-path adaptation. The proposal-side path has abstracted reusable operational lessons into retrievable guidance to im-prove feasible-action coverage without modifying the pro-posal LLM, while the selection-side path has adapted the consequence predictor through session-level LoRA updates using real SSH feedback to improve conditional selection quality. Experiments have shown that the proposed design has improved feasible-action coverage and top-1 execution success over multi-turn interaction, with complementary gains from the two adaptation paths. Future work will extend the frame-work to larger network scenarios and more comprehensive safety evaluation. REFERENCES [1] SONiC Project, “SONiC: Software for open networking in the cloud,” Online documentation, 2026, accessed: Jun. 4, 2026. [Online]. Available: https://github.com/sonic-net/SONiC [2] S. Yao, J. Zhao, D. Yu et al. , “ReAct: Synergizing reasoning and acting in language models,” in Proc. ICLR , Kigali, Rwanda, May 2023. [3] A. Leivadeas and M. Falkner, “A survey on intent-based networking,” 
+
+IEEE Commun. Surveys Tuts. , vol. 25, no. 1, pp. 625–655, 2023. [4] F. Liu, B. Farkiani, and P. Crowley, “Large Language Models for com-puter networking operations and management: A survey on applications, key techniques, and opportunities,” Comput. Netw. , vol. 271, 2025. [5] Y. Chen, R. Li, Z. Zhao, C. Peng, J. Wu, E. Hossain, and H. Zhang, “NetGPT: An AI-native network architecture for provisioning beyond personalized generative services,” IEEE Netw. , vol. 38, no. 6, pp. 404– 413, Nov. 2024. [6] C. Wang, M. Scazzariello, A. Farshin et al. , “Netconfeval: Can LLMs fa-cilitate network configuration?” Proc. ACM Netw. , vol. 2, no. CoNEXT2, Jun. 2024. [7] Z. Wan, R. Han, H. Sun et al. , “Netkeeper: Enhancing network resilience with autonomous network configuration update on traffic patterns and anomalies,” in Proc. USENIX ATC , Boston, MA, USA, Jul. 2025, pp. 715–730. [8] B. Ichter, A. Brohan, Y. Chebotar et al. , “Do As I Can, Not As I Say: Grounding language in robotic affordances,” in Proc. CoRL , vol. 205, Auckland, New Zealand, Dec. 2023, pp. 287–318. [9] N. Shinn, F. Cassano, A. Gopinath et al. , “Reflexion: Language agents with verbal reinforcement learning,” in Proc. NeurIPS , vol. 36, New Orleans, LA, USA, Dec. 2023, pp. 8634–8652. [10] Z. Dai, Z. Yang, Y. Yang et al. , “Transformer-XL: Attentive language models beyond a fixed-length context,” in Proc. ACL , Florence, Italy, Jul. 2019, pp. 2978–2988. [11] P. Lewis, E. Perez, A. Piktus et al. , “Retrieval-augmented generation for knowledge-intensive NLP tasks,” in Proc. NeurIPS , vol. 33, Virtual Event, Dec. 2020, pp. 9459–9474. [12] S. Ouyang, J. Yan, I.-H. Hsu et al. , “ReasoningBank: Scaling agent self-evolving with reasoning memory,” in Proc. ICLR , Rio de Janeiro, Brazil, Apr. 2026. [13] X. Wang, C. Geng, W. Wan et al. , “Forgetting, ignorance or myopia: Re-visiting key challenges in online continual learning,” in Proc. NeurIPS ,vol. 37, Vancouver, BC, Canada, Dec. 2024, pp. 58 341–58 375. [14] Y. Sun, X. Wang, Z. Liu et al. , “Test-time training with self-supervision for generalization under distribution shifts,” in Proc. ICML , vol. 119, Virtual Event, Jul. 2020, pp. 9229–9248. [15] E. J. Hu, Y. Shen, P. Wallis et al. , “LoRA: Low-rank adaptation of large language models,” in Proc. ICLR , Virtual Event, Apr. 2022. [16] N. Reimers and I. Gurevych, “Sentence-BERT: Sentence embeddings using siamese BERT-networks,” in Proc. EMNLP-IJCNLP , Hong Kong, China, 2019, pp. 3982–3992. [17] X. Wang, J. Wei, D. Schuurmans et al. , “Self-consistency improves chain of thought reasoning in language models,” in Proc. ICLR , Kigali, Rwanda, May 2023.

@@ -1,0 +1,1120 @@
+Title: MESA:Task-Adaptive Multi-Structure Evidence Selection for Long-Horizon Agent Memory
+
+URL Source: https://arxiv.org/pdf/2608.10108v1
+
+Published Time: Wed, 12 Aug 2026 00:08:23 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# MESA : Task-Adaptive Multi-Structure Evidence Selection for Long-Horizon Agent Memory 
+
+## Beidi Zhao 1∗, Yaoqi Chen 2,3 , Yuru Feng 2,4 , Menghao Li 2, Qianxi Zhang 2, Baotong Lu 2, Jianan Lu 2,Zhirui Wang 2, Xinjiang Wang 2, Shusen Xu 2, Zengzhong Li 2, Xiaoxiao Li 1†, Qi Chen 2†
+
+> 1
+
+University of British Columbia, 2Microsoft, 
+
+> 3
+
+University of Science and Technology of China, 4University of California, San Diego 
+
+Abstract 
+
+Long-horizon agents accumulate trajectories spanning hun-dreds of interleaved reasoning, action, and observation steps, where answering a query may depend on evidence buried far back in the history. External memory stores such trajectories as structured representations, yet each structure provides a distinct and incomplete view. Existing multi-memory systems either read a fixed set of structures for every query, inflat-ing context and introducing noise, or route each query to a single structure, preventing the composition of complemen-tary evidence. A controlled analysis on AMA-Bench shows that the optimal memory configuration is typically neither a single structure nor the full union, but a tailored composi-tion of multiple structural memories that varies with query and task demands. Motivated by these findings, we formu-late structure-level dynamic selection : selecting and fusing a query-adaptive subset from a library of specialized mem-ory structures. We propose MESA (a Multi-structure Evidence 
+
+Selection framework for long-horizon Agent), which builds five complementary structure views of each trajectory and learns from end-to-end answer-level feedback to select and fuse a query-specific subset for a frozen answer model. To learn under this weak supervision, MESA employs harness op-timization with prior-guided search and UCB-guided schedul-ing to balance exploration and exploitation. On AMA-Bench, 
+
+MESA outperforms the strongest baseline by 8.5% while using 41% fewer evidence tokens than the all-structure alternative. 
+
+## 1 Introduction 
+
+Long-horizon agents accumulate trajectories that span hun-dreds of steps, where a later decision can depend on evidence produced much earlier (Yao et al. 2023; Wang et al. 2023; Zhao et al. 2026). Unlike documents or dialogues, these tra-jectories interleave reasoning, actions, observations, and tool outputs, and they carry temporal and causal dependencies (Zhao et al. 2026). Feeding the full trajectory to a long-context LLM is expensive and still does not reliably surface buried evidence, even with million-token windows (Team et al. 2024; Liu et al. 2024). Truncation and compression cut costs but can drop details that matter later (Jiang et al. 2023). 
+
+> ∗
+
+The work is completed during internship at Microsoft Research Asia. 
+
+> †
+
+Corresponding author. Q: Which step first flagged the bug as non-reproducible? (a) Example of task-adaptive memory-structure selection       
+
+> Evidence tokens per query Accuracy (%) 60 62 64 66 68 020k 30k 40k 60k
+> - 41% tokens All
+> 18.7k 63.7%
+> MESA
+> 11.0k 65.1%
+> (c) Accuracy vs. token cost
+> Accuracy (%) 025 50 75
+> 57.7
+> Summary
+> 51.4
+> Temporal
+> 32.7
+> Graph
+> 46.6
+> Vector
+> 48.2
+> Raw
+> 65.1
+> MESA
+> (b) Single structures vs. MESA
+> 10k 50k
+> Summary Temporal Stores Vector database Raw episodic Knowledge graph Each alone is incomplete Together are complementary
+> Broad context, no step detail Exact steps, buried in noise Relies on temporal anchors Similar embedding, wrong step Entity relations, no step ordering
+> CONTEXT EXACT STEP Fuse
+> Answer
+> Step 5
+
+Figure 1: Overview and motivation of MESA . (a) An SWE long-horizon agent execution example. Each single memory structure provides a distinct view of evidence. MESA dynam-ically selects and fuses a subset of complementary struc-tural memories to arrive at the correct answer. (b) Driven by adaptive memory-structure selection, MESA outperforms all single-structure baselines. (c) MESA achieves higher ac-curacy while consuming 41% fewer tokens compared to the all-structure alternative. External memory addresses this problem by transforming the history into persistent representations and retrieving a com-pact body of evidence for each query (Packer et al. 2023; Park et al. 2023; Zhong et al. 2024). Accordingly, the central question is how execution histories should be organized and dynamically consulted. Existing agent-memory systems rely on distinct structural abstractions to manage execution histories, yet each abstrac-tion exhibits inherent limitations when handling the hetero-geneity of long-horizon agent applications (Zhao et al. 2026). As illustrated in Fig. 1(a), text summaries (Zhong et al. 2024) capture high-level context but lack deterministic execution details; temporal stores (Sen et al. 2026) preserve chrono-arXiv:2608.10108v1 [cs.AI] 10 Aug 2026 logical order but may struggle when queries lack explicit temporal anchors in the query; vector databases (Lewis et al. 2020; Karpukhin et al. 2020) surface semantically near frag-ments that can be task-irrelevant while discarding temporal-causal order; knowledge graphs (Yang et al. 2026; Gutiérrez et al. 2024) facilitate entity traversal but lack step-level in-dexing; and raw episodic traces (Zheng et al. 2024) retain exact action steps but bury critical clues under heavy noise. To bridge individual limitations, recent hybrid memory systems combine these structures, but their access strate-gies remain mismatched with query-specific demands. At one extreme, eager all-in fusion methods uniformly query a static, exhaustive set of memory views for every query (Latimer et al. 2025; Su et al. 2026). While maximizing re-call, this indiscriminately bloats context windows and intro-duces distracting noise from unneeded structural memories (Ha et al. 2026; Narayana, Ayromlou, and Sehgal 2026). At the other extreme, single-structure routing methods select a single best-suited structure per query (Lu et al. 2026a; Bai et al. 2026). However, this strictly limits expressiveness when a query demands composing complementary evidence across representations (e.g., grounding a high-level summary within exact episodic steps, as in Fig. 1(a)). Consequently, no existing approach dynamically selects and composes a query-adaptive subset from a library of specialized memory structures. To formalize this problem, we define a memory struc-ture as a unified pair comprising a structural representation and its dedicated access interface. Guided by agent memory taxonomies (Wu et al. 2025; Luo et al. 2026), we instanti-ate five representative structures: text summaries, temporal stores, knowledge graphs, vector databases, and raw episodic traces. To quantify the intrinsic value of structure compo-sition, we conduct a controlled study sweeping (details in Sec. 3) over all non-empty structure subsets across diverse long-horizon tasks. This controlled analysis reveals two key findings: (1) Intermediate subsets are usually preferable: 
+
+across most evaluated categories, the best-performing com-position is neither a single structure nor the full union, but a subset of complementary structures; and (2) No fixed compo-sition is universally optimal over tasks: the winning subset varies across domains and memory capabilities, rather than following a single global preference. These findings motivate a new problem formulation: structure-level dynamic selec-tion , learning an executable policy to dynamically select and fuse query-dependent structural memories. However, realizing an effective structure-level selection policy entails two fundamental challenges. First, selecting dynamic memory subsets is inherently a combinatorial utility and redundancy dilemma . Complementary views can improve evidence coverage, whereas redundant or mis-matched views introduce distracting context and additional cost. The selector must therefore balance evidence recall, util-ity and context budget. Second, policy learning faces credit assignment under weak supervision . Ground-truth subsets and per-structure utility labels are unavailable. The policy must instead be learned from sparse, end-to-end answer feed-back, making individual selection decisions difficult to eval-uate. 
+
+Figure 2: The best memory-structure combination is task-dependent. We sweep non-empty subsets of the five struc-tures (Summary-S, Temporal-T, Graph-G, Vector-V, Raw-R) on AMA-Bench and report judge accuracy (%), split (a) by domain and (b) by capability. Colored lines trace only the per-axis winners, each marked with a star. The winning subset changes on different tasks. Grey dots show all other combi-nations’ result. To tackle these challenges, we propose MESA (Multi-structure Evidence Selection for long-horizon Agent). MESA 
+
+maintains the five independent memory structures: text sum-mary, temporal store, knowledge graph, vector database, and raw episodic trace. Each with its own builder and re-trieval interface. For each query, its selector dynamically choose query-dependent memory structures. Evidence from the selected structures are composed for a frozen answer-generating LLM. To optimize the selection policy under the weak supervision, MESA restricts candidate selection to prior directions and balances the exploration-exploitation. We summarize our contributions: (1) Problem formula-tion and empirical analysis. We formulate structure-level dynamic selection for agent memory and show through an exhaustive subset sweep that intermediate subsets typically outperform the single-structure and all-structure alternatives, while the best composition varies across task categories. (2) The MESA framework. We introduce a multi-structure memory framework that learns query-adaptive structure se-lection policy from sparse answer-level feedback through prior-guided harness optimization. (3) Empirical results. 
+
+MESA outperforms the strongest baseline by 8.5% on AMA-Bench. Results on LoCoMo extend the framework to con-versational memory. Extensive ablations further validate the effectiveness of the learned task-adaptive selection. 
+
+## 2 Related Work 
+
+2.1 Memory for LLM Agents 
+
+Equipping LLM agents with memory beyond a fixed con-text window has been approached from several angles. MemGPT (Packer et al. 2023) manages the working con-text itself, paging information in and out like an operat-ing system. A reflection-based line distills raw interaction into reusable knowledge: Generative Agents’ retrieve–reflect memory (Park et al. 2023) and Reflexion’s verbal self-feedback across trials (Shinn et al. 2023), while embodied agents such as Voyager accumulate a growing library of skills mined from long trajectories (Wang et al. 2023), underpin-ning agents that reuse distilled experience to act in multi-step environments (Yang, Yue, and He 2023). A parallel line builds long-term memory for cross-session dialogue and multi-hop QA, and several of these systems already maintain more than one index over the same history, pairing a graph store with dense or timestamped retrieval (Zhong et al. 2024; Chhikara et al. 2025; Gutiérrez et al. 2024; Maharana et al. 2024; Wu et al. 2024). Even where multiple indices coexist, however, each system reads them through a fixed interface; how an agent should select among heterogeneous evidence forms per query, as long-horizon multi-task settings demand, is left unaddressed. 
+
+2.2 Multi-Structure Memory for LLM Agents 
+
+A growing body of work organizes agent memory into ex-plicit structures, but differs from ours along three axes: how memory is organized (by semantic role or a single unified schema versus by access pattern), how it is read (a fixed policy or a single structure versus a query-specific complementary subset), and what the read returns (broad or single-source evidence versus a fused subset of heterogeneous structures). One line reads its structures through a fixed policy: Hindsight (Latimer et al. 2025) partitions memory into four networks (world facts, experiences, opinions, and observations) but an-swers every query with the same four-way parallel retrieval fused by reciprocal rank fusion, and SEEM (Lu et al. 2026b) combines a graph layer and an episodic layer through a deter-ministic pipeline; the read never adapts to what a query needs. A second line makes selection adaptive but returns a single winner: StructRAG (Li et al. 2025) reconstructs documents into the single best-fit format per query, Learning-to-Route dispatches each query to one external source (Bai et al. 2026), and FluxMem (Lu et al. 2026a) learns a context-aware se-lector that assigns each memory unit one structure among linear, graph, and hierarchical forms, supervised offline on conversational data. A third line, closest to ours, also selects compact evidence: S3Mem (Su et al. 2026) writes hetero-geneous histories into a single unified scene–event schema and routes a small evidence pack to the reader, but its se-lection operates within one representation rather than across structures with distinct access patterns. MESA differs on all three axes: it keeps heterogeneous structures distinguished, reads a query-specific complementary subset rather than one structure or the full union, and refines the selection policy through answer-level optimization. 
+
+## 3 Analysis of Memory Structure Selection 
+
+3.1 Memory Structure and Action Space 
+
+A long interaction history admits several forms of storage and access. We use memory structure to denote a memory repre-sentation together with its access mechanism, which jointly determine what information is retained and what evidence can be retrieved. Given a history τi, we construct K memory structures: 
+
+Mi = M (k) 
+
+> i
+
+= Bk(τi) Kk=1 , (1) where Bk is the builder for structure k, and Γk is its fixed ac-cess mechanism. We instantiate K = 5 representative struc-tures widely used in agent-memory systems (Wu et al. 2025; Luo et al. 2026): a compressed summary, a temporal key– value store, a relational graph, a dense vector index, and sparse retrieval over raw episodic traces. For a fair evalua-tion, we follow representative prior works (Zhao et al. 2026; Gutiérrez et al. 2024) for the memory schema and construc-tion of (see Appendix). Reading memory requires choosing which structures to access. We represent a selection as a non-empty binary vector 
+
+z ∈ { 0, 1}K , where z(k) = 1 indicates that structure k is selected. The action space is 
+
+Z = z ∈ { 0, 1}K | ∥ z∥0 ≥ 1 , (2) which contains 25 − 1 = 31 non-empty compositions for 
+
+K = 5 . We next evaluate these compositions to determine whether a single fixed subset is sufficient across tasks. 
+
+3.2 Controlled Composition Analysis 
+
+We evaluate all non-empty subsets of the five memory struc-tures on AMA-Bench (Zhao et al. 2026). This controlled sweep reveals two observations. 
+
+Intermediate subsets are usually preferable. Across the domains and QA capabilities in Fig. 2, most categories are best served by subsets containing multiple structures, indi-cating that they benefit from complementary evidence. How-ever, adding every available structure is generally unnec-essary and can introduce redundant or distracting context. The appropriate selection granularity therefore lies between route-to-one and read-all. 
+
+No fixed composition is universally optimal over tasks: 
+
+Fig. 2 also shows that a composition performing well for one domain or QA type may be suboptimal for another. No single fixed subset consistently provides the most useful evidence across tasks. The selected subset should therefore adapt to the current query rather than remain fixed. Together, these findings motivate a selector Sρ(qi, c i) that predicts a non-empty subset zi ∈ Z from the query and its observable context. The selector should exploit complemen-tary structures when needed while avoiding the redundant evidence cost of the full composition. The next section for-malizes this selector and describes how MESA learns it from answer-level training feedback. 
+
+## 4 Task-Adaptive Memory Structure Selection 
+
+As illustrated in Fig. 3, MESA learns an executable policy that selects a query-specific subset of five complementary mem-ory structures, while keeping all other components fixed. We first formulate the selection problem and then describe the prior-guided policy optimization and evaluation protocol. 
+
+4.1 Problem Formulation 
+
+Given the memory structures Mi = {M (k) 
+
+> i
+
+}Kk=1 constructed from history τi, the structure selector takes a query qi and a compact description ci of its interaction context and outputs a non-empty selection: 
+
+zi = Sρ(qi, c i), zi ∈ Z , (3) a Multi-view structural memory construction and query-time access 
+
+Long Trajectory Select and answer per query during inference      
+
+> Interaction history
+> τ
+> THINK t12
+> trace the scaling error
+> ACT t18
+> inspect metrics
+> OBS t19
+> feature ranges diverge
+> ACT t24
+> view scales.py
+> OBS t25
+> problematic code found
+> QUERY: Which step first flagged the bug as non-reproducible?
+> Structure selector
+
+evolved selector policy 𝜌 ∗ 
+
+> task-adaptive
+> 𝑺 𝝆
+
+SR 
+
+> GVTSummary Raw episodic
+> Merged context
+> Answer
+
+b Prior-guided harness optimization     
+
+> Policy archive
+> P
+> Select incumbent 𝜌 "
+> UCB-guided scheduler Localized proposal
+> Generate candidate ρ′
+> Fit on Training Traces
+> Dtr Validation Scoring
+> ρ*
+> Final selector
+
+Offline complementary structural memory construction      
+
+> Fixed 𝑀 #(%)
+> S: Summary T: Temporal Stores G: Knowledge graph V: Vector database R: Raw episodic Answer model 𝑭
+> Query analysis Subset construction Cost & robustness Query rewriting Data-driven routing
+
+𝑎 !      
+
+> Selected evidence
+> 𝜌 ∗= arg max
+> (∈𝒫
+> (𝐽 +,-𝜌 Next iteration
+> 𝜌′ "← Fit 𝜌′ ", 𝒟 ./
+> Reflection & Archive Update
+> 𝐽 +,-𝜌′ "− 𝜆𝐶 +,-𝜌′ "
+
+Figure 3: Overview of MESA . (a) A long interaction trajectory is converted offline into five complementary memory structures. At inference, the learned selector ρ∗ chooses a query-dependent subset, retrieves and merges its evidence, and passes it to a frozen answer model. (b) Prior-guided harness optimization evolves only the selector under prior directions and using UCB to balance exploration and exploitation. Localized proposals are evaluated using a performance–cost objective, and reflections update the policy archive. The final policy is selected on validation data. where ρ is an executable selection policy and Z is the action space. The context ci may contain task, domain, and QA-type information, but excludes the gold answer, evaluation score, and other outcome-revealing variables. 
+
+MESA invokes the access mechanisms selected by zi and composes their retrieved evidence: 
+
+Ei(zi) = Compose 
+
+n 
+
+Γk(qi, M (k) 
+
+> i
+
+) | z(k) 
+
+> i
+
+= 1 
+
+o 
+
+. (4) A frozen answer model F then performs inference over the selected evidence: 
+
+ˆyi(zi) = F (qi, E i(zi)) , (5) and the resulting utility is 
+
+ri(zi) = Eval (ˆ yi(zi), y i) . (6) We split the dataset into training, validation and test sets 
+
+Dtr , Dval and Dtest . For a split D, the evaluation score of policy ρ is 
+
+JD (ρ) = 1
+
+|D| 
+
+X
+
+> i∈D
+
+ri (Sρ(qi, c i)) . (7) Let CD (ρ) denote the mean number of evidence tokens re-trieved from the selected structures. Candidate policies are compared using the regularized validation objective 
+
+eJval (ρ) = Jval (ρ) − λC val (ρ), (8) where λ controls the trade-off between answer accuracy and evidence cost. 
+
+4.2 Prior-Guided Harness Optimization 
+
+Feedback-driven optimizers can search over textual prompts (Agrawal et al. 2025) or complete executable harnesses (Lee et al. 2026), but such broad spaces are poorly directed under the coarse, answer-level feedback available here (Pan et al. 2026; Liu et al. 2026; Wu et al. 2026). Since MESA keeps the builders, retrievers, composer, and answer model fixed, we restrict optimization to a small set of prior directions 
+
+A = {a1, . . . , a |A| }. As shown in Algorithm 1, the search archive is initialized with the all-structure policy ρall . An LLM proposer then generates executable selection policies under a prior direction of reflecting the selection mecha-nisms. These mechanisms capture how a policy infers query demand, estimates structure utility, constructs a subset, and balances robustness against evidence cost. Their complete descriptions of prior directions are provided in Appendix. 
+
+MESA balances exploration and exploitation using an Upper Confidence Bound (UCB)-guided scheduling (Auer, Cesa-Bianchi, and Fischer 2002; Fialho et al. 2010). Each prior direction a ∈ A defines a way to generate or modify a selection policy and serves as one UCB arm. Let na be the number of candidate policies evaluated under direction 
+
+a. We compute 
+
+UCB( a) = eJval (a) + β
+
+s
+
+log( N + 2) 
+
+na + 1 , (9) where na is the number of evaluated candidates generated under direction a, N = P 
+
+> a
+
+na, and eJval (a) is their mean validation objective. The first term favors directions that have Algorithm 1: Prior-Guided Harness Optimization 
+
+Require: training set Dtr , validation set Dval , proposer Π,prior directions A, budget T 
+
+> 1:
+
+P ← { (ρall , Evaluate (ρall , Dval )) } 
+
+> 2:
+
+for t = 1 , . . . , T do  
+
+> 3:
+
+Ct ← Propose UCB (Π , P, A) 
+
+> 4:
+
+for ρ ∈ C t do  
+
+> 5:
+
+if Valid (ρ) then  
+
+> 6:
+
+ρ ← Fit (ρ, Dtr ) 
+
+> 7:
+
+Eρ ← Evaluate (ρ, Dval ) 
+
+> 8:
+
+P ← P ∪ { (ρ, E ρ)} 
+
+> 9:
+
+end if  
+
+> 10:
+
+end for  
+
+> 11:
+
+end for  
+
+> 12:
+
+return ρ∗ = arg max 
+
+> (ρ,E ρ)∈P
+
+eJval (ρ)
+
+previously produced strong policies, whereas the second en-courages directions that have been evaluated less frequently. At each iteration, the LLM proposer receives the policy archive, the UCB statistics of all directions, and the recur-ring errors of the current policy. It then generates three ex-ecutable candidates: an exploitation candidate based on a previously effective direction, an exploration candidate based on an under-explored direction, and a failure-repair candidate targeting a recurring error. Thus, Eq. (9) guides the choice of search directions, whereas the LLM translates each di-rection into a concrete policy modification. Each candidate is evaluated on the validation set, and its result updates the corresponding direction’s eJval (a) and na. Further details are provided in Appendix. After the search budget is exhausted, 
+
+MESA returns the policy with the highest objective score on the validation set in the archive (Algorithm 1, line 12). After optimization, the selected policy ρ∗ is frozen and tested on the held-out test set. 
+
+## 5 Experiment 
+
+5.1 Experimental Setup 
+
+Datasets. AMA-Bench (Zhao et al. 2026) contains long agent–environment trajectories in which later questions re-quire evidence produced during earlier reasoning, actions, observations, or tool calls. We use its real-world subset, con-sisting of 208 episodes with 12 expert-curated question– answer pairs per episode, for a total of 2,496 questions. The episodes cover six agentic domains: web task execu-tion, open-world tool question answering, text-to-SQL, soft-ware engineering, gaming, and embodied AI. The questions additionally span four memory capabilities: recall, causal inference, state updating, and state abstraction. We fur-ther evaluate on LoCoMo (Maharana et al. 2024) to test whether the same framework extends beyond agent trajecto-ries to long-term conversational memory. LoCoMo contains 10 multi-session conversations and 1,986 question–answer pairs. Following the standard protocol, we exclude 446 ad-versarial questions and evaluate the remaining 1,540 ques-tions: 841 single-hop, 282 multi-hop, 321 temporal, and 96 open-domain questions. 
+
+Baselines. We compare against four families of baselines. 
+
+Long-context directly provides the trajectory to the an-swer model. BM25 and Qwen3-Emb-4B represent sparse and dense item-level retrieval, respectively. We also include representative long-term memory systems: MemGPT, Hip-poRAG2, Mem0, MemoRAG, A-Mem, EMem, the multi-structure memory method Hindsight and the benchmark-specific state-of-the-art baseline AMA-Agent. All methods within an AMA-Bench backbone block use the same answer model and are evaluated with the same prompt. For meth-ods that were not originally designed for these datasets, we preserve their core memory and retrieval mechanisms while adapting the prompts to the task-specific memory construc-tion, input and output formats. Detailed descriptions of the baselines are provided in the Appendix. 
+
+Metrics. Following the standard evaluation protocols of each benchmark, we use LLM-judged accuracy for AMA-Bench and F1 score for LoCoMo. The judge LLM backbone is the same as the answer model. All predictions are evaluated using a fixed judging protocol shared across methods. The evaluation prompt is provided in Appendix. 
+
+Implementation Details. We split AMA-Bench at the episode-level into training, validation, and test splits with the ratio 2:2:6. The split is drawn at random while ensuring full coverage of the entire dataset (all six domains, twelve tasks, and four QA types). Because MESA requires training to evolve its selector, we repeat this random partitioning five times and report the mean over the five splits, which reduces sensitivity to any single train/validation/test assignment. For LoCoMo, we use a conversation-disjoint 2:2:6 split. All an-swer models use greedy decoding. We use the same LLM backbone for each meta-harness optimization; we run 30 it-erations. All experiments are run on NVIDIA A100 GPUs. Memory schema formulations, prompts, and exact hyperpa-rameters λ and β are in Appendix. 
+
+5.2 Main Results 
+
+MESA improves agentic long-horizon memory. Table 1 presents the main AMA-Bench results. With Qwen3-32B, 
+
+MESA reaches 65.1% overall accuracy, outperforming the strongest prior memory baseline, AMA-Agent, by 8.5 points and the long-context reader by 12.5 points. MESA is best on three of the four memory capabilities. On Causal Infer-ence, it obtains 63.6%, 1.4% lower than AMA-Agent. The category-level gains therefore do not arise from one dominant question type. With Gemma-4-31B, MESA obtains an overall 6.4% higher accuracy compared with the strongest baseline. These results show that the benefits of structure-level selec-tion are consistent across answer-model backbones. 
+
+Gains span diverse agentic domains. The domain break-down in Figure 4 (full table in Appendix) shows that MESA 
+
+is the best method on four of the six domains with both model backbones. It improves over the strongest baseline by 4.1% on Web, 8.9% on Text2SQL, 15.5% on Software, and 8.5% on Embodied AI. On Open-World QA and Gaming, MESA 
+
+is second by only 0.7% in each case. The particularly large Software and Text2SQL gains are consistent with the need to combine global state with exact identifiers, code locations, Method Recall Causal Inference State Updating State Abstraction Overall 
+
+LLM Backbone: Qwen3-32B (Yang et al. 2025) 
+
+Long-context 60 .2±1.2 51 .9±2.1 52 .9±1.1 37 .6±1.5 52 .6±1.0
+
+BM25 37 .3±1.2 48 .9±1.1 36 .4±1.0 29 .0±1.8 38 .5±0.6
+
+Qwen3-Emb-4B (Zhang et al. 2025) 47 .9±0.6 50 .7±2.2 44 .3±2.4 41 .8±2.0 46 .6±0.4
+
+MemGPT (Packer et al. 2023) 32 .8±2.0 37 .9±1.8 35 .2±1.4 28 .4±2.1 33 .9±0.5
+
+HippoRAG2 (Gutiérrez et al. 2024) 49 .7±1.7 55 .5±1.0 42 .3±2.4 34 .0±2.7 46 .6±1.1
+
+Mem0 (Chhikara et al. 2025) 30 .1±1.0 36 .6±1.2 28 .3±0.8 29 .4±2.2 31 .1±0.6
+
+MemoRAG (Qian et al. 2025) 45 .7±0.9 48 .3±0.6 39 .4±1.2 33 .6±2.2 43 .1±0.7
+
+Hindsight (Latimer et al. 2025) 35 .8±1.0 45 .4±1.0 31 .0±1.3 30 .7±2.6 36 .0±0.5
+
+A-Mem (Xu et al. 2026) 47 .6±1.4 47 .3±1.1 41 .0±0.7 31 .9±1.8 43 .2±0.7
+
+EMem (Wang et al. 2026) 48 .6±1.2 42 .8±1.6 39 .8±1.2 28 .2±0.9 41 .5±0.6
+
+AMA-Agent (Zhao et al. 2026) 62 .0±1.1 65 .0±1.5 52 .6±2.2 39 .8±1.8 56 .6±0.8
+
+MESA (ours) 69 .2±1.8 63 .6±1.8 65 .8±1.9 57 .8±2.2 65 .1±0.8
+
+LLM Backbone: Gemma-4-31B (Team et al. 2026) 
+
+Long-context 63 .0±2.4 64 .3±0.7 70 .8±1.5 46 .0±2.3 62 .5±1.3
+
+BM25 24 .8±1.5 39 .1±1.6 26 .7±0.6 22 .3±1.3 28 .3±0.9
+
+Qwen3-Emb-4B (Zhang et al. 2025) 46 .6±0.8 52 .5±0.8 40 .4±1.8 33 .1±1.3 44 .2±0.7
+
+MemGPT (Packer et al. 2023) 36 .1±0.6 36 .3±3.3 42 .2±1.8 26 .8±2.1 36 .2±1.4
+
+HippoRAG2 (Gutiérrez et al. 2024) 51 .5±1.6 45 .1±1.0 52 .2±4.0 39 .7±1.9 48 .2±1.3
+
+Mem0 (Chhikara et al. 2025) 24 .6±0.8 31 .8±1.0 22 .1±1.2 24 .8±1.5 25 .7±0.4
+
+MemoRAG (Qian et al. 2025) 49 .0±0.6 53 .5±1.6 44 .1±2.0 33 .9±1.4 46 .3±0.8
+
+Hindsight (Latimer et al. 2025) 39 .5±1.7 52 .6±1.1 36 .8±1.8 40 .2±1.4 42 .1±1.2
+
+A-Mem (Xu et al. 2026) 52 .6±1.3 54 .0±0.8 51 .9±2.1 35 .7±1.6 50 .0±0.9
+
+EMem (Wang et al. 2026) 61 .5±2.6 54 .2±1.5 63 .2±1.2 48 .1±2.5 58 .0±1.4
+
+AMA-Agent (Zhao et al. 2026) 66 .1±1.0 62 .2±1.9 66 .1±2.2 53 .3±1.5 63 .0±1.0
+
+MESA (ours) 69 .9±2.2 68 .8±1.1 73 .9±2.3 62 .0±1.9 69 .4±1.1
+
+Table 1: Main results on AMA-Bench using Qwen3-32B and Gemma-4-31B as answer-model backbones. Results are LLM-as-judge accuracies (%). Baseline results are reported as mean ±std over five splits. Best results within each backbone are shown in bold, and second-best results are underlined. 
+
+Method F1 
+
+Long-context 44 .7
+
+BM25 27 .4
+
+Qwen3-Emb-4B (Zhang et al. 2025) 36 .7
+
+HippoRAG2 (Gutiérrez et al. 2024) 36 .6
+
+MemGPT (Packer et al. 2023) 46 .8
+
+Mem0 (Chhikara et al. 2025) 37 .2
+
+A-Mem (Xu et al. 2026) 36 .2
+
+MemoRAG (Qian et al. 2025) 25 .4
+
+Hindsight (Latimer et al. 2025) 46 .3
+
+EMem (Wang et al. 2026) 47 .2
+
+AMA-Agent (Zhao et al. 2026) 32 .6
+
+MESA (ours) 49 .0
+
+Table 2: Token-F1 score (%) of MESA on the long-conversation dataset LoCoMo with Qwen3-32B. and temporally localized events. 
+
+The framework extends to conversational memory. Ta-ble 2 applies the same framework and optimization procedure to LoCoMo. MESA obtains an overall F1 of 49.0%, improv-ing over the strongest baseline that specialized for this dataset (Wang et al. 2026) by 1.8%. Game Embodied AI Open-World QA Text-to-SQL Software Web   
+
+> 20 30 40 50 60 70
+> (a) Qwen3-32B
+> 10 Game Embodied AI Open-World QA Text-to-SQL Software Web
+> 20 40 60 80
+> (b) Gemma-4-31B
+> 5
+> Long-context BM25 Qwen3-Emb-4B HippoRAG2 MemGPT Mem0 A-Mem MemoRAG EMem AMA-Agent MESA (ours)
+
+Figure 4: Domain-wise accuracy (%) on AMA-Bench with Qwen3-32B and Gemma4-31B. 
+
+5.3 Ablation Studies of Selection Strategy 
+
+Performance of individual structures. The first block of Table 3 shows that no single memory structure is sufficient across AMA-Bench. Summary is the strongest individual structure, reaching 57.7% accuracy with 5.7k evidence to-kens, while the other structures achieve 32.7–51.4%. Al-though the summary backend is already strong, MESA treats Selection strategy #Str. Evidence tok./q Accuracy 
+
+Summary 1.0 5.7k 57 .7±1.3
+
+Temporal KV 1.0 2.8k 51 .4±0.8
+
+Knowledge graph 1.0 0.8k 32 .7±1.2
+
+Vector DB 1.0 3.5k 46 .6±0.4
+
+Raw context 1.0 10.5k 48 .2±0.5
+
+Random 2.5 11.4k 56 .7±1.2
+
+LLM zero-shot 2.2 11.2k 61 .4±0.8
+
+All 5.0 18.7k 63 .7±1.0
+
+Route-to-one 1.0 6.8k 57 .0±3.2
+
+w/o priors 2.8 11.5k 63 .1±2.3
+
+w/o UCB 3.0 12.4k 64 .3±2.2
+
+MESA (ours) 2.8 11.0k 65 .1±0.8
+
+Table 3: Ablation of selection on AMA-Bench with Qwen3-32B. #Str. denote the average number of structures, and Evi-dence tok./q means evidence tokens per query. The first block shows the performance of single structures, the second block shows the ablation of selection without learning, the third block shows the ablation of learning designs. 60% 61% 62% 63% 64% 65% 66% 67%             
+
+> Objective score (val) / accuracy (test)
+> I16 I26 I27
+> All evaluated proposals (objective) Accepted objective frontier Accepted TEST (post-hoc) Accepted proposal No valid proposal
+> 036912 15 18 21 24 27 30
+> Iteration
+> 50% 55%
+> Validation 63.62% | Test 64.93% Iteration 16 Minimum win-count check (at least 5 training wins)
+> database/sql -> {S, T, R}; time/sequence -> {S, T, V} relation/entity -> {S, T, G}; otherwise -> {S, T, G, V} If the selected combo lacks support, fall back to all five. Validation 63.62% | Test 65.53% Iteration 26 Keyword mapping; remove the minimum win-count check
+> time/sequence/history/event -> {S, T, V} relation/entity/cause/effect -> {S, T, G}; database/sql -> {S, T, R} state/update -> {S, T, G, V}; abstract -> all five; else -> {S, T, G, V}
+> Iteration 27 Validation 64.43% | Test 65.67%
+> Keep keyword mapping; specialize the no-keyword selection
+> …Recall / software -> {S, T, G} Causal inference / text-to-sql -> {S, T, R} Otherwise -> {S, T, G, V}
+
+(a) Proposal search and acceptance (b) What each accepted proposal learned 
+
+Figure 5: Example of MESA ’s selection policy optimization on AMA-Bench. (a) Training-objective values for evaluated proposals, accepted archive updates, and the best-so-far pol-icy. The accepted test accuracy is post-hoc accuracy. (b) Representative accepted proposals. it as only one candidate and exceeds it by 7.4% through se-lective combination with complementary structures. Thus, the improvement cannot be attributed to the underlying sum-mary structure alone. 
+
+Selection without learning. The second block compares se-lection strategies that do not use the proposed optimization procedure. Random subsets achieve 56.7% accuracy with 11.4k evidence tokens, whereas LLM zero-shot selection reaches 61.4% with a similar budget of 11.2k tokens, demon-strating the benefit of query-conditioned selection. Reading all five structures further improves accuracy to 63.7%, but requires 18.7k evidence tokens per query. Exhaustive access is therefore substantially more expensive and still does not provide the best performance. 
+
+Ablation of learning designs. The third block isolates the components of the learned selection policy. Restricting the policy to route each query to only one structure reduces ac-curacy to 57.0%, confirming that adaptively combining mul-tiple structures is essential. Removing prior directions lowers accuracy from 65.1% to 63.1%, showing that structured guid-ance focuses proposals on plausible routing modifications and makes sparse answer-level feedback more actionable. Removing UCB lowers accuracy to 64.3% and increases the standard deviation from 0.8 to 2.2, indicating that UCB helps balance exploration and exploitation across proposal direc-tions and stabilizes the search. With both components, MESA 
+
+selects 2.8 structures on average and reaches 65.1% accuracy using 11.0k evidence tokens. It outperforms the all-structure configuration by 1.4% while using 41.2% fewer tokens, and improves over the zero-shot selector by 3.7%. 
+
+5.4 What does policy evolution learn? 
+
+Fig. 5 shows a representative optimization run 1. Accepted proposals progressively refine keyword-based routing into query-conditioned rules, while rejected or invalid candi-dates leave the archived policy unchanged. The final policy achieves 65.67% test accuracy, while remaining explicit and interpretable. 
+
+## 6 Conclusion 
+
+In this paper, we studied how a long-horizon agent should read its accumulated memory when no single organization serves every query. Framing this as structure-level selection, we showed that the useful subset of memory structures is intermediate and query-dependent, and introduced MESA , a five-structure framework that learns a query-adaptive selec-tor from answer-level feedback while leaving the builders, retrievers, and answer model fixed. On AMA-Bench, MESA 
+
+surpasses the strongest baseline by 8.5% while reading over 40% fewer evidence tokens than the all-structure union, and the framework also extends to conversational memory on LoCoMo. Future work will jointly optimize memory con-struction and selection and model cross-structure evidence dependencies. 
+
+> 1
+
+Post-hoc test accuracy were generated after the complete opti-mization, which were never exposed during policy selection. References 
+
+Agrawal, L. A.; Tan, S.; Soylu, D.; Ziems, N.; Khare, R.; Opsahl-Ong, K.; Singhvi, A.; Shandilya, H.; Ryan, M. J.; Jiang, M.; et al. 2025. Gepa: Reflective prompt evolu-tion can outperform reinforcement learning. arXiv preprint arXiv:2507.19457 .Auer, P.; Cesa-Bianchi, N.; and Fischer, P. 2002. Finite-time analysis of the multiarmed bandit problem. Machine learning , 47(2): 235–256. Bai, H.; Wang, H.; Chen, S.; Chen, Z.; Tang, L.-A.; Cheng, W.; Fu, Y.; and Chen, H. 2026. Learning to Route: A Rule-Driven Agent Framework for Hybrid-Source Retrieval-Augmented Generation. In Proceedings of the ACM Web Conference 2026 , 4338–4349. Chhikara, P.; Khant, D.; Aryan, S.; Singh, T.; and Yadav, D. 2025. Mem0: Building production-ready ai agents with scal-able long-term memory. arXiv preprint arXiv:2504.19413 .Fialho, Á.; Da Costa, L.; Schoenauer, M.; and Sebag, M. 2010. Analyzing bandit-based adaptive operator selection mechanisms. Annals of Mathematics and Artificial Intelli-gence , 60(1): 25–64. Gutiérrez, B. J.; Shu, Y.; Gu, Y.; Yasunaga, M.; and Su, Y. 2024. Hipporag: Neurobiologically inspired long-term memory for large language models. Advances in neural in-formation processing systems , 37: 59532–59569. Gutiérrez, B. J.; Shu, Y.; Qi, W.; Zhou, S.; and Su, Y. 2025. From rag to memory: Non-parametric continual learning for large language models. arXiv preprint arXiv:2502.14802 .Ha, H.; Kim, J.; Qian, C.; Liu, J.; Campbell, W. M.; Wu, Y.; Zhang, Y.; McKeown, K.; Hakkani-Tur, D.; and Ji, H. 2026. MemGuard: Preventing Memory Contamination in Long-Term Memory-Augmented Large Language Models. 
+
+arXiv preprint arXiv:2605.28009 .Jiang, H.; Wu, Q.; Lin, C.-Y.; Yang, Y.; and Qiu, L. 2023. Llmlingua: Compressing prompts for accelerated inference of large language models. In Proceedings of the 2023 confer-ence on empirical methods in natural language processing ,13358–13376. Karpukhin, V.; Oguz, B.; Min, S.; Lewis, P.; Wu, L.; Edunov, S.; Chen, D.; and Yih, W.-t. 2020. Dense Passage Retrieval for Open-Domain Question Answering. In Proceedings of the 2020 Conference on Empirical Methods in Natural Lan-guage Processing .Latimer, C.; Boschi, N.; Neeser, A.; Bartholomew, C.; Srivas-tava, G.; Wang, X.; and Ramakrishnan, N. 2025. Hindsight is 20/20: Building agent memory that retains, recalls, and reflects. arXiv preprint arXiv:2512.12818 .Lee, Y.; Nair, R.; Zhang, Q.; Lee, K.; Khattab, O.; and Finn, C. 2026. Meta-harness: End-to-end optimization of model harnesses. arXiv preprint arXiv:2603.28052 .Lewis, P.; Perez, E.; Piktus, A.; Petroni, F.; Karpukhin, V.; Goyal, N.; Kuttler, H.; Lewis, M.; Yih, W.-t.; Rocktäschel, T.; Riedel, S.; and Kiela, D. 2020. Retrieval-Augmented Gen-eration for Knowledge-Intensive NLP Tasks. In Advances in Neural Information Processing Systems .Li, Z.; Chen, X.; Yu, H.; Lin, H.; Lu, Y.; Tang, Q.; Huang, F.; Han, X.; Sun, L.; and Li, Y. 2025. Structrag: Boosting knowl-edge intensive reasoning of llms via inference-time hybrid information structurization. In International Conference on Learning Representations , volume 2025, 36107–36124. Liu, H.; Shou, C.; Liu, X.; Wen, H.; Chen, Y.; Fang, R. J.; and Feng, Y. 2026. Synthesizing multi-agent harnesses for vulnerability discovery. arXiv preprint arXiv:2604.20801 .Liu, N. F.; Lin, K.; Hewitt, J.; Paranjape, A.; Bevilacqua, M.; Petroni, F.; and Liang, P. 2024. Lost in the Middle: How Language Models Use Long Contexts. Transactions of the Association for Computational Linguistics (TACL) .Lu, M.; Wu, M.; Liu, F.; Xu, J.; Li, W.; Wang, H.; Hu, Z.; Ding, Y.; Sun, Y.; Lu, J.; et al. 2026a. Choosing how to remember: Adaptive memory structures for llm agents. arXiv preprint arXiv:2602.14038 .Lu, Z.; Li, D.; Shi, Y.; Wang, B.; Wang, L.; and Hu, B. 2026b. Structured Episodic Event Memory. arXiv preprint arXiv:2601.06411 .Luo, J.; Tian, Y.; Cao, C.; Luo, Z.; Lin, H.; Li, K.; Kong, C.; Yang, R.; and Ma, J. 2026. From Storage to Experi-ence: A Survey on the Evolution of LLM Agent Memory Mechanisms. Maharana, A.; Lee, D.-H.; Tulyakov, S.; Bansal, M.; Bar-bieri, F.; and Fang, Y. 2024. Evaluating very long-term conversational memory of llm agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 13851–13870. Narayana, P.; Ayromlou, S.; and Sehgal, P. 2026. Diagnos-ing and Mitigating Compounding Failures in Agentic Per-suasion via Taxonomic Strategy Retrieval. arXiv preprint arXiv:2606.24976 .Packer, C.; Fang, V.; Patil, S.; Lin, K.; Wooders, S.; and Gonzalez, J. 2023. MemGPT: towards LLMs as operating systems. Pan, W.; Liu, S.; Zhou, X.; Zhang, S.; Shi, W.; Xu, M.; and Jia, X. 2026. M ⋆: Every Task Deserves Its Own Memory Harness. arXiv preprint arXiv:2604.11811 .Park, J. S.; O’Brien, J.; Cai, C. J.; Morris, M. R.; Liang, P.; and Bernstein, M. S. 2023. Generative agents: Interac-tive simulacra of human behavior. In Proceedings of the 36th annual acm symposium on user interface software and technology , 1–22. Qian, H.; Liu, Z.; Zhang, P.; Mao, K.; Lian, D.; Dou, Z.; and Huang, T. 2025. Memorag: boosting long context processing with global memory-enhanced retrieval augmentation. URL https://arxiv. org/abs/2409.05591 .Sen, S.; Lumer, E.; Gulati, A.; and Subbiah, V. K. 2026. Chronos: Temporal-aware conversational agents with struc-tured event retrieval for long-term memory. arXiv preprint arXiv:2603.16862 .Shinn, N.; Cassano, F.; Gopinath, A.; Narasimhan, K.; and Yao, S. 2023. Reflexion: Language agents with verbal re-inforcement learning. Advances in neural information pro-cessing systems , 36: 8634–8652. Su, E.; Zhang, J.; Wu, J.; Yu, Q.; Tang, C.; Li, P.; Wang, L.; Wang, Y.; Ma, X.; Tang, S.; et al. 2026. S3Mem: Structured Spatiotemporal Scene-Event Memory for Long-Horizon Interactive Question Answering. arXiv preprint arXiv:2605.28831 .Team, G.; Abd, S. E.; Aggarwal, V.; Algayres, R.; Andreev, A.; Bachem, O.; Ballantyne, I.; Brick, C.; Cărbune, V.; Cas-bon, M.; et al. 2026. Gemma 4 technical report. arXiv preprint arXiv:2607.02770 .Team, G.; Georgiev, P.; Lei, V. I.; Burnell, R.; Bai, L.; Gulati, A.; Tanzer, G.; Vincent, D.; Pan, Z.; Wang, S.; et al. 2024. Gemini 1.5: Unlocking multimodal understand-ing across millions of tokens of context. arXiv preprint arXiv:2403.05530 .Wang, G.; Xie, Y.; Jiang, Y.; Mandlekar, A.; Xiao, C.; Zhu, Y.; Fan, L.; and Anandkumar, A. 2023. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 .Wang, K.; Lin, Y.; Lou, J.; Zhou, Z.; Suvonov, B.; and Li, J. 2026. E-mem: Multi-agent based Episodic Context Recon-struction for LLM Agent Memory. arXiv e-prints , arXiv– 2601. Wu, D.; Wang, H.; Yu, W.; Zhang, Y.; Chang, K.-W.; and Yu, D. 2024. Longmemeval: Benchmarking chat as-sistants on long-term interactive memory. arXiv preprint arXiv:2410.10813 .Wu, X.; Yang, C.; Liu, H.; Lin, X.; Zhang, W.; Shi, Z.; Jiang, X.; Xu, C.; Li, J.; and Guo, J. 2026. Bayesian-Agent: Posterior-Guided Skill Evolution for LLM Agent Harnesses. 
+
+arXiv preprint arXiv:2606.08348 .Wu, Y.; Liang, S.; Zhang, C.; Wang, Y.; Zhang, Y.; Guo, H.; Tang, R.; and Liu, Y. 2025. From human memory to ai memory: A survey on memory mechanisms in the era of llms. arXiv preprint arXiv:2504.15965 .Xu, W.; Liang, Z.; Mei, K.; Gao, H.; Tan, J.; and Zhang, Y. 2026. A-mem: Agentic memory for llm agents. Advances in Neural Information Processing Systems , 38: 17577–17604. Yang, A.; Li, A.; Yang, B.; Zhang, B.; Hui, B.; Zheng, B.; Yu, B.; Gao, C.; Huang, C.; Lv, C.; et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Yang, H.; Yue, S.; and He, Y. 2023. Auto-gpt for online decision making: Benchmarks and additional opinions. arXiv preprint arXiv:2306.02224 .Yang, K.; Chen, Z.; He, X.; Jiang, J.; Galley, M.; Wang, C.; Gao, J.; Han, J.; and Zhai, C. 2026. Plugmem: A task-agnostic plugin memory module for llm agents, 2026. URL https://arxiv. org/abs/2603.03296 .Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K.; and Cao, Y. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In International Conference on Learning Representations (ICLR) .Zhang, Y.; Li, M.; Long, D.; Zhang, X.; Lin, H.; Yang, B.; Xie, P.; Yang, A.; Liu, D.; Lin, J.; et al. 2025. Qwen3 em-bedding: Advancing text embedding and reranking through foundation models. arXiv preprint arXiv:2506.05176 .Zhao, Y.; Yuan, B.; Huang, J.; Yuan, H.; Yu, Z.; Xu, H.; Hu, L.; Shankarampeta, A.; Huang, Z.; Ni, W.; et al. 2026. AMA-Bench: Evaluating long-horizon memory for agentic applications. arXiv preprint arXiv:2602.22769 .Zheng, L.; Wang, R.; Wang, X.; and An, B. 2024. Synapse: Trajectory-as-exemplar prompting with memory for com-puter control, 2024. URL https://arxiv. org/abs/2306.07863 .Zhong, W.; Guo, L.; Gao, Q.; Ye, H.; and Wang, Y. 2024. Memorybank: Enhancing large language models with long-term memory. In Proceedings of the AAAI conference on artificial intelligence .A Memory Construction 
+
+An agent episode is a triple ei = ( di, τ i, Qi), where di ∈ D 
+
+is a domain label and τi = ( ui, 1, . . . , u i,L i ) is the interaction history. Each step ui,ℓ = ( ai,ℓ , o i,ℓ ) contains an action and an observation. The episode is associated with grounded QA instances Qi = {(qi,j , t i,j , y ⋆i,j )}mi
+
+> j=1
+
+, and y⋆i,j denote the question, question type, and reference answer, respectively. For each interaction history, MESA constructs a fixed mem-ory library 
+
+Mi =
+
+n
+
+M (k) 
+
+> i
+
+= Bk(τi)
+
+oKk=1 
+
+,
+
+where Bk and M (k) 
+
+> i
+
+denote the fixed builder and stored representation of structure k. For question qi,j , a selector with policy ρ predicts a non-empty binary selection vector 
+
+zi,j = Sρ(qi,j , c i,j )
+
+zi,j ∈ Z = z ∈ { 0, 1}K : ∥z∥0 ≥ 1 ,
+
+where ci,j contains compact previews of the evidence avail-able from each structure. Each selected structure is accessed through its fixed mechanism Γk, and the resulting evidence is concatenated for the frozen answer model F :
+
+Ei,j (zi,j ) = Compose 
+
+n 
+
+Γk(qi,j , M (k) 
+
+> i
+
+) : z(k) 
+
+> i,j
+
+= 1 
+
+o 
+
+,
+
+ˆyi,j = F (qi,j , E i,j ).
+
+MESA optimizes only ρ. The builders Bk, access mechanisms 
+
+Γk, composer, and answer model remain fixed. 
+
+A.1 Multi-view Structural Memory Construction 
+
+We follow the notation in Eq. (1) of the main paper. For each interaction history τi, MESA constructs a fixed library Mi =
+
+{M (k) 
+
+> i
+
+= Bk(τi)}Kk=1 , where Bk is the builder and Γk is the corresponding access mechanism. The five structures are indexed by k ∈ { S, T, G, V, R } for summary, temporal store, knowledge graph, vector database, and raw episodic trace, respectively. All structures are constructed offline and remain fixed while MESA learns only the selector Sρ.
+
+Summary (S) Memory Following AMA-Agent (Zhao et al., 2026), the summary builder BS compresses the inter-action history τi = ( ui, 1, . . . , u i,L i ) into an episode-level state memory, where each step ui,j = ( ai,j , o i,j ) contains an action and an observation. The summary preserves salient state changes, executed operations, results, errors, and sub-goal transitions together with their temporal anchors, while removing repeated or task-irrelevant observations. For a long history, BS partitions τi into Ci consecutive, turn-aligned segments, summarizes them independently, and concatenates the partial summaries in temporal order: 
+
+M (S) 
+
+> i
+
+= Concat Ci
+
+> c=1
+
+h
+
+fsum 
+
+
+
+τ (c)
+
+> i
+
+i 
+
+,
+
+where a single segment is used when the history fits within the construction window. The resulting M (S) 
+
+> i
+
+= BS (τi) pro-vides broad episode context and remains fixed across queries. The prompt of constructing the summary memory is shown in C.1. 
+
+Temporal Store (T) Memory The temporal builder BT
+
+preserves the original action–observation sequence as a turn-indexed store: 
+
+M (T ) 
+
+> i
+
+= BT (τi) = {(ℓ, a i,ℓ , o i,ℓ )}Li
+
+> ℓ=1
+
+.
+
+The access mechanism returns a query-specific subset rather than the complete store: 
+
+E(T ) 
+
+> i,j
+
+= Γ T (qi,j , M (T ) 
+
+> i
+
+) = {(ℓ, a i,ℓ , o i,ℓ ) : ℓ ∈ I i,j }.
+
+When the selector activates the temporal structure, ΓT
+
+first constructs Ii,j from turns explicitly referenced by the question, including individual steps, ranges, lists, and pre-fixes such as “until step ℓ,” together with supplementary turns requested by AMA-Agent’s sufficiency checker. Dupli-cate turns are removed and the retained action–observation records are ordered by step index. If no evidence can be lo-calized through these temporal references, ΓT falls back to lexical matching over the temporal keys and returns up to five highest-ranked turn identifiers, 
+
+E(T ) 
+
+> i,j
+
+= {key( ℓ) : ℓ ∈ TopK lex 5 (qi,j )}.
+
+Graph (G) Memory The graph builder BG reuses the Qwen3-32B OpenIE artifacts produced by HippoRAG2 to form an episode-level relational graph. Each extracted edge records a subject, relation, object, and its associated trajec-tory step: 
+
+M (G) 
+
+> i
+
+= BG(τi) = ( Vi, Ei) , Ei = {(hℓ, r ℓ, t ℓ, j ℓ)}Ni
+
+> ℓ=1
+
+.
+
+The step anchor ℓn is inferred from the source passage and preserves a link from each relation to the original execu-tion history. At query time, MESA uses a lightweight access mechanism compared to the original HippoRAG2. ΓG links query mentions to graph entities and scores relations us-ing lexical and entity overlap. If the query contains a exact step or turn reference r, a relation anchored at ℓn receives an additional proximity score 1.25 /(1 + |ℓn − r|); relations within one step of r are also treated as step-local seeds. The matched entities are then expanded through one- and two-hop neighborhoods. The access mechanism returns up to kG = 8 highest-scoring focal relations, each augmented with up to four highest-scoring neighboring relations. This structure provides cross-step entity and causal connections that are difficult to recover from a flat sequence alone. 
+
+Vector Database (V) Memory The summary structure is deliberately compressed and may omit a local detail that becomes relevant only after a query is observed. The vector builder BV therefore retains a dense, step-level view of the same history. Each turn is serialized with its temporal anchor, action, and observation: 
+
+xi,j = Serialize( j, a i,j , o i,j ).
+
+Let Eemb denote the fixed embedding encoder. We nor-malize each vector and store it together with the source text and turn index: 
+
+vi,j = Eemb (xi,j )
+
+∥Eemb (xi,j )∥2
+
+,M (V ) 
+
+> i
+
+= BV (τi) = {(j, x i,j , vi,j )}Li
+
+> j=1
+
+.
+
+We instantiate Eemb with Qwen3-Embedding-4B. At query time, the fixed access mechanism ΓV encodes qi with the same encoder, 
+
+vqi = Eemb (qi)
+
+∥Eemb (qi)∥2
+
+,
+
+and returns the kV turns with the largest inner products 
+
+v⊤ 
+
+> qi
+
+vi,j . Because both vectors are L2-normalized, this score equals cosine similarity. We use kV = 5 . This representa-tion preserves local evidence that is semantically related to the query, while the stored turn indices maintain the connec-tion between each retrieved item and the original interaction history. 
+
+Raw Episodic (R) Memory The raw episodic builder BR
+
+serializes the original actions and observations into overlap-ping, turn-aligned windows without semantic compression. For a trajectory of length Li, the window size wi and overlap 
+
+di are 
+
+wi = clip 
+
+ Li
+
+12 
+
+
+
+, 3, 16 
+
+
+
+, di = round(0 .25 wi).
+
+Using stride wi − di, the builder produces 
+
+M (R) 
+
+> i
+
+= BR(τi) = {(sc, e c, x i,c )}Ci
+
+> c=1
+
+,
+
+where sc and ec are the start and end positions in the trajectory sequence, and xi,c is the corresponding serialized action– observation text. When the selector activates this structure, 
+
+ΓR ranks all windows against qi,j with BM25 and returns up to kR = 3 positive-scoring windows. If no window receives a positive score, it returns the single highest-ranked win-dow. This structure preserves exact surface-form evidence and broader local context, complementing the compressed summary and more selective structured views. 
+
+## B Baselines and Implementation Details 
+
+B.1 Baseline Methods 
+
+Long-context. We feed the full historical trajectory into the backbone model. For trajectories exceeding the maximum context window, we truncate them to preserve the most recent history. 
+
+BM25 .We use the official BM25 implementation and its orig-inal configuration. Each trajectory is divided into steps con-taining the step index, action, and observation. Then, each step is further divided into non-overlapping chunks of at most 800 characters. We construct an independent BM25Okapi 
+
+index for each episode using rank-bm25 v0.2.2, lower-case whitespace tokenization, and the default parameters 
+
+k1 = 1 .5, b = 0 .75 , and ϵ = 0 .25 . For each question, the top-5 chunks are concatenated for answer generation. 
+
+Qwen3-Emb-4B (Zhang et al. 2025). This baseline repre-sents memory as a flat vector index over fine-grained history units, without additional summarization, graph construction, or memory evolution. On AMA-Bench, the task description and individual action–observation steps are encoded using Qwen3-Embedding-4B into 2,560-dimensional vectors and stored in a FAISS inner-product index. All embeddings are L2-normalized, making inner product equivalent to cosine similarity. For each question, we encode the query with the same model, retrieve the top five trajectory steps, concatenate them in similarity order, and pass the resulting context to the backbone LLM for answer generation. We set the embedding batch size to 8 and the maximum embedding length to 512 tokens. On LoCoMo, the same flat vector-memory structure is used, but each timestamped dialogue turn forms one in-dexed unit and the retrieval depth is increased to k = 10 .The query is prefixed with a retrieval instruction, and the retrieved turns retain their timestamps, dialogue identifiers, speakers, and original text. 
+
+HippoRAG2 (Gutiérrez et al. 2024). HippoRAG2 organizes memory as a heterogeneous graph consisting of passage, en-tity, and relational-fact nodes. OpenIE first extracts entities and relation triples from each passage, after which edges connect facts to their supporting passages and shared enti-ties, while additional similarity edges connect synonymous entities. During retrieval, the query is linked to the top-k
+
+fact or entity nodes, and relevance is propagated through the graph using personalized PageRank; the resulting graph scores are combined with recognition-memory reranking and dense passage scores. We preserve the original graph con-struction and retrieval settings, including linking top-k = 5 ,QA top-k = 5 , PageRank damping factor 0.5, and passage-node weight 0.05 . On AMA-Bench, consecutive trajectory steps are packed into OpenIE documents of at most 24,000 characters, with a 300-character overlap when an individual step must be split. The backbone LLM performs OpenIE at temperature 0 with a 1,024-token limit, and Contriever pro-vides graph embeddings. We retrieve 30 passage candidates and provide the top five, capped at 60,000 characters, for answering. On LoCoMo, each dialogue turn forms one pas-sage, BAAI/bge-m3 is used for embeddings, and 200 passage candidates are retrieved before the top five are passed to the answerer. 
+
+MemGPT (Packer et al. 2023). MemGPT is a hierarchi-cal memory system that organizes memory as a two-tier hierarchical structure inspired by virtual memory systems: a small in-context core memory serves as working memory, while a vector-indexed archival store maintains the complete long-term history. The backbone LLM explicitly searches the archival store and temporarily loads retrieved passages into its active context for reasoning. On AMA-Bench, the task description is placed in core memory, while the complete tra-jectory is divided into non-overlapping passages of at most 1,500 characters and stored in archival memory with nor-malized Qwen3-Embedding-4B vectors. For each question, the backbone LLM can iteratively issue search queries. Each search retrieves the five most similar passages using cosine similarity and returns at most 8,000 characters to the core context. We manually set the maximum number of searches to five, the generation budget of each agent step to 512 to-kens, and the temperature to 0. If no valid answer is produced within the search budget, the backbone LLM is forced to an-swer from the accumulated retrieved context. On LoCoMo, we use the same two-level memory structure and retrieval parameters, but archival passages contain timestamped dia-logue turns rather than trajectory steps, and each agent step is limited to 256 output tokens. Archival memory remains fixed during evaluation and is not updated across questions. 
+
+Mem0 (Chhikara et al. 2025). Mem0 represents memory as a user-scoped collection of atomic facts stored in a vector database. The backbone LLM extracts candidate facts from each input chunk and compares them with existing mem-ories to determine whether each fact should be added, up-dated, merged, or discarded. Each retained fact is stored with its embedding and metadata in an on-disk Qdrant database. On AMA-Bench, we build one isolated memory store per episode and group trajectory steps into chunks of at most 10 turns or 40,000 characters. We set the fact-extraction budget to 4,096 tokens, the embedding-input limit to 20,000 tokens, and retrieve the top 10 facts for each question. The back-bone LLM performs fact extraction and conflict resolution at temperature 0, while Qwen3-Embedding-4B provides 2,560-dimensional embeddings. On LoCoMo, following the official Mem0 conversational setup, we maintain one user-specific store for each conversation participant. Dialogue messages are inserted in two-message batches with session timestamps as metadata, and the top 10 facts are retrieved from each participant’s store. The retrieved facts are concatenated and passed to the backbone LLM for answer generation. 
+
+A-Mem (Xu et al. 2026). A-Mem organizes memory as a dynamic graph-like structure of interconnected notes. Each trajectory step is represented as a memory node containing the original content together with an LLM-generated con-textual description, keywords, and tags. Edges connect se-mantically related notes, allowing information from distant trajectory steps to be associated. When a new note is added, A-Mem performs memory evolution by deciding whether to create new links, strengthen existing relations, or update neighboring notes. During retrieval, the question is converted into keywords, which are used to retrieve the top-k memory nodes together with their linked neighbors. We use the official robust A-Mem implementation with the backbone LLM for note construction and evolution, all-MiniLM-L6-v2 for node embeddings, and k = 10 . The maximum note and retrieval-context lengths are both 120,000 characters, and metadata generation is limited to 1,000 tokens with temperature 0. For LoCoMo, the same memory structure and parameters are used, but each timestamped dialogue turn forms a memory node instead of each trajectory step. 
+
+MemoRAG (Qian et al. 2025). MemoRAG uses a hybrid memory structure that combines a compressed global mem-ory state with a dense retrieval index. The complete tra-jectory is first encoded by the MemoRAG memory model, 
+
+memorag-qwen2-7b-inst , into a compact hidden-state memory using beacon-based context compression. In par-allel, the trajectory is divided into 512-token chunks and indexed by BAAI/bge-m3. For each question, the memory model recalls potentially relevant text spans and generates surrogate queries, which are used to retrieve the top three chunks from the dense index. The retrieved evidence is then passed to the backbone LLM for answer generation. For each question, the memory model recalls relevant text spans and generates surrogate queries. Each query retrieves its top three 512-token chunks from the dense index, and the deduplicated union of the retrieved chunks is passed to the backbone LLM. 
+
+Hindsight (Latimer et al. 2025). Hindsight organizes knowl-edge in a memory bank containing four structured memory types: world facts for objective knowledge, experience facts 
+
+for the agent’s actions and interactions, observations for au-tomatically consolidated knowledge derived from multiple facts, and mental models for higher-level summaries of re-curring queries or concepts. During retention, the backbone LLM extracts facts, entities, relations, and temporal informa-tion from input documents and stores them in the correspond-ing memory structures. During recall, Hindsight searches memories through four parallel strategies: semantic similar-ity, BM25 keyword matching, graph traversal, and temporal filtering. Then it combines their results using reciprocal-rank fusion and cross-encoder reranking. On AMA-Bench, we construct one memory bank per episode, divide trajecto-ries into documents of at most 4,000 characters, and truncate trajectories longer than 120,000 characters using a head–tail strategy. On LoCoMo, each timestamped conversation ses-sion is retained as one document in a conversation-specific bank. For both datasets, we use the high recall budget and an 8,192-token recall limit. In our configuration, automatic observation consolidation is disabled and no task-specific mental models are provided; therefore, evaluation primarily relies on the world-fact and experience-fact memory struc-tures. 
+
+E-Mem (Wang et al. 2026). E-Mem organizes memory as a hierarchy of episodic blocks coordinated by a master– assistant architecture. Each block is managed by an assis-tant agent and preserves its original, uncompressed context together with an LLM-generated summary, while the mas-ter agent coordinates retrieval and aggregates evidence re-turned by the selected assistants. In our implementation, each block contains approximately 4,096 tokens, corresponding to 
+
+12 .5% of the backbone LLM’s 32,768-token context window, and adjacent blocks have a 10% overlap. For each question, a hybrid router scores blocks using summary-level seman-tic similarity, chunk-level semantic similarity, and BM25 matching with weights 0.3, 0.4, and 0.3, respectively. The semantic text index uses chunks of size 512 with an overlap of 50, and Qwen3-Embedding-4B provides the embeddings. The router selects at most five memory blocks. Each se-lected assistant independently reconstructs relevant evidence from its local context, and the backbone LLM aggregates the returned evidence and generates the final answer. On AMA-Bench, trajectory steps are inserted sequentially into an episode-specific memory hierarchy, whereas on LoCoMo, timestamped dialogue turns are inserted into a conversation-specific hierarchy. All remaining memory-block and routing parameters are shared across the two benchmarks. 
+
+AMA-Agent (Zhao et al. 2026). AMA-Agent maintains a heterogeneous memory structure consisting of a compressed state memory, the original trajectory store, and a dense index over individual trajectory turns; it can additionally construct a causal graph, which is disabled in our experiments. The state memory summarizes the task, important entities, intermedi-ate states, and critical events, while the raw trajectory and turn embeddings preserve fine-grained evidence that may be lost during compression. During retrieval, AMA-Agent first retrieves the top five turns using Qwen3-Embedding-4B and directly includes any turns explicitly referenced by the question. The backbone LLM then judges whether the retrieved evidence is sufficient. If it is not sufficient, it can request adjacent or ranged turns through structured re-trieval, or generate and execute a Python search program for trajectory-wide counting and aggregation. We set the con-struction chunk size to 2,048, the session size to 8,192, the final state-memory budget to 1,000 tokens, the retrieval depth to k = 5 , and the temperature to 0. On AMA-Bench, mem-ory is constructed from action–observation trajectory steps and includes the task description. On LoCoMo, each times-tamped dialogue turn is represented as a trajectory step with a fixed dialogue action, while the same memory structure and retrieval parameters are retained. 
+
+B.2 Hyperparameter Selection and Budget 
+
+MESA introduces two optimization-specific scalar hyperpa-rameters: the evidence-cost coefficient λ in the regularized validation objective and the exploration coefficient β in the UCB scheduler. These values are determined using develop-ment data only and are fixed before evaluation on the test split. We use the same values across all data splits, answer-model backbones, and benchmarks, rather than retuning them for each experimental setting. The memory builders, access mechanisms, and retrieval depths are also fixed indepen-dently of selector optimization, as described in Appendix A. 
+
+Evidence-cost coefficient. We set λ = 10 −6 by calibrating the token penalty to the scale of the answer-level evaluation score. Since Jval (ρ) ∈ [0 , 1] while Cval (ρ) is measured in raw evidence tokens, this value assigns a penalty of 0.01 to an additional 10 ,000 evidence tokens per query: 
+
+10 −6 × 10 ,000 = 0 .01 .
+
+Thus, an increase of approximately 10 ,000 tokens must pro-vide at least one percentage point of validation-accuracy im-provement to be favored by the regularized objective. This calibration keeps the cost term large enough to discourage unnecessarily exhaustive retrieval without allowing small to-ken differences to dominate answer quality. 
+
+UCB exploration coefficient. We set β = 0 .08 so that the exploration bonus remains comparable to the differences in regularized validation scores observed among candidate poli-cies. A substantially smaller value makes scheduling nearly greedy and repeatedly selects directions that perform well early in the search, whereas an excessively large value over-prioritizes under-evaluated directions regardless of their ob-served utility. Because an unvisited direction is initialized with the current frontier score, β controls the additional un-certainty bonus rather than assigning an artificially low initial value to unexplored directions. The ablation with β = 0 , re-ported as w/o UCB in Table 3, further shows that removing this exploration mechanism reduces accuracy and increases variance across splits. 
+
+Optimization budget. We use a fixed budget of T = 30 
+
+optimization iterations. At each iteration, the proposer gener-ates one exploitation, one exploration, and one failure-repair candidate. The same budget is used for MESA and all opti-mization ablations, so their differences cannot be attributed to additional proposal or validation calls. The budget is treated as a computational constraint rather than a parameter se-lected using test performance. After the budget is exhausted, the policy with the highest regularized validation objective in the archive is frozen and evaluated once on the held-out test split. 
+
+## C Prompts 
+
+C.1 Summary (S) Prompt 
+
+We use the same prompt for constructing the text summary. 
+
+Summary (S) Memory Construction Prompt 
+
+> COMPRESS_PROMPT_TEMPLATE = """You are presented with a section of agent trajectory (actions and observations). Compress it into a state memory that future readers can use to answer detailed questions about what happened. Task: {task} Trajectory Section: {trajectory_text} {previous_state_text} Identify KEY turns – turns where state meaningfully changed, a command/query/code was executed, an important result/value/schema/error appeared, or the agent shifted sub-goal. For each key turn record an env_state block with bullet keys that BEST FIT this turn. Common keys include: action, command, query, location, inventory, schema, sql, result, finding, error, change. Use whatever keys fit; do NOT force fields that do not apply, and do NOT dump unrelated context into a "change" field. CRITICAL – copy these VERBATIM from the trajectory; never paraphrase or summarize: - commands, queries, code (SQL, shell, Python, function/tool calls) - identifiers: file paths, URLs, table/column/schema names, IDs, UI element ids and selectors, entity names - numeric values, counts, computed results, dates, response codes - error messages Also write a one-line Memory Summary describing the section’s overall progress. Output everything after the marker below.
+> STATE_MEMORY
+> memory_summary: key_turns=<turn ids>; key_objective=<main objective>; key_events=<critical events, commands, state changes, key results> turn_id: <turn number> env_state: - <key>: <value> - ... turn_id: <turn number> env_state: - <key>: <value> """
+
+C.2 Graph (G) Memory Prompts 
+
+We construct the knowledge-graph memory using the two-stage OpenIE pipeline of HippoRAG2 (Gutiérrez et al. 2025). Given a packed trajectory passage, the first LLM call extracts a list of named entities. The second call conditions on both the original passage and the extracted entity list to generate subject–relation–object triples. The two prompts are shown below. We use Qwen3-32B with temperature 0, disabled rea-soning, and a maximum output length of 1,024 tokens. Each packed trajectory passage contains at most 24,000 characters. 
+
+Named Entity Extraction Prompt 
+
+[System] 
+
+Your task is to extract named entities from the given paragraph. Respond with a JSON list of entities. 
+
+[User: one-shot example] 
+
+Radio City Radio City is India’s first private FM radio station and was started on 3 July 2001. It plays Hindi, English and regional songs. Radio City recently forayed into New Media in May 2008 with the launch of a music portal - PlanetRadiocity.com that offers music related news, videos, songs, and other music-related features. 
+
+[Assistant: one-shot output] 
+
+{"named_entities": ["Radio City", "India", "3 July 2001", "Hindi", "English", "May 2008", "PlanetRadiocity.com"]} 
+
+[User] 
+
+${passage} 
+
+Triple Extraction Prompt 
+
+[System] 
+
+Your task is to construct an RDF (Resource Description Framework) graph from the given passages and named entity lists. Respond with a JSON list of triples, with each triple representing a relationship in the RDF graph. Pay attention to the following requirements: - Each triple should contain at least one, but preferably two, of the named entities in the list for each passage. - Clearly resolve pronouns to their specific names to maintain clarity. 
+
+[User: one-shot example] 
+
+Convert the paragraph into a JSON dict, it has a named entity list and a triple list. Paragraph: 
+
+Radio City Radio City is India’s first private FM radio station and was started on 3 July 2001. It plays Hindi, English and regional songs. Radio City recently forayed into New Media in May 2008 with the launch of a music portal -PlanetRadiocity.com that offers music related news, videos, songs, and other music-related features. {"named_entities": ["Radio City", "India", "3 July 2001", "Hindi", "English", "May 2008", "PlanetRadiocity.com"]} 
+
+[Assistant: one-shot output] 
+
+{"triples": [["Radio City", "located in", "India"], ["Radio City", "is", "private FM radio station"], ["Radio City", "started on", "3 July 2001"], ["Radio City", "plays songs in", "Hindi"], ["Radio City", "plays songs in", "English"], ["Radio City", "forayed into", "New Media"], ["Radio City", "launched", "PlanetRadiocity.com"], ["PlanetRadiocity.com", "launched in", "May 2008"], ["PlanetRadiocity.com", "is", "music portal"], ["PlanetRadiocity.com", "offers", "news"], ["PlanetRadiocity.com", "offers", "videos"], ["PlanetRadiocity.com", "offers", "songs"] ]} 
+
+[User] 
+
+Convert the paragraph into a JSON dict, it has a named entity list and a triple list. Paragraph: 
+
+${passage} ${named_entity_json} 
+
+The triple-extraction prompt produces only subject– relation–object triples. It does not request trajectory-step in-dices. We associate each triple with a step after extraction by matching its entities and relation against the Step N blocks in the corresponding packed source passage. 
+
+C.3 Answer Generation Prompt 
+
+Answer Generation Prompt 
+
+[User] # Task 
+
+${task} 
+
+# State Memory (compressed) 
+
+${B1_evidence} 
+
+# Temporal Turns (referenced by step/turn or neighborhood 
+
+${B2_evidence} 
+
+# Knowledge Graph (HippoRAG triples + neighbors) 
+
+${B3_evidence} 
+
+# Retrieved Turns (embedding similarity) 
+
+${B4_evidence} 
+
+# Chunked Context (BM25 over trajectory) 
+
+${B5_evidence} 
+
+## Questions 
+
+Question: ${question} 
+
+## Instructions 
+
+Provide a direct and concise answer. Answer: [your answer here] 
+
+Only the memory structures selected are included in the prompt. Empty or unselected sections are omitted. The com-plete prompt is sent as a single user message without an additional system message. 
+
+C.4 Judge Prompt 
+
+We use the same LLM-as-a-judge prompt as (Zhao et al. 2026), which is shown below. 
+
+Binary Correctness Judgement Prompt 
+
+Prompt for Evaluating Answers for AMA-Bench 
+
+You are an expert evaluator. You will be given a question, a reference answer, and a predicted answer. Your task is to determine if the predicted answer is correct based on: 1. Factual correctness compared to the reference 2. Completeness of the answer 3. Relevance to the question 
+
+{context_str} 
+
+Question: {question} 
+
+Reference Answer: {golden_answer} 
+
+Predicted Answer: {predicted_answer} 
+
+Is the predicted answer correct? Respond with ONLY yes 
+
+or no . Do not include any thinking process, explanation, or additional text. 
+
+Answer 
+
+## D Prior Directions for Guided Optimization 
+
+The prior directions A = {a1, . . . , a M } define mechanism classes for proposing structure selectors; they do not encode which memory subset is optimal for a particular question. Each direction specifies an observable routing signal and a mechanism for mapping that signal to a non-empty structure subset. Router parameters may be fitted using training-split combination outcomes, while candidate acceptance and fron-tier selection use only the validation objective. Held-out test outcomes are excluded from the prior, proposer context, fit-ting procedure, and optimization loop. At inference time, the selector may access the question, task metadata, and query-conditioned evidence previews. These previews are produced by the fixed retrievers with-out access to reference answers, judge feedback, or per-combination scores. Outcome-derived variables, including winning combinations and cached evaluation scores, are available only as training labels during learning and are never exposed to the selector. The mechanism taxonomy is fixed before each optimiza-tion run. It restricts the search to structure selection while leaving memory construction, retrieval, composition, and answer generation unchanged. Additional mechanism classes may be registered as new UCB arms before a run, but the arm set is not modified using validation or test outcomes during that run. 
+
+Axis A — Demand inference: what the query requires 
+
+(1) capability prior , (2) domain–task prior , (3) lexical de-mand inference , and (4) query decomposition : infer mem-ory demand from the question type, task metadata, lexical and identifier cues, or decomposed sub-questions. 
+
+Axis B — Backend value estimation: how useful each struc-ture is 
+
+(5) marginal value , (6) conditional value , (7) hierarchi-cal shrinkage , and (8) learned gating : estimate the utility of each structure individually or conditioned on the current subset, while shrinking low-support estimates toward coarser statistics. 
+
+Axis C — Subset construction: how to form the selected set 
+
+(9) independent gating , (10) cardinality-first selection , (11) forward selection , and (12) complementarity selection : con-struct a non-empty subset through per-structure decisions, pre-dicted subset size, incremental addition, or complementary evidence coverage. 
+
+Axis D — Evidence-aware selection: what the retrieved pre-views contain 
+
+(13) evidence availability , (14) evidence relevance , (15) ev-idence coverage , and (16) evidence redundancy : use query-conditioned previews to remove empty or irrelevant structures, cover distinct information needs, and suppress redundant evi-dence. 
+
+Axis E — Robustness and cost shaping: how to control risk and context cost 
+
+(17) confidence fallback , (18) disagreement policy , (19) parsimony control , and (20) support-aware routing : fall back under uncertainty, resolve conflicting routing signals, penalize unnecessary structures, and back off from estimates supported by too few training examples. 
+
+## E Additional Result 
+
+E.1 Domain-wise Comparison on AMA-Bench 
+
+We show the full result of Fig. 4 in Table 4. Method Web Open-world QA Text2SQL Software Gaming Embodied AI Overall Qwen3-32B (Yang et al. 2025) 
+
+Long-context 58 .2±2.9 53 .4±3.2 49 .8±1.3 50 .2±2.2 64 .0±2.0 40 .8±4.0 52 .6±1.0
+
+BM25 42 .6±0.8 44 .3±2.7 31 .3±2.1 38 .1±0.2 57 .2±3.5 20 .5±0.9 38 .5±0.6
+
+Qwen3-Emb-4B (Zhang et al. 2025) 49 .2±0.9 54 .4±1.7 43 .2±1.2 52 .0±1.5 57 .1±2.9 24 .6±2.1 46 .6±0.4
+
+HippoRAG2 (Gutiérrez et al. 2024) 49 .1±2.1 44 .1±1.7 55 .5±0.7 34 .5±2.7 57 .7±3.0 32 .2±2.5 46 .6±1.1
+
+MemGPT (Packer et al. 2023) 36 .3±1.2 43 .7±2.0 26 .7±1.7 33 .5±1.8 48 .6±1.8 18 .3±0.5 33 .9±0.5
+
+Mem0 (Chhikara et al. 2025) 30 .1±2.4 32 .1±1.2 24 .2±1.2 41 .3±2.3 46 .8±1.2 13 .9±1.4 31 .1±0.6
+
+Hindsight (Latimer et al. 2025) 39 .5±2.2 38 .6±1.7 29 .8±1.0 43 .8±1.9 50 .7±2.2 16 .6±2.0 36 .0±0.5
+
+A-Mem (Xu et al. 2026) 53 .6±2.5 46 .6±1.4 44 .6±1.2 37 .7±2.1 49 .9±2.1 25 .6±1.8 43 .2±0.7
+
+MemoRAG (Qian et al. 2025) 38 .7±0.6 45 .5±1.7 47 .8±1.5 36 .2±2.1 63 .9±2.2 21 .6±1.7 43 .1±0.7
+
+EMem (Wang et al. 2026) 38 .9±2.4 45 .4±4.2 43 .0±2.1 36 .0±1.0 52 .4±3.1 31 .9±2.3 41 .5±0.6
+
+AMA-Agent (Zhao et al. 2026) 59 .1±0.8 66 .9±1.7 57 .8±1.4 38 .3±1.6 71 .7±3.6 45 .4±1.6 56 .6±0.8
+
+MESA (ours) 63 .2±2.0 66 .2±2.9 66 .7±2.8 67 .5±3.7 71 .0±3.4 53 .9±1.7 65 .1±0.8
+
+Gemma-4-31B 
+
+Long-context 69 .7±3.1 77 .4±0.9 61 .1±0.7 47 .3±3.1 63 .9±2.6 58 .3±1.8 62 .5±1.3
+
+BM25 36 .2±2.3 30 .7±4.1 21 .1±2.3 32 .1±0.3 37 .0±2.2 16 .5±1.8 28 .3±0.9
+
+Qwen3-Emb-4B (Zhang et al. 2025) 50 .7±1.2 59 .1±1.8 37 .5±1.5 47 .8±2.1 50 .4±2.8 23 .2±1.5 44 .2±0.7
+
+HippoRAG2 (Gutiérrez et al. 2024) 52 .5±4.2 46 .8±2.6 56 .2±1.4 27 .2±2.0 66 .7±3.1 35 .3±2.1 48 .2±1.3
+
+MemGPT (Packer et al. 2023) 32 .7±2.4 39 .9±1.3 34 .5±0.6 33 .3±3.1 49 .2±3.8 27 .9±1.1 36 .2±1.4
+
+Mem0 (Chhikara et al. 2025) 21 .5±2.1 26 .0±1.9 17 .0±1.4 40 .3±2.3 42 .7±2.5 9.5±1.7 25 .7±0.4
+
+Hindsight (Latimer et al. 2025) 50 .6±3.3 51 .3±1.6 35 .8±1.5 41 .8±2.7 57 .5±4.2 18 .2±1.4 42 .1±1.2
+
+A-Mem (Xu et al. 2026) 64 .0±2.6 60 .8±2.3 57 .8±0.9 41 .8±1.9 45 .9±2.0 26 .6±1.6 50 .0±0.9
+
+MemoRAG (Qian et al. 2025) 37 .5±1.0 42 .1±2.7 52 .9±1.5 40 .3±2.7 74 .8±2.7 22 .8±1.4 46 .3±0.8
+
+EMem (Wang et al. 2026) 62 .6±4.3 69 .7±3.0 61 .2±0.9 41 .4±2.1 58 .7±1.7 53 .6±1.2 58 .0±1.4
+
+AMA-Agent (Zhao et al. 2026) 70 .3±2.9 76 .9±1.6 64 .7±1.1 50 .9±2.3 64 .8±2.4 50 .6±2.3 63 .0±1.0
+
+MESA (ours) 74 .3±1.7 79 .4±1.9 74 .6±2.3 48 .8±2.4 80 .8±2.0 55 .5±2.1 69 .4±1.1
+
+Table 4: Domain-wise LLM-as-a-judge accuracy (%) on AMA-Bench using Qwen3-32B and Gemma-4-31B backbones. Results are reported as mean ± sample standard deviation over five splits. 
+
+E.2 F1 Score on AMA-Bench 
+
+We show the F1 score comparison on AMA-Bench in Table 5 with two model backbones. 
+
+## F Additional Analyses 
+
+F.1 Robustness to Judge 
+
+The main AMA-Bench results use Qwen3-32B as the LLM judge. To avoid the bias of single judge model, we ad-ditionally evaluate the same predictions using Gemma-4-31B and GPT-5.4 in Table 6. All three judges receive the same question, reference answer, predicted answer, and bi-nary correctness prompt. While the absolute accuracy val-ues vary across judge backbones, which is consistent with the judge-dependent score variation also discussed in the original AMA-Agent evaluation (Zhao et al. 2026), the relative trend remains stable. MESA is ranked first with question-level ma-jority voting under Qwen3-32B, Gemma-4-31B, and GPT-5.4. This result indicates that MESA ’s comparative advantage is not specific to the primary Qwen3-32B judge. 
+
+F.2 Sensitivity to LoCoMo Conversation Splits 
+
+The main comparison in Table 2 uses a single fixed conversation-disjoint 2:2:6 split shared by all evaluated meth-ods. Since LoCoMo contains only ten conversations, results from a single partition may be sensitive to which conversa-tions are assigned to the training, validation, and test sets. We therefore additionally evaluate MESA over five independently sampled conversation-level splits using the same partition ra-tio in Table 7. The fixed split in the main paper remains the basis for the cross-method comparison, because all baselines are evaluated under that common protocol. The additional experiments are intended to characterize the split sensitivity of MESA .
+
+F.3 Memory Construction Time 
+
+We measure offline memory-construction time on a subset of trajectories sampled from the 208 AMA-Bench episodes and report the average wall-clock time under a sequential im-plementation in Table 8. MESA requires 73 .3s per trajectory, including 38 .2s for the components shared with AMA-Agent, 
+
+35 .1s for the graph memory, and a negligible 0.001 s for the raw episodic memory. The memory views are independently Method F1 
+
+LLM Backbone: Qwen3-32B (Yang et al. 2025) 
+
+BM25 29 .0±0.3
+
+Qwen3-Emb-4B (Zhang et al. 2025) 28 .0±0.2
+
+MemGPT (Packer et al. 2023) 27 .3±0.3
+
+HippoRAG2 (Gutiérrez et al. 2024) 30 .6±0.4
+
+Mem0 (Chhikara et al. 2025) 27 .6±0.3
+
+MemoRAG (Qian et al. 2025) 31 .1±0.5
+
+Hindsight (Latimer et al. 2025) 28 .8±0.4
+
+A-Mem (Xu et al. 2026) 32 .7±0.3
+
+EMem (Wang et al. 2026) 31 .4±0.3
+
+AMA-Agent (Zhao et al. 2026) 31 .1±0.3
+
+MESA (ours) 33 .9±0.5
+
+LLM Backbone: Gemma-4-31B (Team et al. 2026) 
+
+BM25 25 .8±0.1
+
+Qwen3-Emb-4B (Zhang et al. 2025) 30 .5±0.4
+
+MemGPT (Packer et al. 2023) 27 .4±0.5
+
+HippoRAG2 (Gutiérrez et al. 2024) 32 .1±0.6
+
+Mem0 (Chhikara et al. 2025) 22 .3±0.3
+
+MemoRAG (Qian et al. 2025) 30 .5±0.5
+
+Hindsight (Latimer et al. 2025) 28 .5±0.3
+
+A-Mem (Xu et al. 2026) 33 .6±0.4
+
+EMem (Wang et al. 2026) 35 .9±0.2
+
+AMA-Agent (Zhao et al. 2026) 36 .0±0.4
+
+MESA (ours) 37 .4±0.6
+
+Table 5: F1 score results of memory-based methods on AMA-Bench using Qwen3-32B and Gemma-4-31B as answer-model backbones. Results are reported as mean ±std over evaluation splits. Best results within each backbone are shown in bold, and second-best results are underlined. constructed from the same trajectory and can therefore be parallelized across processes or devices, which needs 38 .2s. 
+
+MESA ’s construction time is lower than those of Mem0 (179 .9s), Hindsight ( 420 .3s), and A-Mem ( 717 .2s), while achieving the strongest downstream accuracy. It is more ex-pensive than AMA-Agent ( 38 .2s) and MemoRAG ( 32 .2s), reflecting the additional cost of constructing complemen-tary views. Overall, the results indicate a acceptable performance–construction-cost trade-off. 
+
+F.4 Comparison with Validation-selected Fixed Selection 
+
+In Sec. 3, we exhaustively evaluate all non-empty struc-ture subsets. In Table 9, we analyze the best fixed com-bination on the validation set and construct fixed global, domain-conditioned, capability-conditioned, and domain– capability-conditioned lookup policies. The selected sub-sets are then frozen for test evaluation. Domain-conditioned, capability-conditioned, and domain–capability-conditioned selection achieve 64 .4% , 63 .8% , and 64 .0% , respectively. 
+
+MESA reaches 65 .1% with the lowest cross-split variation, indicating that its gain is not explained solely by a coarse category-to-subset mapping. As shown in Fig. 5, it also learns Method Qwen3-32B Gemma-4-31B GPT-5.4 BM25 38 .5±0.6 36 .0±0.4 34 .0±0.4
+
+Qwen3-Emb-4B 46 .6±0.4 39 .6±0.7 35 .9±0.6
+
+MemGPT 33 .9±0.5 29 .9±0.4 28 .5±0.5
+
+HippoRAG2 46 .6±1.1 43 .4±1.0 39 .3±1.1
+
+Mem0 31 .1±0.6 26 .3±0.3 26 .0±0.5
+
+MemoRAG 43 .1±0.7 39 .5±0.9 38 .0±0.7
+
+Hindsight 36 .0±0.5 30 .0±0.7 29 .5±0.6
+
+A-Mem 43 .2±0.7 42 .3±0.5 39 .4±1.1
+
+EMem 41 .5±0.6 39 .4±0.9 39 .0±0.8
+
+AMA-Agent 56.6 ±0.8 55.2 ±0.5 47.5 ±1.1
+
+MESA (ours) 65 .1±0.8 59 .5±1.8 52 .9±1.4
+
+Table 6: Judge Robustness evaluation across different LLM judges (Qwen3-32B, Gemma-4-31B, and GPT-5.4). Overall accuracy (%) is reported as mean ±std over five evaluation splits. Best results within each judge are shown in bold, and second-best results are underlined. Method Score (%) Long-context (Yang et al. 2025) 44 .8±1.6
+
+BM25 26 .3±3.6
+
+Qwen3-Emb-4B 37 .4±4.6
+
+MemGPT (Packer et al. 2023) 46 .8±2.4
+
+HippoRAG2 (Gutiérrez et al. 2024) 36 .6±3.1
+
+Mem0 (Chhikara et al. 2025) 37 .2±5.4
+
+MemoRAG (Qian et al. 2025) 25 .4±0.5
+
+Hindsight (Latimer et al. 2025) 46 .1±2.1
+
+A-Mem (Xu et al. 2026) 36 .1±4.7
+
+EMem (Wang et al. 2026) 47 .0±4.6
+
+AMA-Agent (Zhao et al. 2026) 39 .7±4.8
+
+MESA (ours) 49 .0±3.3
+
+Table 7: Performance evaluation over five folds reported as mean ±std (%). Best result is in bold, and second-best result is underlined. more fine-grained rules like keyword-level mapping over do-main and capacities. 
+
+## G Discussion and Limitations 
+
+Our results show structure-level selection as a useful com-plement to memory construction and item-level retrieval. Across AMA-Bench, the best memory configuration is typ-ically neither a single structure nor the full union, indicat-ing that different queries benefit from different combinations of global, temporal, relational, semantic, and step-level evi-dence. Consistent with this observation, MESA outperforms the all-structure configuration while using 41.2% fewer ev-idence tokens, suggesting that adaptive selection improves both efficiency and evidence quality by reducing redundant or distracting context. The route-to-one ablation further con-firms that these gains arise from composing complemen-tary structures rather than identifying a single universally strong representation. Importantly, MESA learns such selec-Method Avg. construction time (s)            
+
+> HippoRAG2 (Gutiérrez et al. 2024) 35.1 Mem0 (Chhikara et al. 2025) 179.9 MemoRAG (Qian et al. 2025) 32.2 Hindsight (Latimer et al. 2025) 420.3 A-Mem (Xu et al. 2026) 717.2 EMem (Wang et al. 2026) 52.7 AMA-Agent (Zhao et al. 2026) 38.2
+> MESA (sequential) 73.3
+> MESA (parallel) 38.2
+
+Table 8: Average memory construction time per trajectory (in s) evaluated over sampled episodes with Qwen3-32B. 
+
+Selection strategy Accuracy 
+
+domain-conditioned 64 .4±1.7
+
+capability-conditioned 63 .8±1.2
+
+domain–capability-conditioned 64 .0±2.2
+
+MESA (ours) 65 .1±0.8
+
+Table 9: Comparison with validation-selected coarse-grained selection strategies through the full subset sweep in the con-trolled analysis. tion policies from answer-level feedback without modify-ing the underlying memory builders, retrievers, or answer model. Prior-guided proposals provide a structured search space, while UCB-guided scheduling improves the stabil-ity of policy evolution. The resulting policies also remain explicit and inspectable, facilitating the analysis of query-dependent memory access. The comparatively smaller gain on causal inference points to a promising extension that com-bines adaptive structure selection with explicit modeling of cross-event and cross-structure dependencies. This study intentionally focuses on a representative set of five memory structures and keeps the remaining system com-ponents fixed to isolate the contribution of query-adaptive selection. This controlled setting enables a clear evaluation of the proposed formulation, while leaving several natural ex-tensions for future work, including incorporating additional memory representations and jointly optimizing memory con-struction, retrieval, selection, and evidence composition. The current evaluation covers both long-horizon agent trajecto-ries and long-term conversations, providing initial evidence of generality across memory settings. Further studies on con-tinuously updated and multimodal memories could broaden the applicability of the framework.

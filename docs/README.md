@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 22 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 26 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>11</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>15</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-10 20:08:19 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 21:23:23 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共读22篇论文，精读与速读各半，核心聚焦LLM智能体框架与多智能体协作。最值得关注的是两项满分之作：一个用于大规模解空间搜索的LLM智能体连续改进框架，以及基于互补拓扑分层稀疏协调的多智能体系统。建议优先精读这两篇高分论文，速读可关注测试时强化学习、行动意图嵌入与环境派生中训练等方向。</p>
+<p>今日聚焦智能体记忆系统，完成26篇论文筛选，其中15篇精读、11篇速读。</p>
+<p>最值得关注的两项发现：借鉴 scrub jay 情景记忆的缓存机制（9.0/10）与层级教师记忆蒸馏方法（9.0/10），均指向高效长期记忆构建。</p>
+<p>建议普通读者优先从“记忆缓存+知识蒸馏”组合入手，可快速提升小型智能体的记忆能力与交互效率。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">11 篇</strong>
+    <strong class="dpr-home-dashboard-count">15 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Continuous Improvement and Parallel Autonomous Exploration: An LLM-Agent Framework for Searching Large Solution Spaces">Continuous Improvement and Parallel Autonomous Exploration: An LLM-Agent Framework for Searching Large Solution Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="HELENA:Hierarchical Sparse Coordination over a Union of Complementary Topologies for MAS">HELENA:Hierarchical Sparse Coordination over a Union of Complementary Topologies for MAS</span></li><li><span class="dpr-home-dashboard-paper-title" title="EvolveNet: Collaborative Harness Evolution for Agent Self-Improvement">EvolveNet: Collaborative Harness Evolution for Agent Self-Improvement</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Caching for the Future: Scrub Jay Episodic Memory Principles for Agent Memory Systems">Caching for the Future: Scrub Jay Episodic Memory Principles for Agent Memory Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agent Memory Distillation: Empowering Small LLM Agents with Hierarchical Teacher Memory">Agent Memory Distillation: Empowering Small LLM Agents with Hierarchical Teacher Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="LatticeMind: A Conflict-Aware Memory Primitive for Multi-Agent Systems">LatticeMind: A Conflict-Aware Memory Primitive for Multi-Agent Systems</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>15</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Hi-TTRL: Regulating Consensus with Hints for Test-Time Reinforcement Learning">Hi-TTRL: Regulating Consensus with Hints for Test-Time Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="InsightEmb: Learning Action-Intent Embeddings for Agentic Insight Retrieval">InsightEmb: Learning Action-Intent Embeddings for Agentic Insight Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="State2State: Environment-Derived Mid-Training for LLM Agents">State2State: Environment-Derived Mid-Training for LLM Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unified Agent: Managing Interactions across Devices">Unified Agent: Managing Interactions across Devices</span></li><li><span class="dpr-home-dashboard-paper-title" title="Gated-BEPO: Confidence-Gated Bellman Credit Assignment for Large Language Model Agents">Gated-BEPO: Confidence-Gated Bellman Credit Assignment for Large Language Model Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Branch2Skill: Efficient Skill Evolution Through Reasoning Trees">Branch2Skill: Efficient Skill Evolution Through Reasoning Trees</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>

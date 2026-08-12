@@ -1,0 +1,598 @@
+Title: Beyond the Capability Boundary: Zeroth-Order Optimization for Self-Evolving LLM Agents
+
+URL Source: https://arxiv.org/pdf/2608.09292v1
+
+Published Time: Tue, 11 Aug 2026 02:02:35 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Beyond the Capability Boundary: Zeroth-Order Optimization for Self-Evolving LLM Agents 
+
+Bingzhen Liu 1,2,∗, Xiaomeng Fan 1,2,∗, Yuwei Wu 1,2, Zhi Gao 1,2, Mingyang Gao 1,2,Chuanhao Li 3, Yunde Jia 1,21 Beijing Key Laboratory of Intelligent Information Technology, School of Computer Science & Technology, Beijing Institute of Technology  
+
+> 2
+
+Guangdong Laboratory of Machine Perception and Intelligent Computing, Shenzhen MSU-BIT University  
+
+> 3
+
+Alaya Lab 
+
+Abstract 
+
+Self-evolving methods improve the capabilities of LLM agents by sampling trajectories from the underlying LLMs and learning from these trajectories. However, these methods struggle to learn beyond the inherent capability bound-ary of the agents, since the agents cannot sam-ple correct trajectories on difficult examples for further improvements. In this paper, we pro-pose a zeroth-order self-evolution framework that enables agents to learn beyond their capa-bility boundary by perturbing LLM parameters to adapt to difficult examples without any tra-jectory annotations. Specifically, we perturb LoRA parameters of LLMs, run the agent, com-pute the losses under the perturbed and original parameters, and use the loss difference to es-timate gradients and further update the LoRA parameters. We sample trajectories using the updated LLMs for supervised fine-tuning to break through the capability boundary of the agents, forming a closed self-evolution loop. We introduce a parallel perturbation inference mechanism and an adaptive lookup mechanism to reduce time consumption in zeroth-order optimization, with an answer perplexity loss that provides smooth and stable zeroth-order loss values. Experiments on multiple deep re-search benchmarks show that our method ob-tains substantially more successful trajectories and consistently outperforms strong baselines, especially on difficult examples. The code and released artifacts are available at https: //github.com/hidk1911/ZOForLLMAgents .
+
+1 Introduction 
+
+Large language model (LLM) agents have shown strong potential in complex information-seeking and reasoning tasks, such as Deep Research (Yao et al., 2023; Schick et al., 2023; Qin et al., 2024). This task requires agents to retrieve information, integrate evidence, reason over intermediate results, 
+
+> ∗Equal contribution.
+
+and generate a final answer (Nakano et al., 2021; Yao et al., 2023). Since annotating high-quality intermediate reasoning trajectories is expensive for training, self-evolving LLM agents have emerged and rapidly attracted increasing attention (Shinn et al., 2023; Madaan et al., 2023; Gou et al., 2024), which sample reasoning trajectories by themselves and use the trajectories for further training via su-pervised fine-tuning (SFT) or reinforcement learn-ing (RL) (Wu et al., 2026; Sun et al., 2025). How-ever, existing self-evolving LLM agents struggle to learn beyond their inherent capability boundary. On difficult examples, the agents cannot sample correct trajectories for further improvement. In this paper, we propose a zeroth-order self-evolution framework that enables agents to learn beyond their capability boundary without annotated trajectories. Specifically, for each difficult instance, we attach instance-specific LoRA modules and op-timize them using zeroth-order estimation. We randomly perturb the LoRA parameters, compute the final-answer losses under both the original and perturbed parameters, and use the resulting loss differences to construct gradient estimates for up-dating the LoRA modules. Since this process only relies on answers and requires no annotated trajec-tories, it enables optimization without process su-pervision. The agent equipped with the optimized LoRA module is capable of generating successful trajectories. These newly discovered successful trajectories then serve as high-quality data for sub-sequent SFT to push the agent beyond its capability boundary, forming a closed self-evolution loop, as shown in Figure 1. To realize this goal, we need to address two key challenges. First, agentic trajectory sampling is highly expensive. Trajectories involve multiple rounds of tool use and environment interaction, such as retrieval, browsing, filtering, and synthesis. These operations are time-consuming and sensitive to tool instability, latency, and environmental varia-arXiv:2608.09292v1 [cs.LG] 10 Aug 2026 Existing Self-Evolving Methods Zeroth-Order Self-Evolving Methods  
+
+> Q-A pairs
+> Initial Agent Sampled Trajectory
+> Q-A pairs
+> Initial Agent Improved Agent
+> Zeroth-Order Optimization
+> Better Trajectory
+> Correct Answer Reliable Training Signal
+> Wrong Answer
+> Bad Training Signal
+> Ineffective Self-Evolution
+> Effective Self-Evolution
+> Within Capability Boundary
+> Beyond Capability Boundary
+
+Figure 1: Comparison between existing self-evolving methods and our zeroth-order self-evolving method. 
+
+tion. Moreover, since zeroth-order optimization re-quires evaluating multiple random perturbations, it requires repeatedly sampling full agent trajectories, further introducing prohibitive sampling overhead. Second, without intermediate process (token-level) supervision, direct final-answer rewards, such as answer similarity or correctness signals, are often noisy and sparse, leading to unstable optimization. To address the first challenge, we design a par-allel perturbation inference mechanism. Since dif-ferent perturbation branches share the same back-bone computation, the expensive backbone output only needs to be computed once, while multiple lightweight LoRA perturbations can be evaluated in parallel. This significantly accelerates zeroth-order optimization with limited extra memory cost. We further design an adaptive lookup mechanism that caches recent tool-call results and adaptively uses exact or similarity-based matching according to query type, reducing repeated tool calls and com-pressing sampling time. To address the second challenge, we introduce a answer perplexity loss as a process-level surrogate signal derived only from query and answer pairs. After the model generates a reasoning trajectory, we condition on the trajectory to compute the neg-ative log-likelihood of the reference answer, and use it as the scalar loss for zeroth-order optimiza-tion. Compared with sparse final-answer rewards, this loss provides smoother and more discrimina-tive feedback for different trajectories, improving optimization stability. Experiments on multiple deep research bench-marks show that our method consistently improves final task performance over strong baselines. Com-pared with existing deep-research agents that rely on trajectories annotated by stronger models such as GPT, our agent achieves better performance, demonstrating that our method can break through the capability boundary of the agent. Further anal-ysis shows that our method discovers substantially more successful trajectories, particularly on diffi-cult examples where the original model struggles, further validating its effectiveness. Our contributions are summarized as follows. • We propose a zeroth-order self-evolution method for LLM agents, which enables agents to learn beyond their capability boundary by perturbing LLM parameters to adapt to diffi-cult examples without any trajectory annota-tions. • We introduce a parallel perturbation inference mechanism, an adaptive lookup mechanism, and an answer perplexity loss to improve effi-ciency and optimization stability. • We conduct systematic experiments to verify the effectiveness of our method and release the sampled high-quality trajectories and trained agents to facilitate future research. 
+
+2 Related Work 
+
+2.1 Self-Evolving Agent 
+
+Self-evolution refers to an iterative process in which a system improves by collecting, refin-ing, and reusing its own experience (Tao et al., 2024). Reflexion first developed this idea to LLM agents by using task feedback to guide later agent trials (Shinn et al., 2023). Subsequently, self-evolving methods are developed along two lines, 
+
+i.e. , non-parametric and training-based methods. Non-parametric methods improve the agent during inference by reusing feedback, memory, or tool-based corrections, such as Self-Refine (Madaan et al., 2023) using self-generated feedback to re-vise model outputs, CRITIC (Gou et al., 2024) correcting responses with external tools, and Ex-peL (Zhao et al., 2024) storing past task experi-ence as reusable knowledge. Training-based meth-ods further convert self-generated experience into model updates. WebDancer (Wu et al., 2026), SimpleDeepSearcher (Sun et al., 2025), and SE-Agent (Guo et al., 2026) construct and improve self-generated trajectories for SFT or RL, and WebE-volver (Fang et al., 2025) introduces a co-evolving world model to provide richer experience. Existing methods depend on the initial agent to sample tra-jectories, which is bounded by its capability bound-ary. Our method uses zeroth-order optimization to reshape the policy, enabling the model to discover trajectories beyond its capability boundary. 
+
+2.2 Zeroth-order Optimization 
+
+Zeroth-order optimization estimates gradients from loss values, making it suitable when gradients are inaccessible or costly (Sun et al., 2022). Zeroth-order methods mainly follow two direc-tions. Variance-reduction methods aim to stabilize gradient estimations, such as SZVR-G (Liu et al., 2018a) and ZO-SVRG (Liu et al., 2018b). Acceler-ation methods aim to improve query efficiency and convergence speed, such as random gradient-free minimization (Nesterov and Spokoiny, 2017) and ZO-AdaMM (Chen et al., 2019). Recently, zeroth-order optimization has been ex-tended to LLMs to reduce training time and mem-ory cost by avoiding backpropagation (Malladi et al., 2023). Subsequent studies aim to improve the practicality for LLMs. ZO-LLM (Zhang et al., 2024) introduces block-wise zeroth-order updates to improve stability, and LOZO (Chen et al., 2025) exploits low-rank structures to reduce the cost and variance of zeroth-order estimation. However, ex-isting zeroth-order methods have not been studied for LLM agents, which is challenging since both the trajectory generation and sparse supervision in LLM agents resulting in expensive trajectory sam-pling and unstable optimization. To fill this gap, we design the adaptive lookup mechanism and answer perplexity loss for efficiency and stability. 
+
+3 Method 
+
+We present the background of the proposed method. Then, we present the formulation of the proposed zeroth-order method for self-evolving LLM agents, which can learn beyond the capability boundary of agents. We introduce a parallel perturbation infer-ence mechanism and an adaptive lookup mecha-nism to reduce time consumption, and an answer perplexity loss to improve optimization stability. The overall process is summarized in Figure 2. 
+
+3.1 Background LLM Agents. We denote the LLM agent as an policy πθ, where θ denotes parameters. The agent interacts with a tool environment T consisting of search, webpage visiting, and code execution. At step t, the interaction history is 
+
+ht = ( q, r 1, a 1, o 1, . . . , r t−1, a t−1, o t−1), (1) where rt is the reasoning text, at is an action, and 
+
+ot is the returned observation. For a query q, a complete rollout is denoted as 
+
+τ = ( r1, a 1, o 1, . . . , r T , a T , o T , ˆy), (2) where ˆy is the model-generated final answer. The trajectory distribution is computed as 
+
+pθ(τ | q, T ) = 
+
+> T
+
+Y
+
+> t=1
+
+πθ(rt, a t | ht)pT (ot | at, h t).
+
+(3) The environment transition pT includes multiple tool actions. Since actions are discrete and the en-vironment is non-differentiable, the mapping from 
+
+θ to τ is a black-box stochastic process. 
+
+Self-Evolution for LLM Agents. A self-evolving LLM agent updates itself solely based on query q and answer pairs y (QA pairs), with-out intermediate reasoning trajectories. The agent should acquire trajectories τ from its own interac-tion with pT (Xi et al., 2025; Zhang et al., 2025; He et al., 2025). By denoting the training set as 
+
+D = {(qi, y i)}Ni=1 , the objective is 
+
+F (θ) = E(q,y )∼D Eτ ∼pθ (·| q, T ) [ℓ(θ; q, τ, y )] , (4) where ℓ denotes the loss of SFT or RL. In SFT, self-sampled trajectories are used to supervise in-termediate processes and compute gradients. In RL, these are used to estimate rewards and update the policy. 
+
+Analysis of Self-Evolution methods for LLM Agents. Under outcome-only self-evolution, suc-cessful trajectories are ultimately required to up-date the shared agent through trajectory-level self-training. When the current policy samples only failed trajectories, treating these trajectories as pos-itive supervision may reinforce incorrect reasoning, query formulation, and tool-use behaviors. Con-sequently, methods that rely solely on successful trajectories already reachable by the current pol-icy may remain confined to the agent’s current trajectory-discovery boundary. Specifically, the gradient of F (θ) is decomposed as 
+
+∇θF (θ) = gfixed + gtraj ,
+
+gfixed = Eτ [∇θℓ(θ; q, τ, y )] ,
+
+gtraj = Eτ [ℓ(θ; q, τ, y )
+
+·∇ θ log pθ(τ | q, T )] .
+
+(5) Here, gfixed is the explicit gradient of the answer loss when the sampled trajectory is treated as fixed, whereas gtraj captures how parameter changes re-shape the trajectory distribution. Therefore, the full gradient contains both an answer-level opti-mization signal and a trajectory-distribution-level optimization signal. Given a fixed failed trajectory τ −, a conventional fixed-trajectory first-order update only computes 
+
+gFO = ∇θℓ(θ; q, τ −, y ), (6) which corresponds to a single-sample estimate of 
+
+gfixed . This gradient increases the likelihood of the reference answer under the existing failed con-text. However, the update does not account for how changing θ affects subsequent reasoning decisions, query formulation, tool selection, or environment interaction. Therefore, its gradient provides few trajectory-level information for discovering a suc-cessful trajectory. RL methods also cannot provide effective up-dates when the current policy cannot sample suc-cessful trajectories. RL methods account for changes in the trajectory using the estimator 
+
+bgRL = 1
+
+M
+
+> M
+
+X
+
+> i=1
+
+(R(τi) − b) ∇θ log pθ(τi | q, T ),
+
+(7) where R(τi) is the trajectory-level reward and b is a baseline. For difficult examples, if all sampled trajectories fail and receive the same correctness reward R(τi) = b, resulting in bgRL = 0. In con-clusion, existing self-evolving methods restrict the generated trajectories to the model’s current capa-bility boundary. 
+
+Zeroth-order Optimization. Zeroth-order opti-mization aims to optimize a loss function when gradients are impractical to compute. Instead of relying on backpropagation, it treats the loss as a black box and estimates the gradient only from function evaluations. The core idea is to perturb θ
+
+along a random direction u, observe the change in the loss values, and use this finite-difference signal to construct an approximate gradient for updating the model, where the gradient is computed as 
+
+ˆg(θ) = F (θ + μu) − F (θ)
+
+μ u, (8) where F (·) denotes a loss function, u is sampled from a standard Gaussian, and μ is the smoothing radius. With such estimated gradients and given a learning rate η, parameters θ is updated as, 
+
+θt+1 = θt − ηˆg(θt), (9) thereby enabling optimization under black-box set-tings where only loss values are required. 
+
+3.2 Formulation 
+
+We use query and answer pairs as feedback and op-timize an instance-specific LoRA module for each instance. QA-only supervision can not provide gra-dients, making direct parameter updates infeasible. We thus adopt zeroth-order optimization to perform black-box parameter updates based solely on loss values. For each instance (qi, y i), the instance-specific LoRA module is denoted as wi = [ Ai, Bi]. To optimize wi, we sample K random perturbation directions. For the k-th perturbation, the perturbed policy is denoted as pθpi,k (·), where the perturbed parameters θpi,k is computed as 
+
+θpi,k = θ + ( Bi + σϵBi,k )( Ai + σϵAi,k ), (10) where σ controls the perturbation scale. ϵBi,k and 
+
+ϵAi,k are perturbations for parameters Bi and Ai, re-spectively. The perturbed policy interacts with the same tool environment and generates a complete trajectory via 
+
+τ + 
+
+> i,k
+
+∼ pθpi,k (· | qi, T ). (11) The corresponding loss of the perturbed model is computed by 
+
+ℓ+ 
+
+> i,k
+
+= ℓans (θpi,k ; qi, τ +
+
+> i,k
+
+, y i), (12) where ℓans denotes a loss function computed solely from the final answer. We also need to utilize the current policy πθ performs a complete roll-out and produces a baseline trajectory τ 0 
+
+> i
+
+∼ pθ(· | 
+
+qi, T ), and we compute the baseline loss on the un-perturbed policy as 
+
+ℓ0 
+
+> i
+
+= ℓans (θ; qi, τ 0 
+
+> i
+
+, y i). (13) The zeroth-order gradient of wi is estimated by comparing the perturbed loss with the baseline loss, 
+
+ˆg(Ai) = 1
+
+BK 
+
+> B
+
+X
+
+> i=1
+> K
+
+X
+
+> k=1
+
+ℓ+ 
+
+> i,k
+
+− ℓ0
+
+> i
+
+σ ϵAi,k ,
+
+ˆg(Bi) = 1
+
+BK 
+
+> B
+
+X
+
+> i=1
+> K
+
+X
+
+> k=1
+
+ℓ+ 
+
+> i,k
+
+− ℓ0
+
+> i
+
+σ ϵBi,k .
+
+(14) Figure 2: Overview of the proposed zeroth-order self-evolution pipeline. The method actively searches for successful agent trajectories around the current policy by perturbing LoRA parameters and evaluating complete rollouts with answer-only supervision. 
+
+When a perturbation leads to a lower loss, the up-date moves the LoRA parameters toward that di-rection. When a perturbation increases the loss, the update moves away from it. We then update the LoRA parameters wi with Adam. By the zeroth-order optimization process, the agent equipped with the optimized LoRA module is encouraged to generate successful reasoning trajectories that are beyond the capability boundary. Trajectories with correct final answers or sufficiently low answer loss are added to a high-quality trajectory buffer. This buffer provides the training data for the subsequent SFT, forming a closed self-evolution loop. 
+
+3.3 Parallel Perturbation Inference 
+
+In zeroth-order optimization, the model usually needs to perform forward evaluation under multiple perturbation directions. If we directly perturb the full model parameters, each perturbation requires a separate forward pass through the whole backbone, causing the computation cost to grow linearly with the number of perturbations. For improving efficiency, we design a parallel perturbation inference that perturbs LoRA param-eters in a parallel way. With the perturbed param-eters in Eq. (10), as to the input x, for the k-th perturbation, the model output can be written as 
+
+hk = θx + ( B + ϵBk )( A + ϵAk )x. (15) We observe that when perturbations only have effects in the LoRA branch, different perturbed models share the same backbone computation θx .Therefore, we only compute the backbone out-put θx once and share it across all perturbation branches, which is illustrated in Figure 3. In de-tail, for 1 − k perturbations, we in parallel com-pute the right term in Eq. (15), i.e. , (B + ϵB 
+
+> 1
+
+)( A +
+
+ϵA 
+
+> 1
+
+)x, ..., (B + ϵBK )( A + ϵAK )x are computed in parallel. Then, we add θx to these terms as θx +(B+ϵB 
+
+> 1
+
+)( A+ϵA 
+
+> 1
+
+)x, ..., θx +( B+ϵBK )( A+ϵAK )x.Due to the low-rank structures of A, B, their com-putation and memory cost are much smaller. In this way, we can evaluate multiple perturbations on top of a single backbone forward computation in parallel, which greatly reduces the sampling time cost of zeroth-order optimization. Compute Once                        
+
+> k=1 k=2 k=K
+> (d×r)(r×n)(n×1) (d×1)
+> 𝐀 𝐀 𝐀
+> θ𝐀
+> B
+> B1
+> A
+> A1
+> 
+> B
+> B2
+> A
+> A2
+> 
+> BKB
+> AKA
+> 
+> LoRA output 1
+> LoRA output 1
+> LoRA output 2
+> LoRA output 2
+> LoRA outputK
+> LoRA output K
+> Compute In Parallel
+> θ(d ×n)
+> θ(d×n)x(n×1)
+> Current parameter Input
+> (d×1)
+> θ𝐀
+> θ𝐀
+> (d×r)(r×n)(n×1) (d×1)
+> (d×1) (d×1) (d×1) (d×1) (d×1)
+> (d×r)(r×n)(n×1) (d×1)
+
+Figure 3: Illustration of parallel perturbation inference. The backbone output is computed once and shared across perturbation branches, while multiple LoRA per-turbation branches are computed in parallel. 
+
+3.4 Adaptive Lookup Mechanism 
+
+Due to environmental and network conditions, tool calls can be quite time-consuming. Evaluating multiple perturbations for the same question often leads to repeated tool calls, such as similar search 
+
+queries or visit the same webpages, which makes direct execution of every tool action unnecessarily expensive. We therefore introduce an adaptive lookup mech-anism to reuse tool observations. We maintain a shared pool of recent tool calls and returned results. For search , the lookup uses semantic query match-ing to handle surface-level variations. For visit , it uses stricter matching based on the URL and visit goal. Matched requests are served from the lookup pool, while unmatched requests are executed exter-nally and registered for future reuse. This design reduces redundant external inter-actions without changing the agent rollout for-mat. It substantially lowers the time cost of multi-perturbation rollouts and improves the practicality of our zeroth-order self-evolution pipeline. 
+
+3.5 Answer Perplexity Loss 
+
+Zeroth-order gradient estimation relies on the loss values evaluated under perturbed parameters, mak-ing the design of the loss function critical for stabil-ity. Binary loss and BERT-based similarity loss are discontinuous, leading to noisy gradient estimation that causes the optimization process to oscillate and fail to converge. We introduce an answer perplexity loss that uses trajectory-conditioned answer likelihood as dense supervision (Acikgoz et al., 2026). Given a roll-out τ for query q, the final answer is required to appear in the format <answer> ˆy </answer> . We locate this answer span and replace the generated answer with the ground-truth answer. We denote the trajectory context generated by our agent as 
+
+τ\ans . The ground-truth answer is tokenized as 
+
+y = ( y1, . . . , y M ). The introduced answer perplex-ity loss is 
+
+ℓans (θ; q, τ, y ) = − 1
+
+M
+
+> M
+
+X
+
+> j=1
+
+log πθ
+
+ yj | q, τ \ans , y <j 
+
+ .
+
+(16) 
+
+The loss in Eq. (16) is computed only on ground-truth answer tokens. We do not supervise the gen-erated reasoning, actions and observations. Instead, the loss evaluates whether the sampled trajectory provides conditions under which the ground-truth answer is easy to predict. Strictly, Eq. (16) is a token-normalized negative log-likelihood or cross-entropy loss. The corre-sponding answer perplexity is 
+
+PPL ans (θ; q, τ, y ) = exp ( ℓans (θ; q, τ, y )) . (17) We optimize the log-space form because it is numer-ically stable and directly usable for loss-difference estimation. A lower loss means that the current tra-jectory makes the reference answer less surprising to the model. Therefore, even an incorrect rollout can still receive useful credit if it retrieves evidence that increases the likelihood of the ground-truth answer. 
+
+4 Experiment 
+
+4.1 Experimental Setup Evaluation Benchmarks. We evaluate our method on two deep research benchmarks: GAIA (Mialon et al., 2024) and WebWalk-erQA (Wu et al., 2025). GAIA tests general assis-tant abilities including reasoning, browsing, mul-timodal handling, and tool use. WebWalkerQA focuses on website traversal and multi-page in-formation extraction. These benchmarks are well suited to our study because their multi-step search difficulty provides a direct test of whether our dis-covered trajectories can produce stronger agents. 
+
+Training data. Starting from 500 QA pairs from the open-source WebShaper data (Tao et al., 2026), we filter 304 high-quality QA pairs for training. 
+
+Metrics. We report answer accuracy under the official evaluation protocol. Comparison. We compare our method with the baseline ReAct framework (Yao et al., 2023). For controlled comparisons, all internal meth-ods use the same backbone family and the same system configuration, including the search API, webpage parser, decoding setting, and tool bud-get. We further compare our method with ex-isting deep-research agents, including Search-o1 (Li et al., 2025b), WebThinker (Li et al., 2026b), WebDancer (Wu et al., 2026), Sim-pleDeepSearcher (Sun et al., 2025), WebSailor (Li et al., 2025a), GRPO (Shao et al., 2024), and ARPO (Dong et al., 2026). 
+
+4.2 Main Results 
+
+Table 1 reports the main controlled results and con-textual paper-reported comparisons. Results show that our method surpasses the baseline method, demonstrating the effectiveness of our method. Because the compared deep-research agents rely on more large-scale models ( e.g. GPT) to generate trajectories, these agents are easier to obtain strong results than self-evolution agents. Despite this disadvantage, our method still outperforms these agents, demonstrating its superiority and showing that it can break through the capability boundary of self-evolving agents. 
+
+4.3 Ablation 
+
+We conduct ablation studies from two perspec-tives. First, we compare different loss functions for zeroth-order trajectory discovery. Second, we analyze whether our method can help the agent dis-cover successful trajectories on difficult QA pairs. 
+
+4.3.1 Loss convergence 
+
+We compare three loss functions: BERT-based se-mantic loss, LLM-as-a-Judge loss, and the pro-posed answer perplexity loss. The comparison is conducted on an easy example and a hard exam-ple with the same question under the same zeroth-order setting. Since these three losses have differ-ent scales, we normalize their values to the range of 0 to 1 for a fair comparison of their convergence. Results are shown in Figure 4. On the easy ex-ample, all three losses can decrease during zeroth-order optimization, but our loss achieves a lower final loss value and leads to a more stable opti-mization process. On difficult samples, both the LLM-as-a-Judge loss and the BERT-based loss fail  
+
+> (a) Results on the easy sample. (b) Results on the hard sample.
+> Figure 4: Convergence comparison of different loss functions on easy and hard examples.
+
+to decrease, whereas our loss still converges nor-mally with stable optimization dynamics. These results demonstrate that the proposed loss is well suited for zeroth-order optimization and is effective in providing reliable optimization signals. 
+
+4.3.2 Effect on difficult QA pairs 
+
+Among the 304 training examples, the baseline model correctly answers only 67 examples under Pass@1 and fails on the remaining 237, resulting in an initial success rate of 22.0%. After training with the proposed zeroth-order optimization method, the optimized agent correctly answers 164 examples under Pass@1, increasing the success rate to 53.9% and yielding an improvement of 31.9%. Results demonstrate that agents trained with the proposed method can effectively break through the capability boundary of the initial agent. We further train the initial agent using the 67 suc-cessful trajectories sampled from the initial agent and evaluate the resulting self-evolved agent on the GAIA benchmark. As shown in Table 2, training on trajectories sampled from the initial model im-proves over the baseline agent, demonstrating the effectiveness of self-evolution. More importantly, our method significantly outperforms the two com-pared agents, demonstrating that our method can help sample high-quality trajectories and validating its effectiveness. 
+
+4.3.3 Hyperparameter sensitivity 
+
+We randomly select 50 difficult examples and vary one hyperparameter at a time while keeping the remaining settings fixed. We evaluate the number of perturbation directions K, perturbation scale σ,LoRA rank r, and learning rate η. Table 3 shows that the number of successful examples changes only slightly over most tested settings. The default configuration is not the only effective choice, sug-gesting that the trajectory-discovery results are not narrowly tuned to a single hyperparameter setting. Table 1: Main results under controlled evaluation and contextual paper-reported comparisons with recent deep-research agents. Paper-reported rows are grouped by framework/search scaffolds and training-based methods. 
+
+Backbone Method GAIA WebWalkerQA Level 1 Level 2 Level 3 Avg. Easy Medium Hard Avg. 
+
+Paper-reported framework/search scaffolds 
+
+Qwen-2.5-7B ReAct (Yao et al., 2023) 28.2 15.3 0.0 18.4 28.1 31.2 16.0 24.2 Qwen-2.5-7B Search-o1 (Li et al., 2025b) 23.1 17.3 0.0 17.5 – – – –Qwen-3-8B Search-o1 35.9 15.4 0.0 21.4 6.7 15.5 9.7 11.5 Qwen-3-8B WebThinker (Li et al., 2026b) 43.6 11.5 0.0 22.3 6.7 13.1 16.9 13.0 
+
+Paper-reported training-based methods 
+
+Qwen-2.5-7B WebDancer (Wu et al., 2026) 41.0 30.7 0.0 31.0 40.6 44.1 28.2 36.0 Qwen-2.5-7B SimpleDeepSearcher † (Sun et al., 2025) – – – 36.9 – – – –WebSailor-7B WebSailor † (Li et al., 2025a) – – – 33.0 – – – –Qwen-3-8B GRPO (Shao et al., 2024) 48.7 25.0 8.3 32.0 24.4 33.3 26.8 29.0 Qwen-3-8B ARPO (Dong et al., 2026) 53.9 32.7 16.7 38.8 26.7 33.3 29.6 30.5 
+
+Controlled setting 
+
+Qwen-3-4B ReAct 33.3 15.1 5.0 19.6 25.0 17.5 18.3 19.5 Ours-SFT 42.8 24.2 10.0 28.3 30.0 26.4 29.2 28.2 
+
+Qwen-3-8B ReAct 35.9 17.3 8.3 23.3 8.9 16.7 18.3 15.5 Ours-SFT 56.4 42.3 41.6 47.5 31.4 36.8 35.2 34.8 
+
+Table 2: GAIA accuracy comparison of the agents (Qwen-3-4B as the backbone) trained with different trajectory sources.                 
+
+> Agent. Level 1 Level 2 Level 3 Avg. Agent w/o training 33.3 15.1 5.0 19.6 Agent trained on initial trajectories 38.1 13.6 5.0 20.4 Agent trained on our trajectories 42.8 24.2 10.0 28.3
+
+4.3.4 One-sided versus two-sided estimation 
+
+The two-sided estimator of zero-order gradients evaluates positive and negative perturbations for each direction, whereas the one-sided estimator reuses a shared unperturbed rollout. We compare the two estimators under the same four-rollout bud-get per round. As shown in Table 4, the two-sided estimator solves 24 examples and the one-sided es-timator solves 23. Since their trajectory-discovery performance is comparable, we use the one-sided estimator in the main experiments because it sup-ports more perturbation directions with a shared baseline rollout. 
+
+Table 4: Comparison of one-sided and two-sided esti-mators on 50 difficult examples under the same rollout budget.             
+
+> Estimator Directions Rollouts / direction Rollouts / round Successful One-sided (Ours) 31 + shared baseline 423 / 50 Two-sided SPSA 22424 / 50
+
+4.4 Trajectory Quality Analysis 
+
+We further present representative trajectories to show that zeroth-order optimization breaks through 
+
+Table 3: Hyperparameter sensitivity on 50 difficult ex-amples. We vary one factor at a time; default settings are bolded. 
+
+Factor Tested value Successful instances 
+
+K
+
+1 20 / 50 
+
+2 23 / 50 
+
+4 24 / 50 6 24 / 50 
+
+σ
+
+5 × 10 −3 22 / 50 
+
+1 × 10 −3 23 / 50 
+
+5 × 10 −4 21 / 50 
+
+r
+
+8 20 / 50 
+
+16 23 / 50 
+
+64 23 / 50 
+
+η
+
+5 × 10 −6 22 / 50 
+
+1 × 10 −6 23 / 50 
+
+5 × 10 −7 19 / 50 
+
+the capability boundary of the agent. We present cases where the baseline fails but the optimized agent succeeds, which is shown in Table 5. Results show that the baseline agent often fails because of its wrong reasoning and tool call. In contrast, the optimized agent makes more purposeful tool calls, reformulates insufficient queries, and grounds its final answer more explicitly in retrieved evi-dence. These cases suggest that our method im-proves trajectory-level competence rather than only changing the final answer distribution. Table 5: Qualitative comparison between the baseline agent and our evolved agent.                                        
+
+> Case Baseline Agent Ours Case 1: Evidence misinterpretation
+> Question: Shared model type in Kashyap’s and Fader’s customer-retention studies.
+> Ground Truth:
+> beta geometric
+> Thinking: Relies on prior belief and selects “Markov model” too early.
+> Action: search for Kashyap and Fader retention studies.
+> Observation: Retrieves beta-geometric clues but does not verify them.
+> Error turn: Prior belief overrides retrieved evidence. Answer: Markov model .
+> Thinking: Treats “beta geometric” as the key candidate from retrieved evidence.
+> Action: search for Kashyap-Fader studies, then search for beta-geometric retention models.
+> Observation: Confirms beta geometric evidence from both Kashyap and Fader-related results.
+> Correction: Verifies the candidate before answering.
+> Answer: beta geometric .Case 2: Weak query formulation
+> Question: Horror movie cited by Valentina Re for dream-reality met-alepsis.
+> Ground Truth: ANightmare on Elm Street
+> Thinking: Considers several dream-reality horror films but lacks a stable evidence target.
+> Action: search with separated broad terms such as Valentina Re, metalepsis, dream reality, and horror movie.
+> Observation: Retrieves generic book and horror-film results without identifying the cited movie.
+> Error turn: Guesses from common horror examples instead of refining the search. Answer: The Others .
+> Thinking: Focuses on the specific chapter context and the dream-reality metalepsis clue.
+> Action: search for Valentina Re, World Building, metalepsis, and horror movie; then refines with Valentina Re and metalepsis horror.
+> Observation: Finds Re’s chapter on metalepsis and narrows the dream-reality horror candidate.
+> Correction: Uses targeted search to resolve the cited film.
+> Answer: A Nightmare on Elm Street .
+
+4.5 Capability Boundary Analysis 4.5.1 Comparison with first-order alternatives 
+
+We randomly select 50 difficult examples and com-pare the proposed method with two gradient-based alternatives under the same backbone, tools, and rollout budget. The fixed-trajectory first-order (FO) baseline keeps the failed trajectory sampled by the initial policy fixed and backpropagates only the answer loss. The RL baseline regenerates trajecto-ries from the current policy and uses an outcome-level answer reward. As shown in Table 6, the fixed-trajectory FO baseline improves only one ad-ditional example over direct sampling, while RL solves 16 examples. Our method solves 23 exam-ples, showing that loss differences over regenerated complete rollouts provide more useful guidance for trajectory discovery on difficult examples. Under the same Qwen-3-4B configuration, fixed-trajectory FO requires 21–24 GB of GPU memory and 2.5–3.5 hours of wall-clock time, whereas our ZO implementation requires 12–15 GB and 1.7– 2.4 hours. These measurements show the practical benefit of avoiding backpropagation in this config-uration, rather than implying that ZO is uniformly faster than first-order optimization. 
+
+4.5.2 Best-of-N trajectory search 
+
+We further compare trajectory-discovery methods under matched complete-rollout budgets. The initial-policy baseline directly samples N trajec-tories. Random LoRA perturbation uses the same perturbation scale and perturbed rollouts as our method but does not estimate gradients or update parameters. Answer-conditioned trajectory search provides the reference answer as additional context and searches for a supporting trajectory without pa-rameter updates. An example is counted as solved if at least one of the trajectories obtained within the budget is correct. As shown in Table 7, our method achieves the highest success rate for every evaluated budget. The advantage becomes larger as the budget increases, indicating that iterative loss-guided updates are more effective than additional sampling or unguided perturbation. 
+
+4.5.3 Pass@ N scaling 
+
+We evaluate Pass@ N for N ∈ {1, 2, 4, 6, 8},where an example is considered solved if at least one of the N sampled trajectories is correct. On the trajectory-discovery training set, we compare the initial policy with our optimized policy. On GAIA, we additionally include the RL-trained policy. As shown in Table 8, our method obtains the best re-sult at every sampling budget. The gap remains when N increases, showing that the improvement is not restricted to Pass@1. We further match the full rollout budget of zeroth-order optimization with Ntotal = 45 sam-ples from the unchanged initial policy. On the training set, the initial policy solves 102 examples, while our method solves 194. Among the 97 exam-ples newly solved by our method over the initial Pass@1 result, only 35 examples (36.1%) can be recovered by Best-of-Ntotal sampling from the ini-tial policy. The remaining 62 examples are still un-solved after the same sampling budget. Moreover, the initial-policy result already plateaus at Pass@8, with Pass@8 identical to Pass@ Ntotal . These re-sults show that additional sampling alone does not Table 6: Comparison with first-order alternatives on 50 difficult examples. All methods use the same backbone, tools, and rollout budget.                
+
+> Method Trajectory generation Update signal Successful instances Initial policy Direct sampling from the initial policy No parameter update 6 / 50 Fixed-trajectory FO Keep the sampled failed trajectory fixed Answer-span gradient on the fixed context 7 / 50 RL Regenerate trajectories from the current policy Outcome-level answer reward 16 / 50 Ours Regenerate rollouts under perturbed and updated policies Loss differences across complete rollouts 23 / 50
+
+Table 7: Best-of-N trajectory-discovery success rate (%) under matched rollout budgets. All methods start from the same initial policy.                               
+
+> Method N= 1 N= 2 N= 4 N= 6 N= 8
+> Initial policy 22.04 26.97 29.93 31.57 32.23 Random LoRA perturbation 21.38 27.63 31.57 32.56 33.55 Answer-conditioned trajectory search 24.67 27.63 32.56 36.51 37.82 Zeroth-order optimization (Ours) 26.97 30.26 41.19 50.32 53.61
+
+account for the newly discovered trajectories under the evaluated budget. 
+
+4.5.4 Optimization trajectory analysis 
+
+For 50 difficult examples, we record the LoRA parameters and answer loss at every optimization round. For each example, we construct a fixed two-dimensional PCA basis from the parameter displacements of both our method and a matched-budget random-perturbation baseline, and project all checkpoints onto this shared basis. Table 9 reports a representative trajectory and aggregate diagnostics. On the representative example, our trajectory moves along a consistent direction while the answer loss decreases from 4.333 to 0.024. In contrast, the random baseline ends with a higher loss than its initial value. Across all 50 examples, our updates have higher consecutive-direction co-sine similarity and trajectory efficiency, together with a larger loss decrease and more successful examples. These results are consistent with loss-guided optimization rather than unguided random exploration. 
+
+4.6 Generalization and Robustness 4.6.1 Non-retrieval and non-verbatim subsets 
+
+We identify 56 GAIA questions that do not require information retrieval and instead mainly involve multi-step reasoning, computation, or direct prob-lem solving. The initial policy solves 5 examples, the RL baseline solves 11, and our method solves 16, corresponding to accuracies of 8.93%, 19.64%, and 28.57%, respectively. We further evaluate 68 examples for which the gold answer does not ap-pear verbatim in any retrieved observation. The initial policy solves 7 examples, while our method solves 21. This result shows that the answer loss remains useful when the agent cannot obtain the answer through direct copying from retrieved text. 
+
+4.6.2 Performence on harder benchmarks 
+
+We evaluate the final evolved agent on BrowseComp-en and BrowseComp-zh with-out benchmark-specific zeroth-order trajectory discovery. As shown in Table 10, our method improves over both the initial policy and RL on the two benchmarks. Together with the non-retrieval and non-verbatim analyses, these results show that the improvement is not limited to direct retrieval on the original evaluation benchmarks. 
+
+4.6.3 Multiple random seeds 
+
+We repeat the main controlled evaluation with five independent random seeds and report the mean, standard deviation, and 95% confidence interval. As shown in Table 11, the gains remain consistent across seeds. We also repeat the Pass@8 trajectory-discovery evaluation and obtain success rates of 
+
+63 .5 ± 0.4% on the training set and 41 .9 ± 0.8% 
+
+on the validation set. 
+
+4.7 Efficiency 
+
+We evaluate the efficiency of the parallel perturba-tion inference and adaptive lookup mechanism. 
+
+Parallel perturbation inference. The maximum trajectory context length is fixed to 20k tokens. We set K = 2 and K = 4 for comparison. We mea-sure the wall-clock time of unperturbed rollout, per-turbed rollout sampling without the parallel mecha-nism, and the perturbed rollout sampling with our parallel mechanism. Results are shown in Table 12. Table 8: Pass@ N (%) on the trajectory-discovery training set and GAIA. 
+
+Split Policy Pass@1 Pass@2 Pass@4 Pass@6 Pass@8 Training Initial policy 22.0 26.9 30.2 32.5 33.5 Ours 53.9 58.5 61.5 63.1 63.8 
+
+GAIA Initial policy 19.6 25.2 28.1 30.1 31.1 RL 25.2 32.0 36.9 36.9 39.8 Ours 28.3 34.9 37.8 39.8 41.7 
+
+Table 9: Low-dimensional analysis of the parameter optimization trajectory. The PCA basis is shared by our method and the matched-budget random-perturbation baseline for each example. 
+
+(a) Shared-PCA projection on a representative difficult example. 
+
+Round Ours Random perturbation PC1 PC2 Answer loss PC1 PC2 Answer loss 0 0.000 0.000 4.333 0.000 0.000 4.333 4 -0.354 0.059 2.541 -0.173 0.314 3.486 8 -1.630 0.526 0.391 0.375 -0.929 6.925 12 -2.819 0.928 0.454 1.339 -1.733 7.376 15 -7.008 1.617 0.024 -0.564 -3.811 5.197 
+
+(b) Aggregate diagnostics over 50 difficult examples. 
+
+Diagnostic Ours Random perturbation Mean answer-loss decrease from round 0 to 15 74.8% 13.4% Checkpoints with loss below the initial value 62.3% 46.3% Mean cosine similarity between consecutive updates 0.85 0.02 Mean trajectory efficiency ∥wR−w0∥2P 
+
+> t∥wt+1 −wt∥2
+
+0.64 0.27 Successful examples after 15 rounds 23 5
+
+Table 10: Results on non-retrieval and non-verbatim GAIA subsets and direct transfer to BrowseComp-en and BrowseComp-zh. The first two rows report accu-racy, and the last two rows report Pass@8. 
+
+Evaluation Initial RL Ours GAIA non-retrieval (56) 8.93 19.64 28.57 
+
+GAIA non-verbatim (68) 10.29 – 30.88 
+
+BrowseComp-en 2.29 3.40 4.11 
+
+BrowseComp-zh 17.64 21.45 23.53 
+
+Table 11: Main results over five independent random seeds. Results are reported as mean ± standard devia-tion with 95% confidence intervals.                     
+
+> Method GAIA (%) WebWalkerQA (%) Initial agent 19 .1±1.9 (16 .8,21 .5) 19 .7±1.9 (17 .3,22 .0)
+> Ours 28 .6±0.6(27 .7,29 .4)28 .3±0.8(27 .3,29 .3)
+
+Results show that parallel perturbation inference reduces the required computational time. Although perturbed sampling is still more expensive than a single unperturbed rollout, the extra cost is much smaller than running each perturbation indepen-dently. This makes multi-direction zeroth-order estimation feasible under limited hardware. 
+
+Table 12: Efficiency of parallel perturbation inference. Sequential time is estimated by multiplying the single-rollout time by K.
+
+K Single Rollout Seq. Estimate Parallel Time Reduction 2 164s 328s 232s 29.3% 4 164s 656s 305s 53.5% 
+
+Adaptive lookup mechanism. We then analyze the time saved by the adaptive lookup mechanism. Since different perturbations often lead to simi-lar search queries or visit overlapping webpages, the lookup pool can reuse previous tool observa-tions. We report the cache hit counts for search 
+
+and visit under different perturbation numbers and optimization rounds. We estimate the saved time using an average latency of 3 seconds for each 
+
+search call and 10 seconds for each visit call. Results are shown in Table 13. Results indicate that adaptive lookup reduces redundant external interactions while preserving exploration. 
+
+5 Conclusion 
+
+We have presented a zeroth-order optimization method for self-evolving LLM agents that enables agents to learn beyond their capability boundaries Table 13: Cache hits and estimated saved time from the adaptive lookup mechanism.                     
+
+> KRounds Search Hits Visit Hits Saved Time 215 46 27 408s 230 78 45 684s 415 86 50 758s 430 150 84 1290s
+
+by perturbing LLM parameters to fit difficult exam-ples. The proposed method computes the losses un-der both perturbed and original parameters, uses the loss difference to estimate gradients, and updates the parameters accordingly. The updated LLM agent is then used to sample trajectories for super-vised fine-tuning, forming a closed self-evolution loop. The introduced adaptive lookup mechanism and parallel perturbation inference mechanism re-duce the time cost of zeroth-order optimization, while the proposed answer perplexity loss provides smooth and stable loss values for zeroth-order gra-dient estimation. Experiments on multiple deep research benchmarks demonstrate that our method obtains substantially more successful trajectories and consistently outperforms strong baselines. The comparison with existing methods demonstrates that our method can break through the inherent capability boundary of the agent itself. 
+
+Limitations 
+
+Currently, we only demonstrate the effectiveness of our method on LLM agents, without extending it to the multimodal domain. In future work, we will further validate the superiority of our method on multimodal agents, following by (Gao et al., 2025; Li et al., 2026a; Gao et al., 2024). 
+
+References 
+
+Emre Can Acikgoz, Cheng Qian, Heng Ji, Dilek Hakkani-Tur, and Gokhan Tur. 2026. Tt-si: Self-improving llm agents with test-time training. In Find-ings of the Association for Computational Linguistics: ACL 2026 , pages 9483–9508. Xiangyi Chen, Sijia Liu, Kaidi Xu, Xingguo Li, Xue Lin, Mingyi Hong, and David Cox. 2019. ZO-AdaMM: Zeroth-order adaptive momentum method for black-box optimization. Advances in neural in-formation processing systems , 32. Yiming Chen, Yuan Zhang, Liyuan Cao, Kun Yuan, and Zaiwen Wen. 2025. Enhancing zeroth-order fine-tuning for language models with low-rank structures. In International Conference on Learning Representa-tions , volume 2025, pages 62581–62607. Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia Chen, Ji-azhen Du, Huiyang Wang, Fuzheng Zhang, Guorui Zhou, Yutao Zhu, Ji-Rong Wen, and Zhicheng Dou. 2026. Agentic reinforced policy optimization. In 
+
+The Fourteenth International Conference on Learn-ing Representations .Tianqing Fang, Hongming Zhang, Zhisong Zhang, Kaixin Ma, Wenhao Yu, Haitao Mi, and Dong Yu. 2025. WebEvolver: Enhancing web agent self-improvement with co-evolving world model. In Pro-ceedings of the 2025 Conference on Empirical Meth-ods in Natural Language Processing , pages 8970– 8986. Zhi Gao, Yuntao Du, Xintong Zhang, Xiaojian Ma, Wen-juan Han, Song-Chun Zhu, and Qing Li. 2024. Clova: A closed-loop visual assistant with tool usage and update. In 2024 IEEE/CVF Conference on Com-puter Vision and Pattern Recognition (CVPR) , pages 13258–13268. IEEE. Zhi Gao, Bofei Zhang, Pengxiang Li, Xiaojian Ma, Tao Yuan, Yue Fan, Yuwei Wu, Yunde Jia, Song-Chun Zhu, and Qing Li. 2025. Multi-modal agent tuning: Building a vlm-driven agent for efficient tool usage. In International Conference on Learning Representa-tions , volume 2025, pages 13354–13385. Zhibin Gou, Zhihong Shao, Yeyun Gong, Yujiu Yang, Nan Duan, Weizhu Chen, and 1 others. 2024. Critic: Large language models can self-correct with tool-interactive critiquing. In International Conference on Learning Representations , volume 2024, pages 57734–57811. Yifu Guo, Jiaye Lin, Huacan Wang, Yuzhen Han, Sen Hu, Ziyi Ni, Licheng Wang, and Mingguang Chen. 2026. SE-agent: Self-evolution trajectory optimiza-tion in multi-step reasoning with llm-based agents. 
+
+Advances in Neural Information Processing Systems ,38:116314–116341. Hongliang He, Wenlin Yao, Kaixin Ma, Wenhao Yu, Hongming Zhang, Tianqing Fang, Zhenzhong Lan, and Dong Yu. 2025. Openwebvoyager: Building multimodal web agents via iterative real-world explo-ration, feedback and optimization. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 27545–27564. Kuan Li, Zhongwang Zhang, Huifeng Yin, Liwen Zhang, Litu Ou, Jialong Wu, Wenbiao Yin, Baixuan Li, Zhengwei Tao, Xinyu Wang, and 1 others. 2025a. WebSailor: Navigating super-human reasoning for web agent. arXiv preprint arXiv:2507.02592 .Pengxiang Li, Zhi Gao, Bofei Zhang, Yapeng Mi, Xiao-jian Shawn Ma, Chenrui Shi, Tao Yuan, Yuwei Wu, Yunde Jia, Song-Chun Zhu, and 1 others. 2026a. It-erative tool usage exploration for multimodal agents via step-wise preference tuning. Advances in Neural Information Processing Systems , 38:59496–59528. Xiaoxi Li, Guanting Dong, Jiajie Jin, Yuyao Zhang, Yu-jia Zhou, Yutao Zhu, Peitian Zhang, and Zhicheng Dou. 2025b. Search-o1: Agentic search-enhanced large reasoning models. In Proceedings of the 2025 Conference on Empirical Methods in Natural Lan-guage Processing , pages 5420–5438. Xiaoxi Li, Jiajie Jin, Guanting Dong, Hongjin Qian, Yongkang Wu, Ji-Rong Wen, Yutao Zhu, and Zhicheng Dou. 2026b. Webthinker: Empowering large reasoning models with deep research capability. 
+
+Advances in Neural Information Processing Systems ,38:120091–120131. Liu Liu, Minhao Cheng, Cho-Jui Hsieh, and Dacheng Tao. 2018a. Stochastic zeroth-order optimization via variance reduction method. In Proceedings of the 35th International Conference on Machine Learning .Sijia Liu, Bhavya Kailkhura, Pin-Yu Chen, Paishun Ting, Shiyu Chang, and Lisa Amini. 2018b. Zeroth-order stochastic variance reduction for nonconvex optimization. Advances in neural information pro-cessing systems , 31. Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, and 1 others. 2023. Self-refine: Iterative refinement with self-feedback. Advances in neural information processing systems , 36:46534–46594. Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D Lee, Danqi Chen, and Sanjeev Arora. 2023. Fine-tuning language models with just forward passes. Advances in Neural Information Processing Systems , 36:53038–53075. Grégoire Mialon, Clémentine Fourrier, Thomas Wolf, Yann LeCun, and Thomas Scialom. 2024. Gaia: a benchmark for general ai assistants. In International Conference on Learning Representations , volume 2024, pages 9025–9049. Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, and 1 others. 2021. Webgpt: Browser-assisted question-answering with human feedback. arXiv preprint arXiv:2112.09332 .Yurii Nesterov and Vladimir Spokoiny. 2017. Ran-dom gradient-free minimization of convex func-tions. Foundations of Computational Mathematics ,17(2):527–566. Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, and 1 others. 2024. Toolllm: Facilitating large language models to master 16000+ real-world apis. In International Conference on Learning Rep-resentations , volume 2024, pages 9695–9717. Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-moyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language models can teach themselves to use tools. Advances in neural information process-ing systems , 36:68539–68551. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, and 1 others. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. Advances in neural information processing systems , 36:8634–8652. Shuang Sun, Huatong Song, Yuhao Wang, Ruiyang Ren, Jinhao Jiang, Junjie Zhang, Fei Bai, Jia Deng, Wayne Xin Zhao, Zheng Liu, Lei Fang, Zhongyuan Wang, and Ji-Rong Wen. 2025. SimpleDeepSearcher: Deep information seeking via web-powered reason-ing trajectory synthesis. In Findings of the Associa-tion for Computational Linguistics: EMNLP 2025 ,pages 13705–13720, Suzhou, China. Association for Computational Linguistics. Tianxiang Sun, Yunfan Shao, Hong Qian, Xuanjing Huang, and Xipeng Qiu. 2022. Black-box tuning for language-model-as-a-service. In International Con-ference on Machine Learning , pages 20841–20855. PMLR. Zhengwei Tao, Ting-En Lin, Xiancai Chen, Hangyu Li, Yuchuan Wu, Yongbin Li, Zhi Jin, Fei Huang, Dacheng Tao, and Jingren Zhou. 2024. A survey on self-evolution of large language models. arXiv preprint arXiv:2404.14387 .Zhengwei Tao, Jialong Wu, Wenbiao Yin, Pu Wu, Junkai Zhang, Baixuan Li, Haiyang SHEN, Kuan Li, Liwen Zhang, Xinyu Wang, Wentao Zhang, Yong Jiang, Pengjun Xie, Fei Huang, and Jingren Zhou. 2026. Webshaper: Agentically data synthesizing via information-seeking formalization. In The Four-teenth International Conference on Learning Repre-sentations .Jialong Wu, Baixuan Li, Runnan Fang, Wenbiao Yin, Liwen Zhang, Zhenglin Wang, Zhengwei Tao, Ding-Chu Zhang, Zekun Xi, Robert Tang, and 1 others. 2026. Webdancer: Towards autonomous information seeking agency. Advances in Neural Information Processing Systems , 38:120957–120985. Jialong Wu, Wenbiao Yin, Yong Jiang, Zhenglin Wang, Zekun Xi, Runnan Fang, Linhai Zhang, Yulan He, Deyu Zhou, Pengjun Xie, and 1 others. 2025. Web-walker: Benchmarking llms in web traversal. In 
+
+Proceedings of the 63rd Annual Meeting of the As-sociation for Computational Linguistics (Volume 1: Long Papers) , pages 10290–10305. Zhiheng Xi, Yiwen Ding, Wenxiang Chen, Boyang Hong, Honglin Guo, Junzhe Wang, Xin Guo, Ding-wen Yang, Chenyang Liao, Wei He, and 1 others. 2025. Agentgym: Evaluating and training large lan-guage model-based agents across diverse environ-ments. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Vol-ume 1: Long Papers) , pages 27914–27961. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing reasoning and acting in language models. In The Eleventh International Conference on Learning Representations .Ding-Chu Zhang, Yida Zhao, Jialong Wu, Liwen Zhang, Baixuan Li, Wenbiao Yin, Yong Jiang, Yu-Feng Li, Kewei Tu, Pengjun Xie, and 1 others. 2025. Evolvesearch: An iterative self-evolving search agent. In Proceedings of the 2025 Conference on Empiri-cal Methods in Natural Language Processing , pages 13134–13147. Yihua Zhang, Pingzhi Li, Junyuan Hong, Jiaxiang Li, Yimeng Zhang, Wenqing Zheng, Pin-Yu Chen, Ja-son D. Lee, Wotao Yin, Mingyi Hong, Zhangyang Wang, Sijia Liu, and Tianlong Chen. 2024. Revisit-ing zeroth-order optimization for memory-efficient LLM fine-tuning: A benchmark. In Proceedings of the 41st International Conference on Machine Learn-ing , volume 235 of Proceedings of Machine Learning Research , pages 59173–59190. PMLR. Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. 2024. Expel: Llm agents are experiential learners. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 38, pages 19632–19642. 
+
+A Responsible Research Considerations 
+
+A.1 Potential Risks 
+
+This work aims to improve the self-evolution capa-bility of LLM agents in deep research settings. Al-though our experiments are conducted in controlled research settings on public benchmarks, stronger autonomous agents may introduce potential risks. First, agents may retrieve, synthesize, or propa-gate inaccurate information from external sources. Second, improved tool-use ability may lead to over-reliance on external search or webpage content without sufficient verification. Third, such agents could potentially be misused for large-scale auto-mated information gathering. We mitigate these risks by focusing on benchmark-based evaluation, using controlled tool environments, and emphasiz-ing that released artifacts are intended for research use. 
+
+A.2 Scientific Artifacts 
+
+This work uses existing scientific artifacts, includ-ing public benchmarks, training data, open-weight model backbones, and baseline methods, for re-search purposes. We cite the creators of the ar-tifacts used in our experiments, including GAIA, WebWalkerQA, WebShaper, ReAct, Qwen back-bones, and related deep-research agent baselines. We use these artifacts in a manner consistent with their intended research use: benchmarks are used for evaluation, training data is used for research training and analysis, and baseline methods are used for comparison. We respect the licenses and terms of use of the artifacts used in this work. For any artifacts created by this work, including sampled trajectories and trained agents, we will release them with appropri-ate documentation and under access and distribu-tion conditions compatible with the licenses and terms of the original artifacts. In particular, deriva-tives of data accessed for research purposes will not be distributed outside research contexts when the original access conditions impose such restrictions. 
+
+A.3 Data Privacy and Offensive Content 
+
+This work does not intentionally collect personally identifying information or offensive content. The experiments are conducted using public research benchmarks and open research datasets. The gener-ated trajectories are produced for research purposes in controlled agent environments. Since deep-research agents may retrieve infor-mation from external web sources during tool use, generated trajectories may occasionally contain sensitive, personally identifying, or offensive con-tent from retrieved webpages. Before releasing any generated trajectories or trained agents, we will conduct filtering and inspection to reduce such risks. This includes removing or anonymizing con-tent that directly identifies private individuals when it is not necessary for the task, and excluding tra-jectories that contain offensive or harmful content unrelated to the benchmark question. Released artifacts will be accompanied by documentation de-scribing their intended research use and any known limitations. 
+
+A.4 Artifact Documentation and Data Statistics 
+
+This work uses and creates scientific artifacts for research on deep-research LLM agents. The exist-ing artifacts used in our experiments include pub-lic benchmarks, training data, open-weight model backbones, and baseline methods. The main eval-uation benchmarks are GAIA and WebWalkerQA. GAIA evaluates general assistant capabilities such as reasoning, browsing, multimodal handling, and tool use. WebWalkerQA focuses on website traver-sal and multi-page information extraction. The training data is constructed from WebShaper QA pairs, which are used for research training and tra-jectory discovery in information-seeking tasks. The artifacts are primarily task-oriented QA and agent-trajectory artifacts. They are not designed to represent demographic groups, and we do not use demographic annotations in our experiments. The work focuses on deep research, web traver-sal, information seeking, reasoning, and tool-use phenomena. The released artifacts created by this work may include sampled high-quality trajectories and trained agents, accompanied by documentation describing their intended research use, data source, filtering procedure, and known limitations. For data statistics, we start from 500 QA pairs from the open-source WebShaper data and filter 304 high-quality QA pairs for training. In our tra-jectory analysis, the baseline model correctly an-swers 67 out of the 304 training examples under Pass@1 and fails on the remaining 237 examples. After training with the proposed zeroth-order op-timization method, the optimized agent correctly answers 164 examples under Pass@1. We evaluate the trained agents on GAIA and WebWalkerQA following the official evaluation protocol. 
+
+A.5 Computational Experiments and Implementation Details 
+
+We conduct computational experiments on deep-research LLM agents. The evaluation benchmarks include GAIA and WebWalkerQA, and the train-ing data is constructed from 304 filtered high-quality QA pairs from WebShaper. We compare our method with ReAct under controlled settings and also report contextual comparisons with ex-isting deep-research agents. We evaluate answer accuracy following the official evaluation protocol of each benchmark. The main model backbones used in our con-trolled experiments are Qwen-3-4B and Qwen-3-8B. All controlled methods use the same backbone family and the same system configuration, includ-ing the search API, webpage parser, decoding set-ting, and tool budget. For zeroth-order optimization, we optimize instance-specific LoRA modules by sampling ran-dom perturbation directions and estimating gradi-ents from answer-loss differences. We evaluate perturbation numbers K = 2 and K = 4 in the ef-ficiency analysis. The maximum trajectory context length is fixed to 20k tokens. The answer perplexity loss is used as the main loss for zeroth-order trajec-tory discovery. For supervised fine-tuning, sampled high-quality trajectories are used as training data for the self-evolved agent. We use existing software packages and tools for model inference, LoRA fine-tuning, benchmark evaluation, search, and webpage parsing. Specifi-cally, we use vLLM for LLM inference, Modified LLaMA-Factory for LoRA-based fine-tuning, and the official evaluation scripts or protocols of GAIA and WebWalkerQA for answer accuracy evalua-tion. We use Google Serper as the search tool and Jina.visit for webpage parsing. All methods in the controlled comparison use the same implementa-tion settings for these tools. The experiments were run on NVIDIA RTX3090 GPUs. The total computational budget was ap-proximately 1152 GPU hours, including zeroth-order trajectory discovery, supervised fine-tuning, and benchmark evaluation. The main training and inference infrastructure consisted of 8 NVIDIA RTX3090 24GB GPUs. We will release additional implementation details with the code and artifacts. We report benchmark accuracies as single-run results unless otherwise specified. For trajectory discovery, we report the number of successful ex-amples under Pass@1. Among the 304 training examples, the baseline model correctly answers 67 examples and fails on 237 examples, while the op-timized agent correctly answers 164 examples. For efficiency analysis, we report rollout wall-clock time, cache hit counts, and estimated saved time. 
+
+A.6 Human Subjects, Consent, and Ethics Review 
+
+This work does not involve human subjects, human participants, crowdworkers, or newly recruited hu-man annotators. We do not conduct user studies, collect human responses, or ask human annotators to label new data. The experiments are conducted using existing public research benchmarks, open research datasets, automatic agent rollouts, and of-ficial evaluation protocols. Because the work does not involve newly re-cruited participants or newly collected personal data requiring participant consent, data consent procedures are not applicable. Similarly, because there is no human-subject data collection protocol, ethics review board approval was not required for this work. 
+
+A.7 Use of AI Assistants 
+
+The authors used AI assistants during the prepa-ration of this paper. AI assistants were only used for language polishing. They were not used to gen-erate scientific claims without author verification. All scientific ideas, experimental designs, analyses, results, and final claims were reviewed, edited, and verified by the authors.
