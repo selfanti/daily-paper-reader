@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 26 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>15</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 21:23:23 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 21:16:12 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦智能体记忆系统，完成26篇论文筛选，其中15篇精读、11篇速读。</p>
-<p>最值得关注的两项发现：借鉴 scrub jay 情景记忆的缓存机制（9.0/10）与层级教师记忆蒸馏方法（9.0/10），均指向高效长期记忆构建。</p>
-<p>建议普通读者优先从“记忆缓存+知识蒸馏”组合入手，可快速提升小型智能体的记忆能力与交互效率。</p>
+<p>今日精读7篇、速读11篇，重点覆盖分布式团队编排与机器人混合学习。最值得关注的是《Distributed Team Orchestration via Supervisor Networks》和《Skills in Weights, Memory in Code》，均获9.0分，前者谈收敛与韧性，后者讲记忆依赖操作。建议下一步深入速读中的多智能体角色分工与轨迹投毒攻击，拓宽安全与协作视野。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">15 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Caching for the Future: Scrub Jay Episodic Memory Principles for Agent Memory Systems">Caching for the Future: Scrub Jay Episodic Memory Principles for Agent Memory Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agent Memory Distillation: Empowering Small LLM Agents with Hierarchical Teacher Memory">Agent Memory Distillation: Empowering Small LLM Agents with Hierarchical Teacher Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="LatticeMind: A Conflict-Aware Memory Primitive for Multi-Agent Systems">LatticeMind: A Conflict-Aware Memory Primitive for Multi-Agent Systems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Distributed Team Orchestration via Supervisor Networks: Convergence, Optimality, and Resilience">Distributed Team Orchestration via Supervisor Networks: Convergence, Optimality, and Resilience</span></li><li><span class="dpr-home-dashboard-paper-title" title="Skills in Weights, Memory in Code: Hybrid Learning for Memory-Dependent Robot Manipulation">Skills in Weights, Memory in Code: Hybrid Learning for Memory-Dependent Robot Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Co-Evolution in Agentic Systems: Toward Self-Directed Evolution Beyond Human Design">Co-Evolution in Agentic Systems: Toward Self-Directed Evolution Beyond Human Design</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>15</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>7</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unified Agent: Managing Interactions across Devices">Unified Agent: Managing Interactions across Devices</span></li><li><span class="dpr-home-dashboard-paper-title" title="Gated-BEPO: Confidence-Gated Bellman Credit Assignment for Large Language Model Agents">Gated-BEPO: Confidence-Gated Bellman Credit Assignment for Large Language Model Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Branch2Skill: Efficient Skill Evolution Through Reasoning Trees">Branch2Skill: Efficient Skill Evolution Through Reasoning Trees</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Query-Only Backdoor Attacks on Self-Evolving Skills via Trajectory Poisoning">Query-Only Backdoor Attacks on Self-Evolving Skills via Trajectory Poisoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MoRSE: Task-Oriented Multi-Agent System with Mixture of Role-Subtask Experts">MoRSE: Task-Oriented Multi-Agent System with Mixture of Role-Subtask Experts</span></li><li><span class="dpr-home-dashboard-paper-title" title="Coordinating the Unknown Lipschitz Constant in Multiplayer Bandits">Coordinating the Unknown Lipschitz Constant in Multiplayer Bandits</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
