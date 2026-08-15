@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-15</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 18 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 21:16:12 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-15 20:53:57 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读7篇、速读11篇，重点覆盖分布式团队编排与机器人混合学习。最值得关注的是《Distributed Team Orchestration via Supervisor Networks》和《Skills in Weights, Memory in Code》，均获9.0分，前者谈收敛与韧性，后者讲记忆依赖操作。建议下一步深入速读中的多智能体角色分工与轨迹投毒攻击，拓宽安全与协作视野。</p>
+<p>今日共处理20篇论文，精读9篇、速读11篇，重点关注智能体技能自动构建与分层自改进方向。</p>
+<p>最值得看的是《SkillSmith》与《Hierarchical Self-Improvement》，均获9.0分，分别聚焦本地智能体技能自动构建演化与任务适配的可进化框架。</p>
+<p>下一步建议优先精读这两篇高分论文，同时可留意速读中的轨迹驱动安全演化（SHE）等方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Distributed Team Orchestration via Supervisor Networks: Convergence, Optimality, and Resilience">Distributed Team Orchestration via Supervisor Networks: Convergence, Optimality, and Resilience</span></li><li><span class="dpr-home-dashboard-paper-title" title="Skills in Weights, Memory in Code: Hybrid Learning for Memory-Dependent Robot Manipulation">Skills in Weights, Memory in Code: Hybrid Learning for Memory-Dependent Robot Manipulation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Co-Evolution in Agentic Systems: Toward Self-Directed Evolution Beyond Human Design">Co-Evolution in Agentic Systems: Toward Self-Directed Evolution Beyond Human Design</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SkillSmith: Enhancing Locally Deployed Agents via Automatic Skill Construction and Evolution">SkillSmith: Enhancing Locally Deployed Agents via Automatic Skill Construction and Evolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hierarchical Self-Improvement: A Framework for Task-Specific Evolvable Agent Harnesses">Hierarchical Self-Improvement: A Framework for Task-Specific Evolvable Agent Harnesses</span></li><li><span class="dpr-home-dashboard-paper-title" title="Is Per-Agent Policy Composition Safe? Rethinking Successor-Feature Transfer in Cooperative Multi-Agent Reinforcement Learning">Is Per-Agent Policy Composition Safe? Rethinking Successor-Feature Transfer in Cooperative Multi-Agent Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>7</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>9</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Query-Only Backdoor Attacks on Self-Evolving Skills via Trajectory Poisoning">Query-Only Backdoor Attacks on Self-Evolving Skills via Trajectory Poisoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MoRSE: Task-Oriented Multi-Agent System with Mixture of Role-Subtask Experts">MoRSE: Task-Oriented Multi-Agent System with Mixture of Role-Subtask Experts</span></li><li><span class="dpr-home-dashboard-paper-title" title="Coordinating the Unknown Lipschitz Constant in Multiplayer Bandits">Coordinating the Unknown Lipschitz Constant in Multiplayer Bandits</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Suffers More Than the Policy Class Under Partial Observability: A Closed-Form Analysis">Learning Suffers More Than the Policy Class Under Partial Observability: A Closed-Form Analysis</span></li><li><span class="dpr-home-dashboard-paper-title" title="SHE: Trajectory-driven Safety Harness Evolution for LLM Agents">SHE: Trajectory-driven Safety Harness Evolution for LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning">Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>

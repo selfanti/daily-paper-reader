@@ -1,0 +1,1605 @@
+MindMemOS: A Portable and Self-Evolving
+Memory Operating Layer for AI Agents
+MindMemOS Team
+Noah’s Ark Lab, Huawei Technologies
+Abstract
+Memory is a core component of AI agents, enabling them to accumulate experience, maintain person-
+alization, and adapt over long-term interactions. However, existing memory systems often remain fixed
+after development, limiting their ability to adapt their memory models, organization strategies, and
+procedural knowledge through continued use. We present MindMemOS, a portable and self-evolving
+memory operating layer that organizes open-world information using a unified entity–property–time
+structure. MindMemOS supports scenario-adaptive memory modeling, higher-order pattern discov-
+ery, autonomous memory refinement, and continuous skill evolution. Its MindMemEvolve algorithm
+employs validation-driven evolutionary search to optimize memory schemas for target scenarios, while
+dreaming consolidates accumulated memories by merging redundant records and resolving conflicts. In
+addition, implicit corrective feedback serves as a human-in-the-loop signal for identifying and revising
+potentially inaccurate or misaligned memories. Its MindSkillEvolve algorithm further transforms agent
+execution trajectories into reusable and progressively refined skills. MindMemOS achieves 94.03% accu-
+racy on LOCOMO and 70.63% on PersonaMem. MindSkillEvolve improves SpreadsheetBench success
+by 9.2 percentage points over the initial-skill baseline.
+https://github.com/mindscale-noah/MindMemOS
+Figure 1: (a) LOCOMO — Overall accuracy (%).
+Gray: baselines.
+Blue: MindMemOS. (b)
+PersonaMem — Overall accuracy (%). (c) Dreaming (GPT-5-mini) — Left: FactConsolidation
+overall accuracy. Right: active memory volume before vs. after dreaming (AMCR 22.5%). (d)
+Skill Evolution — SpreadsheetBench success rate (%).
+arXiv:2608.12428v1  [cs.AI]  12 Aug 2026
+
+
+1
+Introduction
+Large language model (LLM)-based agents are increasingly being integrated into software engineer-
+ing, office productivity, information processing, and other knowledge-intensive workflows. Systems
+such as OpenClaw support task execution on personal computers [22], while coding-agent frame-
+works including Claude Code [2], OpenAI Codex CLI [21], and OpenCode [1] assist users with
+long-horizon software-development tasks. As these agents engage in repeated interactions, they
+must retain user preferences, previously acquired knowledge, task-relevant resources, and proce-
+dural experience beyond the capacity of a single context window.
+Memory therefore serves as
+an external information substrate that supports long-term personalization, knowledge reuse, and
+experience accumulation [12, 4, 36].
+Existing research on agent memory broadly follows two directions: memory models and memory
+systems. Memory models encode retained information within model parameters or latent repre-
+sentations.
+Parameter-based approaches incorporate customized information through adapters,
+fast parameters, or test-time training mechanisms [3, 38, 31], whereas latent-memory approaches
+maintain information in dedicated representation spaces, as exemplified by G-MemLLM [29], Memo-
+ryLLM [28], G-Memory [30], and LatentMem [8]. These approaches can improve memory-dependent
+reasoning, but they commonly rely on model-specific architectures or additional training procedures,
+which may limit their portability across foundation models and agent runtimes. Dynamic mem-
+ory management approaches further optimize organization through meta-evolution, reinforcement
+learning, and skill-based mechanisms [32, 34, 33], but remain tightly coupled to specific training
+curricula or task environments, limiting cross-domain transferability.
+Memory systems instead externalize information into textual or structured stores and use LLM-
+driven workflows for memory extraction, retrieval, and maintenance. Representative systems in-
+clude Mem0 [5], memU [20], Zep [25], Mirix [27], MemOS [17], EverOS [10], MemBrain [6] and
+VikingMem [7]. Some systems primarily emphasize the extraction and retrieval of factual memo-
+ries, while experience-oriented approaches such as ExpeL [37] and SCOPE [23] focus on summarizing
+reusable task knowledge or optimizing procedural guidance. These systems have demonstrated the
+practical value of external memory, but their memory extraction policies, modeling structures, and
+organization strategies are often configured for particular scenarios and remain largely fixed after
+deployment [35].
+This rigidity creates three challenges. First, an unstructured memory representation may be
+portable but provide limited support for fine-grained organization and temporal reasoning, whereas
+a manually designed schema can capture scenario-specific information but requires substantial adap-
+tation when the target domain changes. Second, continuously accumulated memories may contain
+redundancies, outdated information, and conflicting statements, requiring systematic maintenance
+beyond online extraction and retrieval [15, 16]. Third, memory content and procedural skills are
+often managed separately, making it difficult to transform accumulated execution experience into
+reusable and progressively refined agent capabilities.
+To address these challenges, we present MindMemOS, a portable and self-evolving mem-
+ory operating layer for AI agents. MindMemOS models open-world information using a unified
+entity–property–time structure that supports both modeling-free and schema-guided memory gen-
+eration. A compact search module retrieves information through hybrid sparse–dense matching
+and bidirectional traversal over entity, property, relational, and temporal associations. On top of
+this representation, MindMemOS introduces four complementary evolution mechanisms. Mind-
+MemEvolve uses validation-driven evolutionary search to adapt memory schemas to target sce-
+narios and discover task-relevant first-order and higher-order properties. Dreaming consolidates
+accumulated memories during offline periods by merging redundant records, resolving conflicts,
+2
+
+
+and preserving provenance, while Feedback incorporates users’ corrective signals to identify and
+revise potentially inaccurate or misaligned memories. MindSkillEvolve further converts agent
+execution trajectories into reusable skill updates through unsupervised or score-guided refinement.
+Our main contributions are as follows:
+1. Scenario-Adaptive Memory Modeling.
+We introduce an entity–property–time mem-
+ory structure that organizes factual, relational, profile, and temporal information within a
+unified representation. The same system supports both open-domain vanilla ingestion and
+schema-guided extraction, allowing memory modeling to be adapted without changing the
+surrounding agent interface.
+2. Active Memory Pattern Discovery. We propose MindMemEvolve, an LLM-guided evo-
+lutionary search algorithm that optimizes memory schemas using task-specific evaluation
+signals. Through error-informed mutation, exploratory mutation, crossover, and selection,
+it adapts entity and property definitions and discovers higher-order patterns relevant to the
+target scenario.
+3. Continuous Memory Refinement. We introduce dreaming to consolidate accumulated
+memories during offline periods by merging redundant records, resolving conflicts, and pre-
+serving provenance. Complementarily, explicit and implicit feedback mechanisms use users’
+corrective signals to identify and revise potentially inaccurate or misaligned memories while
+distinguishing transient task corrections from durable memory updates.
+4. Experience-Driven Skill Evolution. We introduce MindSkillEvolve, which continuously
+refines skills from accumulated usage experience.
+It analyzes agent execution trajectories
+to identify effective strategies and recurring failures, transforming them into versioned skill
+updates through unsupervised or score-guided evolution.
+2
+System Overview
+2.1
+System Architecture
+As shown in Figure 2, MindMemOS adopts a layered architecture that decouples agent integration,
+memory algorithms, and memory structure (modeling and storage). At its foundation, the memory
+structure layer organizes memory modeling management, memory storage and skills. Built on this
+representation, the memory algorithm layer supports the complete memory lifecycle: MindVanilla
+policy and MindSchema policy, compact graph-based retrieval, feedback- and dreaming-driven qual-
+ity optimization, and trajectory-driven skill evolution.
+The agent and application layer expose these capabilities through a unified service abstraction,
+allowing MindMemOS to flexibly integrate with diverse agent frameworks via FastAPI-based HTTP
+APIs, SDKs, CLI commands, OpenClaw plugins or Skills while continuously optimizing memory
+content independently of the application runtime.
+3
+
+
+Figure 2: System architecture of MindMemOS.
+2.2
+Scenario-Adaptive Memory Modeling
+Memory modeling forms the foundation of the memory system, defining the data structures and
+associated algorithms for add, search, and related operations.
+As described in Section 1, our
+design adopts scenario-adaptive memory modeling to organize open-world textual information into
+structured representations tailored to the target scenario.
+Our memory model comprises three modeling dimensions:
+4
+
+
+Figure 3: The 3D memory structure of MindMemOS, organized along the entity, property, and
+time dimensions.
+Three-dimensional Memory Structure.
+Our memory system organizes memories in a three-
+dimensional (3D) graph defined by entity, property, and time, thereby constructing and maintaining
+an information-grounded virtual representation of the real world. Each memory record is associated
+with an entity, a property describing a specific attribute or aspect of that entity, and a temporal
+reference indicating when the information holds or was observed.
+The graph further captures
+semantic relations among entities and temporal relations among successive records associated with
+the same entity–property pair. Together, these relational and temporal links support traceable
+navigation across interconnected entities and evolving information.
+Entity Dimension.
+The entity dimension identifies the subject described by a memory, such as
+a person, organization, location, event, or artifact. Entities serve as anchors for organizing informa-
+tion collected from different conversations, documents, and interactions. Relations between entities
+capture semantic connections such as participation, ownership, location, or social relationships.
+Property Dimension.
+The property dimension specifies the particular attribute or aspect of an
+entity described by a memory, such as a preference, activity, experience, relationship, or behavioral
+pattern. Under scenario-adaptive memory modeling, the set of properties is not restricted to a
+fixed universal schema; instead, property definitions can be adapted to the information needs of the
+target scenario. Properties may represent either explicit facts derived from individual observations
+or higher-order patterns synthesized across multiple observations.
+Temporal Dimension.
+The temporal dimension represents when information is valid, observed,
+or recorded. A temporal memory record binds an entity and a property to a specific content item
+and its temporal reference. Successive records associated with the same entity–property pair form a
+5
+
+
+timeline, enabling the system to represent updates, changing preferences, and potentially conflicting
+versions without overwriting their historical context.
+3
+Algorithm
+Building on the 3D memory structure, this section presents the core algorithms of MindMemOS,
+including two memory generation algorithms, compact retrieval, dreaming- and feedback-based
+memory refinement, offline memory self-evolution, and trajectory-driven skill evolution.
+3.1
+Memory-Add: MindVanilla
+Turn-Aware Input Processing.
+MindVanilla generation processes dialogue and free-form text
+without relying on a predefined entity–property schema. It groups messages into turns based on
+conversational roles and temporal gaps, packs complete turns into token-bounded chunks, and
+compacts overlength turns when necessary. Each extractable message is normalized and linked to
+a source reference that preserves its role, timestamp, and original position.
+Recall-Aware Memory Extraction.
+For each chunk, the system retrieves related active mem-
+ories through content-hash matching, entity overlap when available, and BM25 retrieval, with
+candidates combined using weighted reciprocal rank fusion. The extractor receives a structured
+envelope that separates extractable evidence from contextual information: only the former may
+support new memory content, while history and recalled memories are used for disambiguation,
+duplicate detection, and conflict assessment. The resulting memories are represented as flat records
+and assigned coarse semantic types, such as profile, fact, episodic memory, tool trace, experience,
+or skill candidate.
+Deduplication and Action Planning.
+Candidates produced across all chunks are dedupli-
+cated by content hash and memory type. After resolving their source references, a deterministic
+safety gate validates the candidates and maps them to Add, Reinforce, Update, Merge, or
+Skip. Accepted operations are vectorized as needed and stored together with their provenance and
+memory-relation links.
+3.2
+Memory-Add: MindSchema
+We further elaborate on the dynamic generation process of the 3D memory structure based on entity
+modeling. As illustrated in Figure 4, the memory generation pipeline comprises the following steps:
+6
+
+
+Figure 4: MindSchema memory generation pipeline: episode segmentation, memory generation,
+entity fusion, and graph merge, guided by memory modeling.
+Episode Segmentation.
+We employ an LLM-based memory segmenter to partition the message
+list received into complete sub-topic episodes. In synchronous mode, the entire message list from
+current memory-add requests is segmented directly. In asynchronous mode, messages first accumu-
+late in a buffer until a topic shift is detected, forming a complete episode. It enables continuous
+accumulation and autonomous segmentation of memories, independent of message role transitions
+or session boundaries.
+Memory Generation.
+When a memory-add request arrives, the system first maps the dialogue
+to the entity and property types defined in the scenario-adaptive memory schema. It then extracts
+the corresponding entity instances and property values from the source messages, resolving temporal
+expressions into absolute timestamps when sufficient temporal evidence is available. These outputs
+form the memory subgraph for the current episode. In addition, the system creates an episodic
+entity for each episode as a fallback representation for contextual information not captured by the
+schema-defined properties.
+Entity Fusion.
+The system uses the current memory subgraph as a query to retrieve related
+memories and candidate matching entities from the memory store. It then resolves entity equiva-
+lence and merges each matched entity instance with its existing representation. The fusion process
+may update entity descriptions, insert or revise property values along their timelines, consolidate
+overlapping values, and mark outdated values as expired. If the scenario-adaptive schema defines
+higher-order properties for the entity type, the system additionally synthesizes these properties
+from relevant historical memories, such as the user’s decision-making style or risk propensity.
+Graph Merge.
+The system attempts to fuse the memory subgraph with the existing memory
+graph to form an updated memory graph. Through node merging (entity fusion above) and new
+entity edge relationship formation, the memory subgraph is ultimately merged and updated into
+the complete 3D memory structure, forming a structurally identical but information-enriched and
+refreshed memory graph.
+7
+
+
+3.3
+Compact Search
+We design a compact search module to improve retrieval coverage through multi-path traversal.
+Here, compact refers to restricting traversal to task-relevant entity, property, relational, and tem-
+poral associations rather than exhaustively expanding the memory graph. The overall search pro-
+cedure is illustrated in Figure 5.
+Figure 5: Compact search architecture: an outer agentic layer orchestrates an inner tool layer with
+bidirectional multi-path graph search over the 3D memory structure.
+Overall Architecture.
+The engine consists of an outer agentic layer for search planning and an
+inner tool layer for managing different search engines.
+Agentic Search Planning.
+An LLM-based controller performs iterative retrieval planning. At
+each step, it determines the relevant temporal scope and memory types, formulates search queries,
+invokes retrieval tools, and assesses whether the collected evidence is sufficient.
+Based on this
+assessment, the controller either refines the retrieval plan or terminates the search.
+Hybrid Bidirectional Graph Retrieval.
+The inner retrieval engine combines sparse lexical
+matching based on BM25 with dense semantic matching based on an embedding model, and fuses
+their ranked results using reciprocal rank fusion (RRF). This hybrid strategy is shared by the Mind-
+Vanilla and MindSchema search tools. Over the 3D memory structure, the engine supports both
+forward traversal, which retrieves entities before selecting their relevant properties, and reverse
+traversal, which retrieves property-level memory records before tracing them to their associated
+entities. Results from both directions are deduplicated and organized into an entity-centered rep-
+resentation with the corresponding properties. Retrieved memories may be extended temporally
+through predecessor and successor property versions and relationally through associated entities.
+Relational expansion is optional and disabled in agentic mode to limit the retrieval scope during
+targeted multi-turn search.
+Retrieval Key Augmentation.
+To improve fine-grained entity matching, an entity description
+can also be decomposed into multiple search fields, each representing a distinct retrieval aspect.
+8
+
+
+These fields are matched independently against the query, and the highest field-level score is used
+as the entity score, improving access to fine-grained evidence while preserving entity-level context.
+3.4
+Dreaming
+Figure 6: Dreaming workflow in MindMemOS.
+Dreaming is the offline consolidation mechanism of MindMemOS. Online memory generation prior-
+itizes the timely capture of useful facts and episodes, but incremental writes may leave redundant,
+overlapping, outdated, or conflicting records. Dreaming reorganizes these accumulated memories
+after interaction, reducing the maintenance burden on the online generation path.
+Entity-Centered Scope Construction.
+A dreaming run begins by selecting unconsolidated
+add records within a configurable lookback window.
+Each selected record serves as a seed for
+constructing a local consolidation scope: the system retrieves active memories associated with the
+same entity and groups them into an entity-centered cluster. This strategy confines consolidation
+to recently affected neighborhoods of the memory graph, avoiding both global comparison and
+isolated pairwise processing.
+Issue Detection and Action Planning.
+Each cluster is processed through a two-stage detect-
+then-act procedure. The first LLM call identifies focused issue groups involving conflicts, duplica-
+tion, complementary fragments, low-value content, or ambiguous relationships. These groups are
+validated for subject consistency and sufficient evidence before further processing. The second LLM
+call converts each validated issue into a conservative mutation plan that may create a consolidated
+memory, update or merge existing records, archive obsolete information, or add explicit relational
+links. When entity identity, relational structure, or temporal order is uncertain, the planner favors
+non-destructive updates or links over archival.
+Traceable Memory Consolidation.
+The resulting mutation plan is applied through the stan-
+dard memory write interface.
+Newly created or merged memories receive updated vectors and
+provenance links to their supporting records; where applicable, timeline edges connect successive
+versions within the same entity–property scope. After successful processing, the corresponding add
+records are marked as consolidated to prevent repeated handling in subsequent runs. Through this
+traceable process, dreaming can reduce redundancy, resolve conflicts, and preserve the lineage of
+consolidated information.
+9
+
+
+3.5
+Feedback
+Feedback provides an interaction-driven mechanism for converting corrective user signals into struc-
+tured memory-maintenance actions. MindMemOS supports two complementary modes. Explicit
+feedback is directed at the memory system and specifies what should be corrected, whereas implicit
+feedback is inferred from corrections originally addressed to the task-performing agent. Both modes
+operate over relevant interaction context and candidate memories, but differ in how corrective evi-
+dence is obtained.
+Figure 7: Feedback workflow in MindMemOS.
+Explicit Feedback.
+Explicit feedback allows users to revise stored memories through natural-
+language corrections rather than direct database manipulation. It takes the feedback statement,
+the relevant conversation context, and the initially retrieved memories as input. The conversa-
+tion context helps disambiguate the correction target and distinguish durable information from
+instructions, while the retrieved memories provide candidate records for inspection and modifi-
+cation.
+When these candidates are insufficient to support a reliable decision, the planner may
+rewrite the feedback and its context into a search query, perform one supplemental MindVanilla
+search, and merge the retrieved records with the original candidates by memory ID. Based on the
+resulting evidence, the planner generates an add, update, delete, or no-op action and applies it
+through the shared memory-mutation interface. Corrections that are relevant only to the current
+task are excluded from durable storage, reducing the risk of propagating temporary instructions
+into long-term memory.
+Implicit Feedback.
+In many interactions, users correct the task-performing agent rather than
+explicitly requesting a memory update. Such corrections may reveal inaccurate assumptions, revised
+preferences, rejected recommendations, or previously unstated constraints. Although these signals
+can be valuable for future interactions, they are easily lost after the current session because they
+are embedded in ordinary dialogue and may not directly reference any stored memory. Implicit
+feedback is designed to identify these corrective signals and selectively convert them into memory-
+maintenance actions, thereby reducing the recurrence of previously corrected behaviors.
+The process runs asynchronously over recent session activity. It first compacts multi-turn inter-
+actions into semantically coherent rounds and detects correction signals from the user’s responses
+10
+
+
+to the agent’s outputs. Each signal is then classified according to its persistence scope as task-
+temporary, scenario-specific, or long-term. Task-temporary signals apply only to the current task
+and are not stored as new durable memories, although they may be used to correct or remove
+memories that have incorrectly retained one-off information. Scenario-specific signals are retained
+together with explicit applicability conditions, while long-term signals capture durable facts, prefer-
+ences, or behavioral constraints that may generalize across future interactions. For each actionable
+signal, the system gathers relevant candidate memories and plans an add, update, delete, or no-
+op operation. This persistence-aware process reduces the risk of either discarding useful corrections
+or overgeneralizing transient feedback into unconditional long-term memory.
+3.6
+MindMemEvolve: Validation-Driven Self-Evolution of Memory Schemas
+Figure 8: Overview of MindMemEvolve.
+The core advantage of the memory modeling schema lies in its adaptability across scenarios, en-
+abled by modular and configurable definitions of entities, first-order properties, and higher-order
+properties. This explicit representation makes the schema itself a natural target for optimization.
+To exploit this, we introduce MindMemEvolve, a self-evolution mechanism that automatically
+adapts an existing memory schema to a new target scenario.
+In MindMemEvolve, the memory modeling schema is optimized with a training set D =
+{(contexti, qi, ai)}N
+i=1, where contexti denotes the context associated with the QA pair, qi a
+user query, and ai the reference answer. Note that different qi may share the same context, i.e.,
+contexts can be the same across samples. Let S denote the candidate memory modeling schema
+11
+
+
+being optimized. The optimization objective is to find the schema S that maximizes the Judge
+score:
+S∗= arg max
+S
+1
+N
+N
+X
+i=1
+Judge
+
+ai, LLM
+
+qi, MindMemOSsearch(qi; S)
+
+MindMemOSadd(contexti; S)
+
+.
+(1)
+where Judge(a, ˆa) ∈[0, 1] measures the correctness of the generated answer ˆa with respect to
+the reference answer a. In each evaluation episode, MindMemOSadd(contexti; S) first processes
+contexti under schema S and writes structured memory entries (entities, properties, relationships)
+into the memory store. Given the query qi, the search module MindMemOSsearch(qi; S) retrieves a
+set of relevant memories. The retrieved memories are then provided to the LLM together with qi
+to generate the answer ˆai.
+Since S is a discrete structured object, Eq. (1) defines a non-differentiable optimization problem.
+We adopt an LLM-guided evolutionary algorithm as a heuristic solver. The algorithm operates for
+E epochs, each consisting of U steps that iterate over distinct clusters of the training set, yielding
+H = E · U cumulative training steps. We index epochs by e ∈[1, E], steps within an epoch by
+u ∈[1, U], and cumulative steps by t = (e −1) · U + u, with t ∈[1, H].
+Let the population size be K. Denote the j-th individual at cumulative step t as St,j (t ∈
+[1, H], j ∈[1, K]). The initial schema S0 is obtained either from a manually authored template or
+from an LLM-generated draft. The algorithm proceeds as follows:
+Step 1 — Initialization. The first population {S1,1, . . . , S1,K} is produced by applying random
+mutations to the initial schema S0, yielding K diversified individuals.
+Step 2 — Fitness Evaluation. At cumulative step t (epoch e, cluster u), for each individual St,j
+we instantiate a sandboxed MindMemOS instance with a clean memory store, ingest the contexts
+of the u-th cluster under schema St,j, and compute the fitness score f(St,j) by evaluating Eq. (1)
+on the QA pairs belonging to that cluster.
+Step 3 — Reproduction. The top α fraction of individuals (the elite) are preserved unchanged.
+The remaining (1 −α)K slots are filled by offspring produced through the following pipeline:
+1. Parent selection. 2(1 −α)K parents are drawn via tournament selection (with possible
+duplicates).
+2. Induced mutation. The LLM analyzes error cases from the parent’s evaluation, identifies
+information gaps, and proposes new entities or properties, or refines descriptions of existing
+ones.
+3. Random mutation. (a) The LLM proposes plausible entity types and property types for
+the target scenario, which are injected into the schema; (b)entities and properties whose
+frequency falls within the bottom 20% are pruned with probability pprune.
+4. Crossover. One parent serves as the base schema; entities and properties from the other
+parent that substantially differ from the base are inserted with probability pcross.
+The resulting K individuals form the population for step t + 1, denoted {St+1,1, . . . , St+1,K}.
+Within an epoch, if u < U, the algorithm advances to the next cluster and returns to Step 2. When
+u = U, the epoch completes; if t < H, a new epoch begins at u = 1 and the clusters are iterated
+over anew.
+12
+
+
+Step 4 — Selection (Step H + 1). After H training steps, all K individuals from the final
+population are evaluated on the training set. The individual with the highest fitness is selected as
+the approximately optimal schema:
+S∗≈arg max
+j∈[1,K] f(SH+1,j),
+(2)
+where SH+1,j denotes the j-th individual evaluated on the training set after step H.
+The key insight of MindMemEvolve is that mutation operators are not purely random but are
+LLM-informed: induced mutation leverages the Judge’s error signal to perform targeted schema
+repair, while random mutation and crossover explore the schema space guided by the LLM’s prior
+knowledge of the target domain.
+3.7
+MindSkillEvolve: Trajectory-Driven Skill Evolution
+Figure 9: Skill registration and MindSkillEvolve workflow in MindMemOS.
+Skill Registry and Lifecycle.
+MindMemOS provides cloud-edge collaborative lifecycle man-
+agement of skills. The MindMemOS client is responsible for user-side skill registration, metadata
+collection, version synchronization, and rollback, while the cloud service provides centralized stor-
+age for skill content, maintains version chains, synchronizes skills across devices, and preserves
+historical version records. Through the SDK, a user can register a local skill by loading its content
+and collecting metadata such as its logical path, alias, content hash, and base version. The client
+then synchronizes the skill content and associated version metadata with the cloud service. For
+each registered skill, the cloud-side store maintains a version chain that supports historical version
+retrieval, rollback, and consistent skill states across devices, agents, and runtime environments.
+MindSkillEvolve.
+MindSkillEvolve, the skill-evolution algorithm in MindMemOS, is driven by
+real agent execution trajectories. MindMemOS reuses the Memory Add interface to collect task
+execution processes and provides SDK hooks through which different agent harnesses can attach
+skill context to each trajectory. The SDK hook layer is responsible for locating the skills loaded
+during the trajectory and matching them against registered skill versions, allowing MindMemOS
+13
+
+
+to bind each trajectory to the specific skill versions it exercised. This design decouples MindSkillE-
+volve from how the underlying agent retrieves, loads, or executes skills, allowing it to adapt to
+different runtime patterns for skill usage. When MindSkillEvolve is triggered, the system collects
+unconsumed trajectories under the same skill version and aggregates them in chronological order.
+Each trajectory is first transformed into an evidence-driven analysis that preserves information
+relevant to skill improvement, including the task objective, execution process, key turning points,
+skill effectiveness, tool usage patterns, and final outcome.
+Once the accumulated number of trajectories reaches a threshold, the system aggregates a batch
+of trajectory analyses, generates a skill-oriented improvement plan, and then uses an LLM to convert
+the plan into concrete edit operations on the SKILL. These edit operations are deterministically
+applied to the current skill content, producing a new cloud-side skill version.
+MindSkillEvolve has two variants. MindSkillEvolve-Unsup relies solely on trajectory analy-
+ses to identify recurring successful strategies, failure patterns, and missing guidance. MindSkill-
+Evolve-Sup additionally uses trajectory scores as supervision signals to reinforce behaviors that
+consistently appear in high-scoring trajectories and suppress recurring errors found in low-scoring
+trajectories.
+4
+Evaluation and Experiments
+4.1
+Dialogue-Centric Evaluation
+We evaluate MindMemOS on the two commonly used long-term-memory benchmarks in memory
+systems: LOCOMO, which assesses information extraction, effective recall, and simple deriva-
+tive reasoning over multi-memory associations; and PersonaMem, which examines user profiling,
+preference analysis, and style-aware personalized recommendation. We compare two MindMemOS
+configurations—MindVanilla, a fast mode with dense/sparse retrieval, and MindSchema, a
+higher-accuracy schema-guided mode with scenario-adaptive memory modeling —against strong,
+competitive baselines including Mem0 [5], memU [20], MemOS [17], and EverOS [10].
+LOCOMO.
+LOCOMO [19] contains 10 long multi-session dialogues (averaging 300+ turns across
+up to 35 sessions) with 1,986 annotated questions across ten conversations, of which we focus on
+the four main reasoning types aligned with common research works [10]. Following the evalua-
+tion protocol of EverOS [10], we report per-category QA Accuracy (%) across four reasoning
+types—Single-hop, Multi-hop, Temporal, and Open-domain—along with the Overall accu-
+racy. The answer model is gpt-4.1-mini. Baseline results for Mem0, memU, Zep, MemOS, and
+EverOS are cited from the EverOS paper; our experimental configuration, including the LLM driv-
+ing the memory system, the embedding and reranking model, the answer model, and the judge
+model, is fully aligned with the EverOS default implementation. Results are shown in Figure 10
+and Table 1. MindSchema achieves the highest overall accuracy (94.03), ahead of EverOS (93.05)
+and Zep (85.22), with particular strength in Single-hop (96.79) and Multi-hop (93.97) reasoning.
+Notably, MindSchema achieves the highest Open-domain score (82.29) among all methods. Mind-
+Vanilla (87.60) already outperforms MemOS (80.76) and Zep (85.22) by a clear margin, demonstrat-
+ing that even the vanilla mode without modeling guidance provides competitive memory quality.
+Open-domain remains the most challenging category across all methods and is further influenced
+by the reasoning capability of the underlying answer model.
+14
+
+
+Figure 10: Overall accuracy comparison on LOCOMO. Baselines in gray, MindMemOS variants in
+blue.
+Table 1: LOCOMO — Effectiveness. Per-category QA Accuracy (%).
+Method
+Single-hop
+Multi-hop
+Temporal
+Open-domain
+Overall
+Mem0
+68.97
+61.70
+58.26
+50.00
+64.20
+memU
+74.91
+72.34
+43.61
+54.17
+66.67
+MemOS
+85.37
+79.43
+75.08
+64.58
+80.76
+Zep
+90.84
+81.91
+77.26
+75.00
+85.22
+EverOS
+96.67
+91.84
+89.72
+76.04
+93.05
+MindVanilla
+92.03
+85.82
+83.80
+66.67
+87.60
+MindSchema
+96.79
+93.97
+90.34
+82.29
+94.03
+PersonaMem.
+PersonaMem [14] is a long-range personalization benchmark comprising 20 differ-
+ent personas with alternating question answering. We retain the same experimental configuration
+as LOCOMO, except that the entity modeling (entity modeling.json) is designed around the
+user as the central entity and provides additional higher-order properties (see our code repository
+for details). Baseline methods are evaluated with local deployments of their open-source code-
+bases, running under the same model configurations. We report per-category Accuracy (%)
+across seven query types—Recall Sha. (recalling user-shared facts), Recall Mem. (recalling
+facts mentioned by the user), Track Evo. (tracking full preference evolution), Revisit (revis-
+iting reasons behind preference updates), Suggest (suggesting new ideas), Recom. (providing
+preference-aligned recommendations), and General. (generalizing to new scenarios)—along with
+the Overall accuracy. To ensure clarity regarding the evaluation metrics, we explicitly map the
+abbreviated query types used in our results to their corresponding definitions in the dataset. Specifi-
+cally, Revisit corresponds to the task of recalling the reasons behind previous updates. MindSchema
+15
+
+
+achieves the best overall accuracy (70.63), a gain of 3.06 percentage points over EverOS (67.57),
+driven primarily by improvements in Recall Sha. (81.40 vs. 74.42) and Suggest. (47.31 vs. 35.48).
+MindVanilla also achieves a high 67.74 overall, validating the effectiveness of the vanilla mem-
+ory path even without explicit modeling guidance. Because the Recall Mem. category contains
+only 17 questions, a difference of one or two correct answers can produce a substantial change in
+category-level accuracy.
+Table 2: PersonaMem — Effectiveness. Per-category Accuracy (%).
+Method
+Recall
+Sha.
+Recall
+Mem.
+Track
+Evo.
+Revisit
+Suggest
+Recom.
+General.
+Overall
+Mem0
+46.51
+41.18
+65.47
+90.91
+12.90
+34.55
+43.86
+51.61
+memU
+64.34
+64.71
+66.20
+87.88
+31.18
+67.27
+84.21
+65.70
+MemOS
+53.49
+82.35
+66.91
+79.80
+41.94
+69.09
+75.44
+63.67
+EverOS
+74.42
+64.71
+64.03
+85.86
+35.48
+65.45
+84.21
+67.57
+MindVanilla
+76.74
+88.24
+65.47
+87.88
+17.20
+80.00
+82.46
+67.74
+MindSchema
+81.40
+64.71
+64.75
+82.83
+47.31
+76.36
+73.68
+70.63
+Figure 11: Overall accuracy comparison on PersonaMem. Baselines in gray, MindMemOS variants
+in blue.
+4.2
+Dreaming Evaluation
+We evaluated our dreaming algorithm on MemoryAgentBench [11]. It is designed to evaluate mem-
+ory agents, i.e., agent systems that incrementally store, update, and retrieve long-term information
+rather than consuming the entire context as a single static input. It organizes memory evaluation
+around four competencies: accurate retrieval, test-time learning, long-range understanding, and
+selective forgetting. This setting is well aligned with our evaluation because the agent receives
+information in temporal order and must maintain an effective memory state across updates. In
+16
+
+
+Table 3: Average FactConsolidation accuracy and active memory compression ratio (AMCR) before
+and after dreaming.
+Single-Hop
+Multi-Hop
+Overall
+Method
+Accuracy
+AMCR
+Accuracy
+AMCR
+Accuracy
+AMCR
+gpt-4o-mini
+Mem0
+0.180
+–
+0.020
+–
+0.100
+–
+MemoRAG
+0.270
+–
+0.070
+–
+0.170
+–
+HippoRAG-v2
+0.540
+–
+0.050
+–
+0.295
+–
+MindVanilla
+0.635
+–
+0.118
+–
+0.377
+–
+MindVanilla + Dreaming
+0.738
+21.4%
+0.180
+19.4%
+0.459
+20.4%
+gpt-5-mini
+Infini Memory
+0.800
+–
+0.220
+–
+0.510
+–
+MindVanilla
+0.900
+–
+0.190
+–
+0.545
+–
+MindVanilla + Dreaming
+0.920
+23.5%
+0.250
+21.5%
+0.585
+22.5%
+particular, we use the FactConsolidation subset for selective forgetting, where an original fact is
+followed later by a contradictory rewritten fact. The benchmark treats the later fact as the valid
+memory and asks questions that require the agent to answer according to the final consolidated
+state. Thus, success on this subset requires not only retrieving relevant memories, but also re-
+solving conflicts between outdated and newer information. We evaluate both single-hop (SH) and
+multi-hop (MH) variants across four context scales: 6k, 32k, 64k, and 262k.
+Experimental Setup
+For each dataset split, we first construct memory with the MindVanilla
+algorithm and then evaluate question answering before and after running dreaming. The retrieval
+setting uses the fast search strategy with top-k = 50. We report MindMemOS with gpt-4o-mini
+and gpt-5-mini using chunk size 4096, matching the settings used by the corresponding baseline
+memory systems. To isolate whether dreaming can resolve memory conflicts internally, timestamps
+are removed from the retrieved context during evaluation.
+Experimental Results
+Following the official MemoryAgentBench evaluation protocol, Table 3
+reports the average Substring Exact Match (SubEM) accuracy across the four context scales. The
+active memory compression ratio (AMCR) denotes the fraction of active memories moved to the
+archive during dreaming. The Mem0 [5], MemoRAG [24], and HippoRAG-v2 [9] results are taken
+from MemoryAgentBench [11] as reference, and we additionally compare against the hybrid retrieval
+variant of Infini Memory [13] under gpt-5-mini. For gpt-4o-mini, dreaming improves the average
+single-hop accuracy from 0.635 to 0.738, the average multi-hop accuracy from 0.118 to 0.180, and the
+overall accuracy from 0.377 to 0.459, with AMCR values of 21.4%, 19.4%, and 20.4%, respectively.
+For gpt-5-mini, dreaming further improves the average single-hop accuracy from 0.900 to 0.920,
+the average multi-hop accuracy from 0.190 to 0.250, and the overall accuracy from 0.545 to 0.585,
+with corresponding AMCR values of 23.5%, 21.5%, and 22.5%.
+After dreaming, MindMemOS
+also outperforms Infini Memory on single-hop (0.920 vs. 0.800), multi-hop (0.250 vs. 0.220), and
+overall accuracy (0.585 vs. 0.510). These results show that dreaming consistently improves memory
+accuracy while compressing roughly one fifth of active memories, indicating that consolidation can
+reduce memory redundancy without degrading retrieval quality. A concrete example of this conflict
+resolution process is discussed in Section 5.1.
+17
+
+
+Table 4: Results of MindSkillEvolve on SpreadsheetBench. Success rates are reported as the mean
+± standard deviation over three runs.
+Method
+Success Rate
+Agent Tokens
+Evolve Tokens
+No-skill
+51.3 ± 0.8
+10.4M
+-
+Init-skill
+48.0 ± 1.4
+16.9M
+-
+MindSkillEvolve-Unsup.
+55.3 ± 0.9
+27.3M
+5.8M
+MindSkillEvolve-Sup.
+57.2 ± 2.4
+25.2M
+5.5M
+4.3
+Skill Evolution Evaluation
+Experimental Setup
+We evaluate MindSkillEvolve in a realistic client-cloud setting: the client
+executes real tasks in the user’s local environment, while the cloud aggregates reported traces to
+improve the skill. In other words, MindMemOS performs delayed batch evolution and synchronizes
+the evolved skill back to the client for subsequent tasks.
+We instantiate this evaluation on SpreadsheetBench-Verified1, a 400-task verified subset of
+SpreadsheetBench [18]. Each task pairs a natural-language instruction with an initial workbook
+and a golden workbook for automatic verification. The subset contains 275 cell-level manipulation
+tasks and 125 sheet-level manipulation tasks, covering operations such as finding, extracting, sum-
+ming, highlighting, removing, modifying, counting, deleting, calculating, and displaying spreadsheet
+content.
+We compare four settings: No-skill, where the agent solves tasks without an external skill;
+Init-skill, where the agent uses the initial spreadsheet skill from SkillGrad [26]2 without evolution;
+MindSkillEvolve-Unsup., where evolution uses only execution traces; and MindSkillEvolve-
+Sup., where task scores are additionally used as supervision signals. Table 4 reports the success
+rate, the consumption of agent tokens and the consumption of evolution tokens in three repeated
+runs. In our experiments, an evolution cycle is triggered every 40 tasks executed, with trajectories
+grouped into batches of eight tasks.
+Experimental Results
+The results show that skill evolution consistently improves task success
+rate over both no-skill execution and the unevolved initial skill. MindSkillEvolve-Unsup. improves
+success rate from 51.3% to 55.3%, indicating that execution traces alone already provide useful
+signals for refining procedural spreadsheet knowledge.
+MindSkillEvolve-Sup.
+further improves
+success rate to 57.2% by incorporating task scores as supervision.
+Notably, Init-skill performs
+worse than No-skill, which is consistent with the observation in SkillGrad [26]: an unoptimized
+initial skill may introduce misleading procedures or unnecessary constraints before it is adapted to
+the target task distribution.
+5
+Case Studies
+5.1
+Dreaming
+We examine a representative case from the MemoryAgentBench [11] conflict-resolution benchmark.
+This benchmark evaluates whether a memory system can update its effective belief state when a
+1https://huggingface.co/datasets/KAKA22/SpreadsheetBench/blob/main/spreadsheetbench_verified_
+400.tar.gz
+2https://github.com/wwwhy725/SkillGrad/blob/main/seeds/xlsx/SKILL.md
+18
+
+
+newer memory contradicts an earlier one. The benchmark defines the most recently ingested fact
+as the ground truth, even when that fact conflicts with real-world knowledge. For the query What
+is Nobuhiro Watsuki famous for?, the dataset expects The Fairly OddParents under its temporal
+ordering. Before dreaming, the answer model instead returned Rurouni Kenshin; after dreaming,
+it returned the expected answer. The case therefore tests temporal memory consolidation rather
+than factual recall from the base language model.
+Figure 12: Conceptual overview of the dreaming pipeline.
+Before dreaming, conflicting active
+memories can be retrieved together. Dreaming detects the conflict within an entity-centered scope,
+archives the superseded memory, and records a supersedes relation so that subsequent retrieval
+returns an unambiguous active context.
+Memory state before dreaming.
+The left panel of Figure 12 shows the accumulated memory
+state before dreaming. The entity nobuhiro watsuki is connected to three active memories through
+MENTIONS edges. Two of them form the relevant conflict for the query: M1 states that Nobuhiro
+Watsuki is famous for The Fairly OddParents, while M2 states that he is famous for Rurouni
+Kenshin. Both memories assert the same predicate, “is famous for,” but provide different objects.
+M3 is also connected to the same entity, but it describes a different relation and should not compete
+as an answer candidate for this query. When the query was executed against this state, retrieval
+returned both M1 and M2. Because the retrieved context did not expose an explicit consolidation
+decision, the answer model selected Rurouni Kenshin, which matches real-world knowledge but is
+incorrect under the benchmark’s temporal ordering.
+Dreaming consolidation.
+The middle panel of Figure 12 summarizes the offline dreaming pro-
+cess. Dreaming starts from recently written or unconsolidated memories and expands over MENTIONS
+edges to form an entity-centered scope. In this case, the scope contains the conflicting pair M1–M2
+together with the non-conflicting same-entity memory M3.
+19
+
+
+The first LLM pass performs relation detection and recognizes that M1 and M2 are competing
+answers to the same question: what Nobuhiro Watsuki is famous for. M3 is left outside the issue
+group because it describes a different relation rather than an alternative answer to this query.
+The second LLM pass performs action planning. Since M1 was ingested later than M2, the planner
+applies the benchmark’s temporal supersede rule and selects M1 as the authoritative active memory.
+The resulting consolidation plan sets M2’s status to archived, creates a RELATED TO [supersedes]
+edge from M1 to M2, and preserves consolidation provenance by linking the action to the source
+add records. The right panel of Figure 12 shows the consolidated state: M1 remains active, M2
+is archived, and the dashed supersedes edge records that the newer memory replaces the earlier
+conflicting memory.
+Retrieval outcome.
+After dreaming, the same query was re-executed. Because archived mem-
+ories are excluded from active retrieval, the answer model received only one active candidate for
+the “famous for” predicate: M1, which states that Nobuhiro Watsuki is famous for The Fairly
+OddParents. Other retrieved memories, such as M3, may still be present through the shared entity,
+but they describe different relations and do not directly answer the query. With the conflicting
+earlier fact removed from the active context, the answer model produced The Fairly OddParents,
+matching the benchmark ground truth. This case illustrates the main benefit of dreaming: the
+system does not rely on the answer model to compare timestamps or resolve contradictions during
+generation. Instead, temporal conflict resolution is converted into persistent memory state—an
+archived node plus a typed supersedes edge—so ordinary retrieval returns a cleaner context for
+this query.
+5.2
+Feedback
+We examine a PersonaMem [14] feedback-consistency item whose query asks: She has a free Sat-
+urday afternoon and wants a little social time without draining herself. Which invitation would she
+be most likely to say yes to? Option A is an impromptu one-on-one thrift-store browse and coffee
+with no fixed end time and an easy exit if she gets tired. Option B is a relaxed board-game after-
+noon with two or three friends. The ground truth is Option A. Using memories generated by the
+MindVanilla memory-add pipeline, the answer model incorrectly selects Option B; after feedback,
+it selects the correct Option A.
+Conversation evidence and feedback.
+The history shows that the user still wants social
+connection but prefers low-pressure, adjustable, and less group-intensive activities. For example,
+she says, “If she asked me to just get tea one-on-one, I’d probably feel relieved. The big dinner
+is what feels impossible.” She also notes that answering “maybe” and deciding at the last minute
+increases her anxiety and may appear flaky. The durable preference is therefore flexibility with a
+clear, manageable plan, rather than indiscriminately delaying decisions:
+The user prefers low-pressure, adjustable social activities; compared with group gatherings, one-
+on-one plans with an easy exit are more manageable when her energy drops.
+The user’s concern about appearing unreliable or uncaring applies specifically when explaining or
+modifying plans with friends. Feedback therefore generates a conditioned communication memory
+without making the underlying social preference scenario-specific:
+When helping the user explain social-planning preferences to friends, frame the need as a pref-
+erence for flexible, low-pressure activities, not as unreliability or lack of care.
+20
+
+
+Figure 13: Feedback enriches the top-10 retrieval context and shifts the answer from Option B to
+the ground-truth Option A.
+Changes in top-10 retrieval.
+In the MindVanilla top-10, the most relevant memories state:
+The user has been wanting to meet more people and get out of the house more.
+The user wants a simple weekend planning system that still feels flexible.
+These memories capture social interest and flexibility separately, but do not clearly specify the
+preferred social format. The model consequently selects Option B, a relaxed but still group-based
+activity.
+After feedback, the top-10 contains the new communication memory together with more specific
+evidence, including:
+The user feels overwhelmed by constant group chats and social plans locked in days ahead, and
+would rather leave room to adjust.
+When helping the user decline or modify social plans, be warm and clear rather than leaving the
+decision as a vague “maybe.”
+Together, these memories provide a clearer decision boundary: the user wants social connection, but
+prefers one-on-one, low-pressure, adjustable, and easy-to-exit activities. Option A satisfies these
+conditions, whereas Option B remains group-based. The answer therefore changes from B to A,
+moving question-level correctness from 0 to 1. This single case illustrates the retrieval mechanism
+but does not by itself establish an aggregate benchmark gain.
+5.3
+MindMemEvolve
+We evaluate MindMemEvolve on the PersonaMem benchmark introduced in Section 4.1. For this
+experiment, we first cluster the dialogue sessions by semantic similarity and randomly select 12
+clusters, comprising 196 QA pairs, as the training set. The remaining 393 QA pairs constitute
+the test set. To isolate the effect of MindSchema and MindMemEvolve, we disable the episodic
+fallback mechanism and the default catch-all property, restricting memory extraction to schema-
+defined entities and properties. This ablation necessarily yields a lower pass rate than the full
+MindMemOS configuration.
+Bootstrap schema.
+The bootstrap schema S0 is a minimal manually-authored template: a
+single user entity with one static property (name) and two dynamic properties—mood feature
+(inferred emotional state) and habit feature (inferred behavioral pattern). Despite its simplicity,
+this design is sufficiently expressive to seed the evolutionary process.
+21
+
+
+Evolution setup and results.
+MindMemEvolve runs for 5 epochs with 12 steps per epoch (one
+per cluster), using a population size of K = 10. On the training set, the bootstrap schema achieves
+60.20% accuracy; the best-evolved schema after epoch 5 reaches 64.28%.
+Best schema selection is based solely on training-set fitness. On the held-out test set of 393
+QA pairs, the bootstrap schema achieves 61.07%, while the best-evolved schema attains 64.63%—
+a gain of 3.56 percentage points. These results demonstrate modest but consistent improvement
+together with reasonable generalization. The limited margin is partly attributable to PersonaMem’s
+reliance on inferential reasoning rather than pure historical information analysis; We are actively
+seeking more sensitivity-demanding scenarios to better elucidate the method’s potential. Figure 14
+summarizes these findings.
+Figure 14: Training and test pass rates of MindMemEvolve on PersonaMem.
+Key evolved properties.
+The evolved schema expands its dynamic properties from 2 to 49,
+each targeting a narrow facet of user modeling. Two first-order properties and two higher-order
+properties are listed below to illustrate the mechanism.
+First-order properties capture concrete episodes and explicit facts: activity participation record
+documents the user’s engagement in specific routine activities with full contextual detail (activity
+name, date, location, companions, role, outcome), and creative cultural activity decision record
+tracks explicit decisions to start, join, pause, or quit creative or cultural pursuits. These replace
+the monolithic habit feature of S0, whose unstructured text field conflated participation facts
+with activity preferences and creative decisions.
+Higher-order properties synthesize recurring patterns across multiple first-order observa-
+tions. social energy management style captures the user’s enduring pattern for regulating so-
+cial exposure, solitude, and recovery time—a trait that no single episode can reveal but that
+strongly informs personalized recommendations. novelty seeking tendency aggregates evidence
+across domains (learning, leisure, travel, food) into a stable cross-situational tendency. This first-
+order versus higher-order distinction emerges autonomously during evolution: properties requiring
+multi-episode synthesis are automatically assigned order = 2 through mutation operations, without
+manual annotation.
+The full baseline and evolved schemas are provided in Appendix A.
+5.4
+Skill Evolution
+We compare the skill optimization results produced by MindMemOS on SpreadsheetBench. This
+case study focuses on two contrasts: the difference between the original skill and self-evolved skills,
+22
+
+
+and the difference between unsupervised and supervised self-evolution. In the prompts, red marks
+rules introduced by self-evolution relative to the original skill; in the supervised prompt, blue further
+marks rules that appear only after supervised evolution, beyond the unsupervised version.
+Original skill.
+The original skill only provides basic openpyxl and pandas usage and a small
+number of generic cautions. It tells the agent how to open, edit, and save a workbook, but it does not
+cover the failure modes that appear most often in SpreadsheetBench: formulas are not recalculated
+by openpyxl, ws.max row can be inflated by formatted empty rows, reading and writing on a live
+worksheet can move rows or overwrite source data, and the saved workbook must be reopened and
+verified in the same mode used by evaluation.
+Unsupervised self-evolved skill.
+Unsupervised evolution uses execution traces but not task
+scores. Its changes mainly come from repeated workflow failures: the agent writes formulas and
+assumes that wb.save() has produced computed results; it treats formula text as numeric values;
+it reads and writes on a live worksheet during filtering, lookup, sorting, deletion, or expansion
+tasks; and it only checks whether the script ran successfully instead of reopening the output file for
+verification. Compared with the original skill, the unsupervised version distills these experiences
+into more concrete operational constraints, highlighted in red.
+Supervised self-evolved skill.
+Supervised evolution additionally uses task scores, so it not
+only summarizes recurring trace patterns but also separates rules that prevent task failures from
+rules that may damage user intent.
+Compared with the unsupervised version, the supervised
+version emphasizes two boundaries. The first is the boundary between formulas and hardcoded
+values, which prevents the skill from sacrificing explicitly requested reusable formulas merely to
+pass cached-value evaluation. The second is the semantic confirmation boundary before writing,
+which requires multiple concrete examples to confirm source columns, target columns, grouping
+structure, or mapping relations in complex spreadsheets. In this prompt, red denotes evolved rules
+shared with the unsupervised prompt, while blue denotes supervised-only additions.
+Case analysis.
+From the original skill to unsupervised self-evolution, the main change is a shift
+from tool API instructions to executable error-avoidance rules. The red rules directly correspond to
+failures that recur in spreadsheet tasks: empty formula caches, formatted rows that inflate max row,
+row movement on live worksheets that causes skipped or duplicated writes, merged cells that cannot
+be assigned directly, and missing post-save verification. In other words, unsupervised signals are
+already sufficient to summarize local failures in trajectories into general operational constraints.
+From unsupervised to supervised evolution, the change is not simply that more rules are added;
+rather, the rules become more bounded. After observing task scores, the supervised version avoids
+overgeneralizing “literal values are easier to pass cached-value checks” into “all formulas should
+be hardcoded.” It therefore adds blue supervised-only rules such as preserve reusable formulas,
+distinguish formula-text grading from saved-value grading, and state materialization limitations. At
+the same time, it strengthens the pre-write check from a generic “inspect workbook” instruction into
+confirm mappings with at least two concrete source-to-target examples, and it expresses dangerous
+operations as Blacklisted behavior. This suggests that supervised signals mainly help the skill learn
+when to apply a rule, when to stop, and how to avoid sacrificing user intent for local scoring gains.
+The full skill contents for all three versions are provided in Appendix B.
+23
+
+
+6
+Conclusion and Future Work
+6.1
+Conclusion
+Memory is an important infrastructure component for persistent context management, personaliza-
+tion, and agent adaptation. In this work, we presented MindMemOS, a portable and self-evolving
+memory operating layer that integrates scenario-adaptive memory modeling, memory generation
+and retrieval, offline consolidation, and feedback-driven correction within a shared memory lifecy-
+cle. MindMemEvolve adapts memory schemas using task-specific validation signals, while Mind-
+SkillEvolve transforms accumulated execution trajectories into progressively refined and versioned
+skills.
+Through scenario-adaptive modeling and compact agentic search, MindMemOS achieves
+state-of-the-art performance under the reported evaluation protocols, particularly on multi-hop
+questions that require synthesizing evidence distributed across multiple memories. Dreaming and
+feedback further support the consolidation, correction, and traceable maintenance of accumulated
+information. Evaluations across dialogue memory, personalization, memory consolidation, and task
+execution, together with representative case studies, demonstrate the effectiveness of MindMemOS
+under the evaluated settings.
+6.2
+Future Work
+In future work, we will focus on the following directions:
+Experience-to-Skill Evolution.
+Future work will further connect experiential memory with the
+skill system by synthesizing execution trajectories, tool-use records, failures, and user corrections
+into reusable skills.
+These skills can be continuously validated and refined based on execution
+outcomes, improving task success and knowledge transfer across related tasks.
+File-System-Level Memory Management.
+We also plan to incorporate files and documents
+as first-class memory artifacts, linking their content, metadata, versions, and provenance to the
+memory structure.
+This extension will support incremental indexing, cross-file reasoning, and
+traceable updates between source files and derived memories.
+7
+Author Contributions
+Author List.
+Kaichao Liang1, Yuqi Cui1, Hao Kong1, Xinyuan Huang1, Guohaotian Hou1, Qing-
+can Kang1, Liang Chen1, Yiyang Yin1, Ke Ye1, Jiaquan Guo1, Da Chen1, Xinduo Liu1, Lingan
+Zeng1, Yixing Peng1, Rong Yao1, Shixiong Kai1,*, Mingxuan Yuan1,*.
+1Noah’s Ark Lab, Huawei Technologies. *Project Leader. Corresponding author
+Division of Work.
+• MindSchema: Kaichao Liang, Yiyang Yin.
+• Scenario-Adaptive Memory Modeling: Kaichao Liang.
+• Prototype: Kaichao Liang, Yiyang Yin, Qingcan Kang, Lingan Zeng, Yixing Peng.
+• MindVanilla: Hao Kong, Liang Chen.
+• Dreaming & Feedback: Yuqi Cui, Xinyuan Huang, Guohaotian Hou.
+24
+
+
+• MindSkillEvolve: Yuqi Cui, Ke Ye.
+• Product Design & Engineering: Yuqi Cui, Kaichao Liang, Hao Kong, Xinyuan Huang,
+Guohaotian Hou, Qingcan Kang, Liang Chen, Yiyang Yin, Ke Ye, Jiaquan Guo, Da Chen,
+Xinduo Liu, Lingan Zeng, Yixing Peng, Rong Yao.
+• Technical Leads: Shixiong Kai, Mingxuan Yuan.
+25
+
+
+References
+[1] AnomalyCo. OpenCode. https://github.com/anomalyco/opencode, 2026.
+[2] Anthropic. Claude Code. https://docs.anthropic.com/en/docs/claude-code/overview,
+2025.
+[3] Ali Behrouz, Meisam Razaviyayn, Peilin Zhong, and Vahab Mirrokni. Nested Learning: The
+Illusion of Deep Learning Architectures. In Advances in Neural Information Processing Systems
+38 (NeurIPS 2025), 2025.
+[4] Alexander Bering. ZenBrain: A Neuroscience-Inspired 7-Layer Memory Architecture for Au-
+tonomous AI Systems. https://arxiv.org/abs/2604.23878, 2026.
+[5] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0:
+Building Production-Ready AI Agents with Scalable Long-Term Memory. https://arxiv.
+org/abs/2504.19413, 2025.
+[6] FeelingAI Team. MemBrain: Agent-Native Memory for AI Agents. https://github.com/
+feelingai-team/MemBrain, 2026.
+[7] Jiajie Fu, Junwen Chen, Mengzhao Wang, Aoxiang He, Maojia Sheng, Xiangyu Ke, Yifan Zhu,
+and Yunjun Gao. VikingMem: A Memory Base Management System for Stateful LLM-based
+Applications. https://arxiv.org/abs/2605.29640, 2026.
+[8] Muxin Fu, Guibin Zhang, Xiang Xue, Yifan Li, Zhen He, Sheng Huang, Xiang Qu, Yiran
+Cheng, and Yibo Yang. LatentMem: Customizing Latent Memory for Multi-Agent Systems.
+https://arxiv.org/abs/2602.03036, 2026.
+[9] Bernal Jim´enez Guti´errez, Yiheng Shu, Weijian Qi, Sizhe Zhou, and Yu Su. From RAG to
+Memory: Non-Parametric Continual Learning for Large Language Models. https://arxiv.
+org/abs/2502.14802, 2025.
+[10] Chuanrui Hu, Xingze Gao, Zuyi Zhou, et al. EverMemOS: A Self-Organizing Memory Oper-
+ating System for Structured Long-Horizon Reasoning. https://arxiv.org/abs/2601.02163,
+2026.
+[11] Yuanzhe Hu, Yu Wang, and Julian McAuley. Evaluating Memory in LLM Agents via In-
+cremental Multi-Turn Interactions. In The Fourteenth International Conference on Learning
+Representations, 2026.
+[12] Wei-Chieh Huang, Weizhi Zhang, Ying Liang, et al.
+Rethinking Memory Mechanisms of
+Foundation Agents in the Second Half: A Survey.
+https://arxiv.org/abs/2602.06052,
+2026.
+[13] Suozhao Ji, Baodong Wu, Zehao Wang, Lei Xia, Qingping Li, Ruisong Wang, Wenbo Ding,
+Zhenhua Zhu, Boxun Li, Guohao Dai, and Yu Wang. Infini Memory: Maintainable Topic
+Documents for Long-Term LLM Agent Memory. https://arxiv.org/abs/2606.10677, 2026.
+[14] Bowen Jiang, Zhuoqun Hao, Young-Min Cho, Bryan Li, Yuan Yuan, Sihao Chen, Lyle Ungar,
+Camillo J. Taylor, and Dan Roth.
+Know Me, Respond to Me: Benchmarking LLMs for
+Dynamic User Profiling and Personalized Responses at Scale. https://arxiv.org/abs/2504.
+14225, 2025.
+26
+
+
+[15] Qingcan Kang, Mingyang Liu, Shixiong Kai, Kaichao Liang, Zhentao Tang, Yuqi Cui, Tao
+Zhong, and Mingxuan Yuan. Retain or Consolidate? Budget-Dependent Operator Selection
+for Language Agent Memory. https://arxiv.org/abs/2607.17545, 2026.
+[16] Qingcan Kang, Liu Mingyang, Shixiong Kai, Kaichao Liang, Tao Zhong, and Mingxuan Yuan.
+Learning What to Remember: Observability-Safe Memory Retention via Constrained Opti-
+mization for Long-Horizon Language Agents. https://arxiv.org/abs/2606.10616, 2026.
+[17] Zhiyu Li, Chenyang Xi, Chunyu Li, et al. MemOS: A Memory OS for AI System. https:
+//arxiv.org/abs/2507.03724, 2025.
+[18] Zeyao Ma, Bohan Zhang, Jing Zhang, Jifan Yu, Xiaokang Zhang, Xiaohan Zhang, Sijia Luo,
+Xi Wang, and Jie Tang. SpreadsheetBench: Towards Challenging Real World Spreadsheet
+Manipulation. arXiv preprint arXiv:2406.14991, 2024.
+[19] Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Francesco Barbieri, Yuwei Fang, and
+Mohit Bansal. Evaluating Very Long-Term Conversational Memory of LLM Agents. https:
+//arxiv.org/abs/2402.17753, 2024.
+[20] NevaMind-AI. memU: Your Personal Memory, Across Every Agent. https://github.com/
+NevaMind-AI/memU, 2025.
+[21] OpenAI. OpenAI Codex CLI. https://github.com/openai/codex, 2025.
+[22] OpenClaw Team.
+OpenClaw: An Open Platform for AI Agent Task Execution.
+https:
+//docs.openclaw.ai/, 2026.
+[23] Zehua Pei et al.
+SCOPE: Prompt Evolution for Enhancing Agent Effectiveness.
+https:
+//arxiv.org/abs/2512.15374, 2025.
+[24] Hongjin Qian, Zheng Liu, Peitian Zhang, Kelong Mao, Defu Lian, Zhicheng Dou, and Tiejun
+Huang. MemoRAG: Boosting Long Context Processing with Global Memory-Enhanced Re-
+trieval Augmentation. In Proceedings of the ACM on Web Conference 2025, pages 2366–2377,
+2025.
+[25] Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, and Daniel Chalef. Zep:
+A Temporal Knowledge Graph Architecture for Agent Memory. https://arxiv.org/abs/
+2501.13956, 2025.
+[26] Hanyu Wang, Yifan Lan, Bochuan Cao, Lu Lin, and Jinghui Chen. SkillGrad: Optimizing
+Agent Skills Like Gradient Descent. https://arxiv.org/abs/2605.27760, 2026.
+[27] Yu Wang, Xi Chen, Ryuichi Takanobu, Zhenyu Liang, et al. Mirix: Multi-Agent Memory
+System for LLM-Based Agents. https://arxiv.org/abs/2507.07957, 2025.
+[28] Yu Wang, Yifan Gao, Xiusi Chen, Haoming Jiang, Shiyang Li, Jingfeng Yang, Qingyu Yin,
+Zheng Li, Xian Li, Bing Yin, Jingbo Shang, and Julian McAuley. MemoryLLM: Towards
+Self-Updatable Large Language Models. In Proceedings of the 41st International Conference
+on Machine Learning (ICML), 2024.
+[29] Xun Xu. G-MemLLM: Gated Latent Memory Augmentation for Long-Context Reasoning in
+Large Language Models. https://arxiv.org/abs/2602.00015, 2026.
+27
+
+
+[30] Guibin Zhang, Muxin Fu, Guancheng Wan, Miao Yu, Kun Wang, and Shuicheng Yan. G-
+Memory: Tracing Hierarchical Memory for Multi-Agent Systems. In Advances in Neural In-
+formation Processing Systems (NeurIPS), Spotlight, 2025.
+[31] Guibin Zhang, Muxin Fu, and Shuicheng Yan. MemGen: Weaving Generative Latent Memory
+for Self-Evolving Agents. In The Fourteenth International Conference on Learning Represen-
+tations (ICLR), 2026.
+[32] Guibin Zhang, Haotian Ren, Chong Zhan, Zhenhong Zhou, Junhao Wang, He Zhu, Wangchun-
+shu Zhou, and Shuicheng Yan.
+MemEvolve: Meta-Evolution of Agent Memory Systems.
+https://arxiv.org/abs/2512.18746, 2025. Accepted at ICML 2026.
+[33] Haozhen Zhang, Quanyu Long, Jianzhu Bao, Tao Feng, Weizhi Zhang, Haodong Yue, and
+Wenya Wang.
+MemSkill: Learning and Evolving Memory Skills for Self-Evolving Agents.
+https://arxiv.org/abs/2602.02474, 2026.
+[34] Shengtao Zhang, Jiaqian Wang, Ruiwen Zhou, Junwei Liao, Yuchen Feng, Zhuo Li, Yujie
+Zheng, Weinan Zhang, Ying Wen, Zhiyu Li, Feiyu Xiong, Yutao Qi, Bo Tang, and Muning Wen.
+MemRL: Self-Evolving Agents via Runtime Reinforcement Learning on Episodic Memory.
+https://arxiv.org/abs/2601.03192, 2026.
+[35] Xing Zhang, Guanghui Wang, Yanwei Cui, Wei Qiu, Ziyuan Li, Bing Zhu, and Peiyang
+He. Experience Compression Spectrum: Unifying Memory, Skills, and Rules in LLM Agents.
+https://arxiv.org/abs/2604.15877, 2026.
+[36] Zeyu Zhang, Quanyu Dai, Xiaohe Bo, Chen Ma, Rui Li, Xu Chen, Jieming Zhu, Zhenhua
+Dong, and Ji-Rong Wen. A Survey on the Memory Mechanism of Large Language Model-
+based Agents. ACM Transactions on Information Systems, 2025.
+[37] Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang.
+ExpeL: LLM Agents Are Experiential Learners. In Proceedings of the AAAI Conference on
+Artificial Intelligence, volume 38, pages 19632–19642, 2024.
+[38] Tianyu Zhao and Llion Jones.
+Fast-weight Product Key Memory.
+arXiv preprint
+arXiv:2601.00671, 2026.
+28
+
+
+A
+Schema Definitions for MindMemEvolve Case Study
+Baseline Schema (S0)
+Baseline Schema S0 (2 dynamic properties)
+{
+"entity type":
+"user",
+"entity instruction":
+"Two kinds of properties:
+XXX event / XXX record = [Factual
+Record]; XXX feature = [Analytical Summary].
+Infer implicit attitudes from behavioral
+signals.",
+"static property":
+{ "name":
+"User name or identifier" },
+"dynamic property":
+{
+"first order":
+[
+"mood feature",
+"habit feature"
+]
+}
+}
+Evolved Schema (S∗)
+Evolved Schema S∗— 49 dynamic properties
+{
+"entity type":
+"user",
+"entity instruction":
+"Maintain exactly one user entity per conversation.
+Properties are
+divided into first order (single-episode facts) and higher order (cross-episode syntheses).
+Every property value must be an atomic, evidence-grounded, semantically complete
+sentence.",
+"static property":
+{ "name":
+"User name or identifier" },
+"dynamic property":
+{
+// --- First-order:
+single-episode facts (41 properties) ---
+"first order":
+[
+"activity participation record",
+"creative cultural activity decision record",
+"participation format preference feature",
+"activity fit preference feature",
+"explicit preference transition record",
+"shared activity transition record",
+"leisure environment fit feature",
+"recommendation relevance profile feature",
+"engagement reward driver feature",
+"domain social exchange orientation feature",
+"pursuit engagement record",
+"interest engagement trajectory record",
+29
+
+
+"narrative interpretive engagement feature",
+"pursuit engagement lifecycle record",
+"creative format transition record",
+"participation role comfort feature",
+"pursuit lifecycle record",
+"supportive discussion norm preference feature",
+"learning engagement preference feature",
+"expressive processing fit feature",
+"creative life feature",
+"learning format affinity feature",
+"peer learning collaboration record",
+"creative structure spontaneity fit feature",
+"creative workflow preference feature",
+"learning preference feature",
+"narrative media self reflection feature",
+"learning method trial record",
+"contextual interpretive analysis feature",
+"feedback motivation sensitivity feature",
+"creative project record",
+"expressive feedback impact record",
+"creative critique orientation feature",
+"knowledge sharing initiative record",
+"informational learning impact record",
+"information response record",
+"information effect record",
+"personal health status record",
+"child development guidance motivation feature",
+"residence situation record",
+"work education status record"
+],
+// --- Higher-order:
+cross-episode syntheses (8 properties) ---
+"higher order":
+[
+"social energy management style",
+"novelty seeking tendency",
+"commitment sustainability pattern",
+"self reflection orientation",
+"decision making style",
+"resilience adaptation pattern",
+"autonomy orientation",
+"generativity orientation"
+]
+}
+}
+30
+
+
+B
+Full Skill Contents for Skill Evolution Case Study
+This appendix provides the complete skill contents referenced in the Skill Evolution case study
+(Section 5.4). Text in red marks rules introduced by self-evolution relative to the original skill; in
+the supervised prompt, blue further marks rules that appear only after supervised evolution.
+Initial Skill for SpreadsheetBench
+—
+name: xlsx
+description: Use this skill whenever the user wants to do anything with Excel spreadsheet files (.xlsx, .xls,
+.csv). This includes reading data, writing formulas, manipulating cells, formatting, filtering, creating
+charts, pivot tables, and any spreadsheet automation tasks.
+—
+# Excel Spreadsheet Processing
+Use ‘openpyxl‘ to read and write .xlsx files.
+## Quick Start
+“‘python
+from openpyxl import load workbook
+wb = load workbook(”input.xlsx”)
+ws = wb[”Sheet1”]
+value = ws[”A1”].value
+ws[”B2”] = 42
+ws[”C2”] = ”=SUM(A2:B2)”
+wb.save(”output.xlsx”)
+“‘
+Use this for direct cell edits, formula updates, and simple workbook changes.
+## Reading Data with pandas
+“‘python
+import pandas as pd
+df = pd.read excel(’file.xlsx’) # First sheet
+all sheets = pd.read excel(’file.xlsx’, sheet name=None) # All sheets as dict
+“‘
+## Common Pitfalls
+- **Cell indices are 1-based**: ‘ws.cell(row=1, column=1)‘ is A1.
+- **‘data only=True‘ destroys formulas on save**: Use a separate workbook object for reading calculated
+values.
+- **‘ws.max row‘ overcounts**: May include formatted-but-empty rows. Scan the column to find the last
+non-empty cell when you need the true data range.
+Evolved Skill by MindMemOS-unsup
+—
+name: xlsx
+description: Use this skill whenever the user wants to do anything with Excel spreadsheet files (.xlsx, .xls,
+.csv). This includes reading data, writing formulas, manipulating cells, formatting, filtering, creating
+charts, pivot tables, and any spreadsheet automation tasks.
+—
+# Excel Spreadsheet Processing
+Use ‘openpyxl‘ to read and write .xlsx files.
+If the workbook will be judged from saved/cached values, write computed literal values in Python. Only
+write formulas when you know Excel will recalculate them on open. Never assume wb.save() computes
+formulas.
+31
+
+
+High-risk action: do not silently replace a user-requested reusable formula with hardcoded values unless the
+task is explicitly graded from saved cached values or recalculation is unavailable.
+- **High-risk action: do not leave formula cells as the only source of truth when the workbook will be
+checked from saved/displayed values.** If you cannot guarantee recalculation on open, compute the result
+in Python and write literal values instead.
+If the task will be judged from the saved workbook’s displayed/cached values, write the final computed
+value directly into the cell. After saving, reopen with ‘data only=True‘ to confirm the stored value is
+present.
+## Quick Start
+“‘python
+from openpyxl import load workbook
+wb = load workbook(”input.xlsx”)
+ws = wb[”Sheet1”]
+value = ws[”A1”].value
+ws[”B2”] = 42
+ws[”C2”] = ”=SUM(A2:B2)”
+wb.save(”output.xlsx”)
+“‘
+Use this for direct cell edits, formula updates, and simple workbook changes.
+High-risk action: do not mutate openpyxl style objects in place; create a new ‘PatternFill‘/‘Border‘ or
+‘copy()‘ the style, then assign it back to the cell.
+For filtering, lookup, mapping, row moves, deduping, or sorting, first read the full source table into Python,
+confirm headers and the true data extent, compute the result in memory, and write once.
+If source cells may contain formulas, read them in two separate passes: one normal load for formula text,
+and one ‘data only=True‘ load for cached results. Never use the same ‘.value‘ as both a formula string and
+a computed input.
+Do not replace a requested dynamic spreadsheet behavior with one-off hardcoded outputs; this can make
+current cells look correct but break the workbook when inputs change.
+- **For deletions, insertions, row duplication, or ”expand each row” tasks, read the full source rows into
+Python, compute the transformed table in memory, then clear and rewrite the destination range once.**
+## Before Editing
+- **Before writing into a target range, inspect ‘ws.merged cells.ranges‘.** Never assign to a merged
+placeholder cell (‘MergedCell‘).
+- Do not rely on ‘ws.max row‘ when empty formatted rows may exist. Scan upward from the bottom to
+find the last row with any non-empty relevant cell.
+- If the target sheet, range, or transformation pattern is not fully explicit, do a read-only inspection pass
+first and confirm the real data extent, headers, and any example mappings before writing.
+- After saving, reopen the file twice when needed: once normally to confirm formulas/styles, and once with
+‘data only=True‘ to confirm displayed values.
+## Common Pitfalls
+- **Cell indices are 1-based**: ‘ws.cell(row=1, column=1)‘ is A1.
+- **‘data only=True‘ destroys formulas on save**: Use a separate workbook object for reading calculated
+values.
+- **Never treat a formula cell’s ‘.value‘ as a plain literal when the workbook contains formulas.**
+- Do not trust ‘ws.max row‘ alone. To find the real data extent, scan upward from the bottom until the
+last row with any non-empty cell.
+- If the task includes formatting or structural edits, verify those changes with a normal workbook reload;
+‘data only=True‘ only confirms values, not formatting.
+- Do not use a ‘data only=True‘ workbook as the source for edits.
+32
+
+
+Evolved Skill by MindMemOS-sup
+—
+name: xlsx
+description: Use this skill whenever the user wants to do anything with Excel spreadsheet files (.xlsx, .xls,
+.csv). This includes reading data, writing formulas, manipulating cells, formatting, filtering, creating
+charts, pivot tables, and any spreadsheet automation tasks.
+—
+# Excel Spreadsheet Processing
+Use ‘openpyxl‘ to read and write .xlsx files.
+If the workbook will be judged from saved/cached values, write computed literal values in Python. Only
+write formulas when you know Excel will recalculate them on open. Never assume wb.save() computes
+formulas.
+High-risk action: do not silently replace a user-requested reusable formula with hardcoded values unless the
+task is explicitly graded from saved cached values or recalculation is unavailable.
+**If the user explicitly asks for a reusable formula, do not silently replace it with hardcoded values.**
+Before writing, decide whether the grader will check formula text or saved cell values. If cached values are
+graded and recalculation on open is not confirmed, materialize literal results in Python and state that
+limitation in the final note. If reusable formulas are explicitly required, preserve formulas.
+If reusable formulas are required and recalculation on open is not confirmed, do not silently materialize
+values; instead, write the formula, verify it separately with a ‘data only=True‘ read, and state that cached
+results may not update until Excel recalculates.
+**If the user asks to fix or rewrite formulas, do not silently replace them with literal values just because
+cached values are graded.**
+If the user’s instruction or example could be interpreted more than one way, do a read-only check against
+at least 2 concrete examples and resolve the exact semantics before writing.
+## Quick Start
+“‘python
+from openpyxl import load workbook
+wb = load workbook(”input.xlsx”)
+ws = wb[”Sheet1”]
+value = ws[”A1”].value
+ws[”B2”] = 42
+ws[”C2”] = ”=SUM(A2:B2)”
+wb.save(”output.xlsx”)
+“‘
+Use this for direct cell edits, formula updates, and simple workbook changes.
+For any nontrivial write, do a read-only pass that confirms: (a) the true used range, (b) the header row, (c)
+merged cells, and (d) at least 2 concrete source-to-target examples.
+For any transformation that changes row order, filters rows, dedupes, expands rows, or maps one table to
+another, first do a read-only inspection pass to confirm the true data bounds, header row, merged cells,
+and at least 2 concrete source-to-target examples.
+High-risk action: do not mutate openpyxl style objects in place; create a new ‘PatternFill‘/‘Border‘ or
+‘copy()‘ the style, then assign it back to the cell.
+For filtering, lookup, mapping, row moves, deduping, sorting, or flattening tasks, first do a read-only
+inspection pass, then read the full source table into Python, compute the final output in memory, and write
+once.
+**Blacklisted behavior:** iterating over a live worksheet while simultaneously reading and writing
+rows/cells for filtering, lookup, deduping, sorting, row moves, deletion/insertion, or row expansion.
+**Blacklisted behavior:** replacing a user-requested reusable formula with hardcoded values, or writing a
+formula when the task is explicitly graded as final values only, without stating the limitation.
+**If a source column may contain formulas, inspect it in two separate passes: load once normally to see
+formula text, and once with ‘data only=True‘ to see cached results.
+Before looking up or matching values, verify that the chosen key column actually contains the intended
+identifiers in the workbook, not a similarly named but different field.
+33
+
+
+High-risk action: do not generate or extend formulas by naive string replacement on existing formula text;
+build each target formula explicitly from the row number.
+After saving, reopen the workbook in the mode the grader will use and verify at least 2–3 representative
+source-to-target pairs by actual value or formula text.
+## Before Editing
+**For any task that depends on row/column relationships, month/category grouping, block boundaries, or
+lookup criteria, do a read-only inspection pass first and confirm the real headers, data extent, and at least
+2 concrete source-to-target examples before writing.**
+**If the target sheet, range, header row, or data extent is not fully explicit, do a read-only inspection pass
+first and confirm the real headers, used range, and any merged cells before writing.**
+High-risk action: do not infer the transformation from a single sample cell, nearby labels, or visible
+formatting alone.
+**Before any transformation, inspect the actual source rows/columns and confirm the real header row,
+data extent, and at least 2 concrete source-to-target examples.**
+**Before writing, inspect ‘ws.merged cells.ranges‘. Do not assign into a merged placeholder cell
+(‘MergedCell‘).**
+- If a named sheet, cell, column, header, row, or target range is missing or ambiguous, stop and inspect the
+workbook contents before editing.
+- If the target sheet, range, or transformation pattern is not fully explicit, do a read-only inspection pass
+first and confirm the real data extent, headers, and any example mappings before writing.
+- After reopening the output, verify that the result matches the intended transformation on at least 2–3
+representative examples from the source.
+## Common Pitfalls
+- **Cell indices are 1-based**: ‘ws.cell(row=1, column=1)‘ is A1.
+- **‘data only=True‘ destroys formulas on save**: Use a separate workbook object for reading calculated
+values.
+- **Never treat a formula cell’s ‘.value‘ as a plain literal when the workbook contains formulas.**
+- Do not trust ‘ws.max row‘ alone. To find the real data extent, scan upward from the bottom until the
+last row with any non-empty cell.
+34
+
+
+C
+MindMemEvolve Algorithms
+Algorithm 1 MindMemEvolve — LLM-Guided Evolutionary Schema Optimization
+Require: Training set D = {(contexti, qi, ai)}N
+i=1, initial schema S0, epochs E, clusters U, popu-
+lation size K, elite fraction α, prune prob. pprune, crossover prob. pcross
+Ensure: Approximately optimal schema S∗
+1: H ←E · U
+▷Total cumulative training steps
+2: C ←PartitionClusters(D, U)
+▷Partition D into U clusters
+3: for j ←1 to K do
+4:
+S1,j ←RandomMutate(S0)
+▷K diversified individuals from S0
+5: end for
+6: for e ←1 to E do
+7:
+for u ←1 to U do
+8:
+t ←(e −1) · U + u
+▷Cumulative step index
+9:
+for j ←1 to K do
+10:
+InitSandbox(St,j)
+▷Clean memory store
+11:
+AddMemories(Cu.contexts, St,j)
+▷Ingest cluster u
+12:
+s ←[]
+13:
+for all (qi, ai) ∈Cu do
+14:
+ri ←SearchMemories(qi, St,j)
+15:
+ˆai ←GenerateAnswer(qi, ri)
+16:
+AppendScore(s, ai, ˆai)
+17:
+end for
+18:
+f(St,j) ←Mean(s)
+19:
+end for
+20:
+SortDescending({St,1, . . . , St,K}, f)
+21:
+nelite ←⌈α · K⌉
+22:
+for j ←1 to nelite do
+23:
+St+1,j ←St,j
+▷Elite preservation
+24:
+end for
+25:
+for j ←nelite + 1 to K do
+26:
+(Pa, Pb) ←TournamentSelect({St,j}K
+j=1)
+27:
+for all P ∈{Pa, Pb} do
+28:
+P ←InducedMutate(P, Cu)
+29:
+P ←InjectPlausibleTypes(P)
+30:
+P ←PruneLowFrequency(P, pprune)
+31:
+end for
+32:
+St+1,j ←CrossoverInsert(Pa, Pb, pcross)
+33:
+end for
+34:
+end for
+35: end for
+36: for j ←1 to K do
+37:
+f(SH+1,j) ←evaluate SH+1,j on full training set D
+▷Over all N samples
+38: end for
+39: S∗←arg maxj∈[1,K] f(SH+1,j)
+40: return S∗
+35
