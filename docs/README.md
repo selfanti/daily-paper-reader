@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-15</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-16</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 20 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-15 20:53:57 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-16 20:18:37 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共处理20篇论文，精读9篇、速读11篇，重点关注智能体技能自动构建与分层自改进方向。</p>
-<p>最值得看的是《SkillSmith》与《Hierarchical Self-Improvement》，均获9.0分，分别聚焦本地智能体技能自动构建演化与任务适配的可进化框架。</p>
-<p>下一步建议优先精读这两篇高分论文，同时可留意速读中的轨迹驱动安全演化（SHE）等方向。</p>
+<p>今日精读19篇，聚焦AI自主进化，重点锁定两篇9分高分论文。OpenLoopEvolve提出长程任务循环策略的可验证自进化，Macaron-V1则用Mixture-of-LoRA实现开放持续学习与自我改进，值得优先关注。其它可瞄一眼：机器人操作强化学习有集中训练新招，零和博弈也揭示了非对称恢复快收敛的巧思；建议从OpenLoopEvolve入手，顺带看Macaron-V1的LoRA方案，理解“边用边学”新思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SkillSmith: Enhancing Locally Deployed Agents via Automatic Skill Construction and Evolution">SkillSmith: Enhancing Locally Deployed Agents via Automatic Skill Construction and Evolution</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hierarchical Self-Improvement: A Framework for Task-Specific Evolvable Agent Harnesses">Hierarchical Self-Improvement: A Framework for Task-Specific Evolvable Agent Harnesses</span></li><li><span class="dpr-home-dashboard-paper-title" title="Is Per-Agent Policy Composition Safe? Rethinking Successor-Feature Transfer in Cooperative Multi-Agent Reinforcement Learning">Is Per-Agent Policy Composition Safe? Rethinking Successor-Feature Transfer in Cooperative Multi-Agent Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="OpenLoopEvolve: A Verifiable Self-Evolution Framework for Loop Policies in Long-Horizon Complex Tasks">OpenLoopEvolve: A Verifiable Self-Evolution Framework for Loop Policies in Long-Horizon Complex Tasks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA">Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA</span></li><li><span class="dpr-home-dashboard-paper-title" title="Boundary-Seeking Policy Gradient for Safe Reinforcement Learning">Boundary-Seeking Policy Gradient for Safe Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>9</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>8</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Suffers More Than the Policy Class Under Partial Observability: A Closed-Form Analysis">Learning Suffers More Than the Policy Class Under Partial Observability: A Closed-Form Analysis</span></li><li><span class="dpr-home-dashboard-paper-title" title="SHE: Trajectory-driven Safety Harness Evolution for LLM Agents">SHE: Trajectory-driven Safety Harness Evolution for LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning">Critic-Free Pretraining for Efficient Online Reinforcement Learning Fine-Tuning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Muscle Memory for Agents: Compile not Merely Retrieve">Muscle Memory for Agents: Compile not Merely Retrieve</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Real-World Online Reinforcement Learning for Robot Manipulation via Centralized Training and Critic Decomposition">Efficient Real-World Online Reinforcement Learning for Robot Manipulation via Centralized Training and Critic Decomposition</span></li><li><span class="dpr-home-dashboard-paper-title" title="Algorithmic Asymmetry in Zero-Sum Games: Unilateral Recovery of Fast Convergence Against a Slow Opponent">Algorithmic Asymmetry in Zero-Sum Games: Unilateral Recovery of Fast Convergence Against a Slow Opponent</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>

@@ -1,0 +1,794 @@
+Title: Beyond Solvability: Task Learnability as a Static Prior for LLM RL Post-Training
+
+URL Source: https://arxiv.org/pdf/2608.09217v1
+
+Published Time: Tue, 11 Aug 2026 01:57:11 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# Beyond Solvability: Task Learnability as a Static Prior for LLM RL Post-Training 
+
+Ting Zhou 1*, Zhenqing Ling 2*, Daoyuan Chen 2, Qianli Shen 2, Yilun Huang 2,Ying Shen 1†, Yaliang Li 2
+
+> 1
+
+Sun Yat-Sen University 2Alibaba Group 
+
+> zhout88@mail2.sysu.edu.cn, sheny76@mail.sysu.edu.cn lingzhenqing.lzq, daoyuanchen.cdy, shenqianli.sql, lielin.hyl, yaliang.li @alibaba-inc.com
+
+Abstract 
+
+Reinforcement learning (RL) has become a cen-tral post-training paradigm for eliciting reason-ing capabilities in large language models, yet uniform task sampling allocates compute with-out regard to differences in how tasks respond to optimization. Existing task-valuation meth-ods mostly rely on snapshot-based signals such as current pass rate or reward, which estimate how solvable a task is under the current policy. However, tasks with similar current solvability can still differ substantially in how positively they respond to further training. We study this residual axis as task learnability : a regime-conditional measure of expected positive re-sponse to continued training under a fixed RL post-training regime. By analyzing per-task re-ward trajectories, we find that learnability is re-producible across independently sampled train-ing contexts and predictive of downstream util-ity. To make this signal practical before training begins, we propose T RAJ VAL , a lightweight probe-based estimator that approximates per-task learnability from a short probe run and two endpoint evaluations. T RAJ VAL can be used either as a standalone static prior for task sam-pling or as a multiplicative prior for existing online schedulers. Experiments on mathemat-ical and logical reasoning benchmarks across multiple model scales show that T RAJ VAL im-proves data efficiency over uniform sampling and provides complementary gains when com-bined with online scheduling methods. 
+
+1 Introduction 
+
+Reinforcement learning (RL) has become a central post-training paradigm for eliciting reasoning capa-bilities in large language models (Guo et al., 2025; Jaech et al., 2024; Yang et al., 2025). A recurring concern in this setting is data efficiency: training pools contain large numbers of tasks whose contri-butions to learning differ substantially, yet uniform 
+
+> *Equal contribution.
+> †Corresponding author.
+
+sampling allocates compute without regard to this heterogeneity. A growing body of work on task-value estimation addresses this by weighting or scheduling tasks during training to accelerate con-vergence (Yu et al., 2025; Gao et al., 2025; Shen et al., 2025; Zheng et al., 2025; Wu et al., 2026). These methods predominantly rely on the model’s instantaneous performance as the primary indicator of task value. By monitoring metrics such as pass rates or rewards at the current training state, they seek to prioritize tasks based on their immediate difficulty or “solvability”. However, current solvability provides only a par-tial view of task value. Two tasks with similarly low pass rates at the current policy state can still differ sharply in how they respond to continued op-timization. In this work, we study this residual axis as learnability : a task’s expected positive response to continued training under a fixed post-training regime. Importantly, we do not treat learnability as an immutable property of a task in isolation. Rather, it is a regime-conditional quantity, defined with respect to a given model family, initializa-tion, optimization algorithm, reward function, data source, and training budget. This notion is complementary to solvability .Solvability asks how well the current policy al-ready performs on a task; learnability asks whether that task is likely to improve productively under additional training. The distinction matters oper-ationally: among tasks with similar current solv-ability, some continue to yield positive reward re-sponse under training, while others remain flat, sat-urated, or even regress. Existing scheduling meth-ods mainly target the former quantity, which can leave useful information about future training re-sponse untapped. In this work, we study learnability as a com-plementary dimension of task value. By analyz-ing training traces, we observe that the policy ex-hibits highly heterogeneous learning responses to arXiv:2608.09217v1 [cs.LG] 10 Aug 2026 different tasks: while performance on some tasks reliably improves as training progresses, perfor-mance on others stagnates or degrades. Empirical analysis demonstrates that this divergence is both context-robust and predictive of RL post-training gains: each task’s learnability reproduces across independent training runs sampled from the same data distribution, and yields measurable improve-ments when leveraged to select or weight tasks. Directly measuring this signal is expensive: it requires tracking each task’s performance trajec-tory over a full post-training run that sweeps the entire dataset for multiple epochs. To turn learn-ability into a prior usable before RL post-training begins, we apply two simplifications: summariz-ing the trajectory by a few performance values along it, and replacing the full post-training run with a short proxy run used to obtain those val-ues. Building on these two reductions, we pro-pose TRAJ VAL , a preprocessing-stage estimator that yields a continuous sampling prior. It can serve as a standalone method for task weighting and composes multiplicatively with existing online task-scheduling methods. We evaluate T RAJ VAL on mathematical and log-ical reasoning benchmarks across multiple model scales. Empirical results show that it consis-tently outperforms uniform sampling and pro-vides stable improvements over competitive task-value baselines when used as a plug-in prior. Our code is available at an anonymous repos-itory: https://github.com/SYSUzhouting/Task-Learnability. Our contributions are threefold: • We distinguish learnability from snapshot-based 
+
+solvability in RL post-training, and operational-ize learnability as a task’s regime-conditional positive response to continued training. • Empirical evidence shows that learnability is re-producible across independently sampled con-texts and predictive of downstream utility, even among tasks with matched initial solvability. • We propose T RAJ VAL , a lightweight probe-based estimator of learnability that can be used either as a standalone static prior or as a multiplicative prior for existing online task schedulers. 
+
+2 Related Work 
+
+Static Task-Value Curation. Offline task-value cu-ration scores the data pool before training. In super-vised fine-tuning, methods such as LIMA, LIMO, and s1 select high-value subsets using base-model pass rates or external model assessments (Zhou et al., 2023; Ye et al., 2025; Muennighoff et al., 2025). Similar ideas have been explored in RL us-ing signals such as base-model uncertainty (Zhao et al., 2025), complexity (Chen et al., 2025b), and difficulty tiers (Parashar et al., 2025). These ap-proaches rely on a fixed snapshot of the initial model and therefore provide limited information about how a task will respond to continued opti-mization. LIMR (Li et al., 2025a) moves toward trajectory-aware valuation, but it requires a full training pass over the pool. 
+
+Dynamic Task-Value Scheduling. Dynamic schedulers instead estimate task value online as training progresses. Representative approaches use rollout-based pass-rate signals or model-based ap-proximations such as value models and Bayesian posteriors (Yu et al., 2025; Yue et al., 2025; Gao et al., 2025; Shen et al., 2025; Qu et al., 2026), while others filter prompts using reward consistency or single-step policy improvement sig-nals (Zheng et al., 2025; Wu et al., 2026; Gu et al., 2026; Chen et al., 2025a). These methods provide adaptive feedback from the current policy state, but mainly emphasize instantaneous task solvability. 
+
+Learning Dynamics and Our Positioning. The use of training dynamics to characterize sam-ples has a long history in supervised learning. Dataset Cartography (Swayamdipta et al., 2020) and EL2N (Paul et al., 2021), for example, show that the evolution of loss or confidence under train-ing reveals information about sample difficulty, learnability, and generalization impact that is not captured by single-state evaluation. Our work brings this trajectory-based perspective to RL post-training by focusing on a lightweight estimate of task learnability that complements existing state-based scheduling signals. 
+
+3 A Learnability-Based View of Task Value in RL Post-Training 
+
+In this section, we develop a learnability-based view of task value in two stages. We first ex-amine how each task’s reward evolves over the course of RL training, and show that these per-task trajectories motivate learnability as a task-level signal distinct from snapshot-based solvabil-ity (§3.1); we then show that this signal is both 
+
+reproducible across independent training con-Profile Criteria Behavior Learn.                            
+
+> (a) S TABLE ∆>0.4,R2>0.4or σ≤0.35 Steady rise ✓
+> (b) S LUGGISH ∆∈(0 .15 ,0.4] or σ> 0.35 Gradual rise ✓
+> (c) I NEFFECTIVE ∆∈(−0.05 ,0.15] ,σ≤0.35 Flat / noisy ✓
+> (d) M ASTERED ¯rearly >0.9,∆<0.1Near-ceiling ✗
+> (e) U NLEARNED ¯rlate <0.1,∆<0.1Near-floor ✗
+> (f) F ORGETTING ∆<−0.05 Net decline ✗
+
+Figure 1: Representative per-task reward trajectories from the diagnostic pool D over 20 training epochs. Bold lines highlight six coarse trajectory patterns used for diagnosis. The right panel summarizes the corresponding profile descriptions. The profile distribution over D is shown in Figure 6(a). 
+
+texts drawn from the same data distribution and 
+
+predictive of downstream utility (§3.2). 
+
+3.1 Heterogeneous Per-Task Learnability under Training 
+
+To examine per-task reward trajectories, we uni-formly sample a diagnostic pool D of 2,048 mathe-matical reasoning tasks and train Qwen3-1.7B with GRPO for 20 epochs under a fixed training recipe (prompt batch size 64, 16 rollouts per prompt; full details in Appendix A). As Figure 1 shows, tasks with similar initial pass rates can follow sharply different reward trajectories under continued train-ing. This heterogeneity is temporal: it is not visible from a single snapshot of current pass rate alone. This observation motivates our central distinc-tion. A task’s solvability describes the current pol-icy’s performance on that task, whereas its learn-ability describes how positively the task responds to continued optimization under a fixed regime. Intuitively, tasks that exhibit a steady, sustained upward trend with substantial reward growth ex-hibit high learnability, as they provide consistent and informative optimization signals. Conversely, tasks whose trajectories are highly volatile, stag-nant, or declining exhibit low learnability, suggest-ing that the current optimization regime either fails to extract constructive signals from these tasks or struggles to consolidate the resulting updates. To visualize this heterogeneity, we summarize each full reward trajectory using three simple descriptors—reward gain ∆, standard deviation 
+
+σ, and linear-fit R2—and use them to define six coarse trajectory profiles (Figure 1). These pro-files are intended purely as a diagnostic lens : they help summarize representative trajectory shapes, but they are not the formal definition of learnability, nor are they meant to form an exhaustive taxonomy of all possible training dynamics. For descriptive analysis, we group profiles with non-negative training response (e.g., STABLE ,SLUGGISH , and I NEFFECTIVE ) separately from saturated, low-response, or regressive profiles (e.g., MASTERED , U NLEARNED , and F ORGETTING ). This binary grouping is used only for diagnosis in this section. In Section 4, we will replace these coarse categories with a continuous score used for actual data allocation. 
+
+3.2 Learnability is Context-Robust and Predictive of Training Value 
+
+We next validate whether the learnability signal suggested by these trajectories satisfies two proper-ties required for practical use: ( i) whether it is re-producible across independently sampled training contexts under a fixed regime, and ( ii ) whether it predicts downstream utility for data allocation. We provide empirical evidence for both using Qwen3-1.7B with GRPO. 
+
+Cross-context reproducibility. We construct two probe sets P1 and P2 (each of size 512, uni-formly sampled from D, with 256 shared tasks) and independently train on D, P1, and P2 for 20 epochs under a fixed training recipe (same model, algo-rithm, and hyperparameters). Despite differences in mixture and the inherent stochasticity of RL, the macroscopic profile distributions remain nearly identical across the three contexts (Figure 6(a)–(c) in Appendix B.2). At the individual level, the 256 shared tasks receive consistent profile assignments: Cohen’s κ reaches 0.776 across the six profiles and 
+
+0.879 under the binary learnable grouping (Fig-ure 6(d)–(e)). The same pattern also appears under Llama-3.2-3B (Appendix B.3), supporting the view that learnability is a context-robust task-level sig-nal rather than an artifact of any particular mixture. Training Pool D
+
+�model                        
+
+> B
+> （a）（b）（c）（d）（e）（f）
+> Learnable-only training Learnable subset converges faster Weight sampling improves training
+> higher and faster earlier convergence
+> Acc  Acc
+> Reduction I
+> Reduction II
+> Full Pool D
+> Probe Set P
+> �0�probe
+> (Base) (Probe-Trained)
+> Training
+> Probe Setup
+> |P | ≪|D | (Base)
+> �0
+> �probe
+> (Probe-Trained) Run inference Run inference over D
+> over D
+> pre(x) values post(x) values s(x) = (1 − pre(x)) ⋅max(0, ∆) ∆(x) = post(x) − pre(x) w(x) = max(s(x) �,ε)Score Tempering
+
+TrajVal · Probe-and Project     
+
+> Continuous weighting
+> Stable Sluggish Ineffective Already Mastered Stubbornly Unlearned Forgetting
+> w(x)
+> Sampling Distribution RL Training
+> wfinal = w final ⋅wonline
+> Static Prior Dynamic Posterior
+> + TrajVal
+
+Weighted Training       
+
+> Learnability-based weight assignment
+> Endpoint summary
+> （cheap ）
+> rlate
+> rearly
+> Full trajectory
+> （expensive ）
+> Two evaluations suffice Requires all checkpoints Keep only endpoint pair
+> Epochs Epochs Epochs
+> Stable Learner (a) Sluggish Learner (b) Ineffective Learner (c) Already Mastered (d) Stubbornly Unlearned (e) Forgetting (f) Reward Reward Reward Reward Reward Reward
+
+Motivates & Operationalizes 
+
+Observation: Reward Trajectories Encode Learnability 
+
+> Trajectory Tracking
+
+Figure 2: Overview of T RAJ VAL . Top: per-task reward trajectories reveal heterogeneous training response beyond initial solvability. Bottom: T RAJ VAL approximates this response using two reductions: from dense trajectories to an endpoint-based summary, and from full-pool training to a lightweight probe run. The resulting score is used as a static prior for prior-weighted sampling in RL training, either alone or in combination with an online scheduler. 
+
+Figure 3: Effect of learnability-based data allocation on Qwen3-1.7B with GRPO, averaged over six mathe-matical reasoning benchmarks. Left: Training on the learnable subset versus the full pool over 20 epochs. 
+
+Right: An oracle-based soft prior over the full pool versus random sampling at matched training budget. 
+
+Predictive value for downstream utility. We next ask whether the learnability grouping trans-lates into downstream utility under two comple-mentary operationalizations, measured by average accuracy across six mathematical reasoning bench-marks (details in Appendix A.2). As a hard cut , re-stricting training to tasks marked learnable (≈ 41% 
+
+of D) matches the full pool’s converged accuracy (≈ 0.41 ) in 3.6× fewer steps (Figure 3, left). As a soft prior over the full pool , an oracle-based scheme that assigns higher sampling probability to learnable profiles—without discarding any task— outperforms random sampling at matched training budget after both have converged ( 0.410 vs 0.387 ,Figure 3, right). The signal therefore yields measur-able gains under both pruning-style and weighting-style uses, suggesting that its utility is not specific to either form of data allocation. In Section 5.3, we further isolate learnability from initial solvability through a controlled analysis. Together, these results suggest that learnability behaves as a reproducible and practically useful di-mension of task value under a fixed training regime. The remaining challenge is computational: obtain-ing this signal at oracle quality requires a full T -epoch training pass over D, which largely offsets the efficiency gains it can provide. Section 4 there-fore asks whether a much cheaper probe procedure can preserve the task ordering most relevant to learnability-aware data allocation. 
+
+4 TRAJ VAL : A Probe-Based Estimator of Learnability 
+
+Section 3 used full reward trajectories to charac-terize an oracle notion of learnability. T RAJ VAL 
+
+does not redefine that notion; rather, it provides a lightweight estimator of it. The key question is therefore not whether a small number of evalua-tions can reconstruct every detail of the full trajec-tory, but whether they preserve the task ordering most relevant to learnability-aware data allocation. To make oracle learnability practical before the main RL run begins, T RAJ VAL applies two reduc-tions. First, it replaces dense trajectory tracking with an endpoint-based summary of training re-sponse. Second, it replaces full-pool training with Figure 4: All tasks in D projected onto the slope– R2  
+
+> space of their training trajectories. Colors indicate pro-file labels derived from the endpoint pair (¯ rearly ,¯rlate ).
+
+a much cheaper probe training run on a small uni-formly sampled subset. Together, these reductions yield a static learnability prior that can be computed offline and used either on its own or in combination with existing online schedulers. 
+
+4.1 Lightweight Estimation Reduction I: From Trajectories to Endpoint-Based Summaries. Continuous checkpoint eval-uation is expensive. We therefore ask whether the task ordering relevant to learnability can be cap-tured by a much smaller summary: the mean re-wards over an early phase and a late phase, de-noted ¯rearly and ¯rlate , together with their difference 
+
+∆ = ¯ rlate − ¯rearly . This summary no longer pre-serves the full trajectory shape, but it still retains the minimal temporal contrast needed to distinguish a task’s current solvability from how it responds over training. The goal is thus not to reconstruct the entire reward curve, but to preserve the distinctions most relevant to learnability-aware allocation. Using this endpoint pair, we derive a simplified endpoint-only approximation to the diagnostic pro-files in Figure 1, bypassing statistics such as σ and 
+
+R2 that require intermediate checkpoints. To test whether this summary retains the global structure of trajectory behavior, we project all tasks in D
+
+onto the slope– R2 space computed from their full reward sequences, which is independent of the end-point approximation. As Figure 4 shows, labels derived solely from the endpoint pair remain well separated in this endpoint-independent space, indi-cating that the summary preserves the distinctions most relevant to learnability estimation. 
+
+Reduction II: From Full-Pool Training to Probe Training. Even with the endpoint summary, esti-mating ¯rlate from full-pool training would still re-quire a complete T -epoch pass over D. We replace this with a much cheaper proxy. Let P ⊂ D be a small uniformly sampled probe set with |P| ≪ |D| .Because Pis drawn from the same training dis-tribution, optimizing the base model θ0 on P ex-poses the policy to a representative subset of the optimization signals present in D. The resulting probe-trained model θprobe can therefore serve as a practical proxy for a later training state. This substitution is empirical rather than ax-iomatic, so we verify it directly. For each task 
+
+x ∈ D , we compare probe-derived endpoint esti-mates against oracle values obtained from the full 2,048-task profiling run. The resulting Spearman correlations are ρ = 0 .940 for ¯rearly and ρ = 0 .876 
+
+for ¯rlate , indicating that the relative ordering needed for learnability-aware allocation largely survives this substitution. 
+
+4.2 Implementation: From Probe Estimators to Sampling Weights 
+
+Given probe-based estimates of the early and late rewards for every task x ∈ D , we now convert them into a sampling distribution. Concretely, we replace the coarse profile-based diagnostic view from Section 3.1 with a continuous learnability score, as illustrated in Figure 2 and Algorithm 1. 
+
+Endpoint Estimation. For each task x ∈ D , we summarize the probe trajectory by averaging per-task accuracies over K checkpoints from an early window and a late window:      
+
+> ¯rϕ(x) = 1
+> K
+> X
+> t∈T ϕ
+> acc( x, θ t),ϕ∈ { early ,late }(1)
+
+The net improvement is then captured by their difference, ∆( x) = ¯ rlate (x) − ¯rearly (x). The win-dow size K is a preprocessing-budget hyperparam-eter that trades additional inference passes for re-duced rollout variance. In our main experiments, we evaluate the most economical setting K = 1 ;any gain observed there carries over to higher-K
+
+settings with lower estimator noise. 
+
+Continuous Learnability Scoring. To convert the probe statistics into per-task sampling weights, we define a simple learnability-aware task-value proxy that combines two desiderata from §3.1: tasks should still have room to improve, and they should exhibit a positive response under training: 
+
+s(x) =  1 − ¯rearly (x)| {z }
+
+> learning headroom
+
+· max  0, ∆( x)| {z }
+
+> directional alignment
+
+. (2) The directional term suppresses tasks whose re-ward remains flat or declines under probe training, while the headroom term down-weights tasks that are already near saturation. Their product there-fore favors tasks that are both still improvable and already showing evidence of constructive response. The role of the headroom term is not to replace 
+
+∆( x) as the indicator of improvement, but to en-code an allocation preference: among tasks with comparable positive gain, higher priority is as-signed to those with greater remaining room for improvement under the main training budget. Ac-cordingly, the score places a modest penalty on near-mastered tasks whose short-term gains may be positive but whose residual training value is lim-ited. Additional intuition for this score design is provided in Appendix B.1. 
+
+Sampling Integration and Diversity. Scores 
+
+s(x) can span a wide range, and direct proportional sampling risks over-concentrating on a narrow high-score subset. To retain learnability-aware priority while preserving distributional coverage, we apply power compression and a probability floor:     
+
+> w(x) = max  s(x)α, ϵ ,p(x) = w(x)
+> X
+> x′∈D
+> w(x′).(3)
+
+The exponent α < 1 compresses the score range, limiting the weight ratio between high- and low-scoring tasks. The floor ϵ ensures that every task retains a minimal sampling probability, including those with near-zero learnability scores—a deliber-ate choice that maintains exposure to the full data distribution and guards against degenerate concen-tration. 
+
+Integration as a Multiplicative Prior. TRAJ -VAL provides a static learnability prior that com-poses naturally with existing online schedulers. For a method with dynamic sampling weight 
+
+wonline (x, t ), we use 
+
+wfinal (x, t ) = wTRAJ VAL (x) · wonline (x, t ). (4) This combination is complementary in spirit: T RA -
+
+> J
+
+VAL supplies a stable offline prior from initial-ization, while the online scheduler adapts to the evolving policy state during training. T RAJ VAL 
+
+therefore targets a failure mode that online meth-ods do not directly address, namely poor allocation before sufficient online evidence has accumulated. 
+
+5 Experiments 
+
+5.1 Experimental Setup 
+
+We validate T RAJ VAL across two domains, three model variants spanning different scales and fami-lies, and multiple evaluation benchmarks. Full im-plementation details are provided in Appendix A. 
+
+Tasks and Datasets. We evaluate across two distinct domains: mathematical reasoning , which requires rigorous multi-step numerical deduction, and logical reasoning , which demands structured, abstract inference over diverse puzzle formats. We train on DAPO-Math (Yu et al., 2025) (17,398 tasks) for math, and the Logic subset (4,998 tasks) of the GURU (Cheng et al., 2025) dataset for logic, which spans ordering puzzles, graph puzzles, ARC-AGI (Chollet et al., 2024, 2025), and BARC (Li et al., 2024) tasks, with exact-match binary reward. 
+
+Evaluation and Metrics. For math , we as-sess on six benchmarks: AIME24, AIME25, AMC23, MATH500 (Hendrycks et al., 2021), Min-erva (Lewkowycz et al., 2022), and Olympiad-Bench (He et al., 2024). For logic , we evalu-ate on a held-out set from Ordering Puzzles and ARC-AGI (Chollet et al., 2024). We report three complementary metrics per benchmark, as well as their macro-average ( Avg ): (1) Best Acc , the peak sliding-window mean accuracy; (2) AUC , the time-averaged accuracy across all training steps; and (3) Steps-to-Baseline (S2B) , the fraction of steps required for a T RAJ VAL -augmented method to first match the Best Acc of its corresponding baseline (lower is better). All results are means over 2 seeds. 
+
+Implementation. All experiments are built on the Trinity-RFT (Pan et al., 2025) framework with 
+
+GRPO (Shao et al., 2024). Our main results use 
+
+Qwen3-1.7B and Qwen3-4B (Yang et al., 2025), while Llama-3.2-3B (Grattafiori et al., 2024) is included as an additional cross-family validation in Appendix B.3. In both domains, RL is applied with n = 16 rollouts per prompt. For T RAJ VAL ,the learnability prior is derived from two inference passes over the base model θ0 and a lightweight probe-trained model θprobe ; the sampling weight is parameterized by a power-compression exponent 
+
+α = 0 .3 and a smoothing floor ϵ = 0 .05 .
+
+Baselines. We compare against three rep-resentative task-selection strategies: (1) BASE -GRPO (Shao et al., 2024), vanilla GRPO with uniform task sampling; (2) BOTS (Shen et al., 2025), a Bayesian online scheduler that main-tains posterior estimates of per-task difficulty; and Math Logic                                                                                                    
+
+> Qwen3-1.7B Qwen3-4B Qwen3-1.7B Qwen3-4B
+> Method S2B ↓Best Acc ↑AUC ↑S2B ↓Best Acc ↑AUC ↑S2B ↓Best Acc ↑AUC ↑S2B ↓Best Acc ↑AUC ↑
+> Random (B ASE -GRPO) –0.3967 0.3620 –0.5060 0.4829 –0.1826 0.1544 –0.2052 0.1932 Random+T RAJ VAL 65.66 0.4105 0.3730 60.00 0.5190 0.4931 73.91 0.1904 0.1663 40.00 0.2260 0.2101
+> BOTS (Shen et al., 2025) –0.4042 0.3648 –0.5076 0.4767 –0.1862 0.1556 –0.2216 0.2076 BOTS+T RAJ VAL 95.00 0.4081 0.3703 75.00 0.5178 0.4863 95.65 0.1866 0.1645 60.87 0.2232 0.2112
+> GRESO (Zheng et al., 2025) –0.4028 0.3621 –0.5062 0.4695 –0.1878 0.1568 –0.2244 0.2082 GRESO+T RAJ VAL 90.00 0.4083 0.3681 75.00 0.5170 0.4794 86.96 0.1914 0.1648 78.26 0.2252 0.2103
+
+Table 1: Main results across Math and Logic domains at two model scales. T RAJ VAL is used either as a standalone static prior over uniform sampling or as a multiplicative prior for online schedulers. 
+
+(3) GRESO (Zheng et al., 2025), a pre-rollout filtering method that skips temporally uninforma-tive prompts. Baseline-specific settings follow the original works and are detailed in Appendix A.5. 
+
+5.2 Main Results 
+
+We evaluate T RAJ VAL across two reasoning do-mains and three base training strategies. Table 1 summarizes the main results, and Figure 11 shows the corresponding evaluation curves. The over-all pattern supports the central claim of the paper: task allocation for RL post-training benefits from modeling not only how solvable a task currently is, but also how positively it is likely to respond to continued optimization. Per-benchmark results are provided in Appendix C.3, and Appendix C.1 gives rollout-level views of training dynamics. 
+
+TrajVal as a standalone method. As a direct re-placement for uniform sampling, T RAJ VAL consis-tently improves both convergence speed and peak performance over B ASE -GRPO across all four domain–scale configurations. The gains are vis-ible in both Math and Logic, with especially large acceleration on Logic at 4B, where the method reaches the baseline peak in only 40% of the steps. 
+
+TrajVal as a plug-in prior. TRAJ VAL also yields consistent gains when composed with ex-isting online schedulers. Augmenting BOTS and GRESO improves Best Acc and AUC in every configuration, while also reducing S2B in all cases. This pattern supports the view that learnability pro-vides a stable prior that complements online solv-ability estimates, particularly when those estimates are still noisy early in training. 
+
+Consistency across domains and scales. The improvements of T RAJ VAL persist across both reasoning domains and model scales. We fur-ther verify the same qualitative trend on an addi-tional model family, Llama-3.2-3B, with support-ing cross-family evidence in Appendix B.3. We 
+
+Figure 5: Within-pre-bin evaluation accuracy curves on Qwen3-1.7B with GRPO for high-∆ and low-∆ sub-pools: Math (left) and Logic (right). 
+
+next provide a controlled analysis to directly test the central claim that this gain cannot be reduced to current solvability alone. 
+
+5.3 Within-Pre-Bin Analysis: Learnability Beyond Initial Solvability 
+
+A central claim of this work is that learnability is not reducible to current solvability. We test this with a controlled within-bin analysis that iso-lates the effect of ∆( x) after stratifying by ¯rearly (x).If high-∆ tasks still yield better downstream out-comes than low-∆ tasks within the same pre-bin, then the predictive signal cannot be explained by initial solvability alone. 
+
+Setup. Within each domain, we partition the training pool into 3 pre -bins : low ( pre ∈ [0 , 1/3] ), mid ( pre ∈ (1 /3, 2/3] ), and high ( pre ∈ (2 /3, 1] ). Within each bin, tasks are split by ∆( x) into two equal-size sub-pools— high-∆ (top 50%) and low-
+
+∆ (bottom 50%)—with average pre matched be-tween the two, so that the only systematic differ-ence is in ∆. This controlled setup is intended to isolate the signal quality of ∆( x), rather than to replicate T RAJ VAL ’s weighted sampling scheme. 
+
+Results. Table 2 and Figure 5 show that across all six bin–domain combinations, high-∆ sub-pools uniformly outperform their low-∆ coun-terparts in both Best Acc and AUC, despite matched average pre within each bin. The effect is strongest in the Low-pre Math bin, where high-∆
+
+tasks reach 0.434 Best Acc versus 0.338 for low-Math Logic Tercile Sub-pool Avg pre Avg ∆ Best Acc ↑ AUC ↑ Avg pre Avg ∆ Best Acc ↑ AUC ↑                                                   
+
+> Low low-∆0.0015 0.0140 0.338 0.3379 0.0000 0.0026 0.124 0.0946 high-∆0.0016 0.1080 0.434 0.3545 0.0000 0.0818 0.152 0.1367
+> Mid low-∆0.1660 0.0570 0.361 0.3449 0.0065 0.0401 0.134 0.1114 high-∆0.1660 0.2860 0.391 0.3675 0.0065 0.1384 0.150 0.1325
+> High low-∆0.6810 0.0480 0.387 0.3586 0.4695 0.2994 0.194 0.1550 high-∆0.6820 0.2000 0.398 0.3813 0.4693 0.4578 0.198 0.1635
+
+Table 2: Within-pre-bin analysis on Qwen3-1.7B across Math and Logic. Matched Avg pre within each tercile isolates the effect of ∆ on downstream performance.                                                          
+
+> Math (Avg) Logic
+> Method S2B ↓Best Acc ↑AUC ↑S2B ↓Best Acc ↑AUC ↑
+> Random –0.3967 0.3620 –0.1826 0.1544
+> Score composition
+> pre-only 85.86 0.4084 0.3675 79.08 0.1904 0.1625 post-only 85.86 0.4067 0.3662 82.61 0.1897 0.1622
+> ∆-only 85.86 0.4086 0.3660 78.26 0.1864 0.1641
+> Probe set size
+> |P| = 256 100.00 0.3968 0.3623 72.73 0.1916 0.1639
+> |P| = 1024 90.91 0.4021 0.3670 73.91 0.1892 0.1638
+> TrajVal 65.66 0.4105 0.3730 73.91 0.1904 0.1663
+
+Table 3: Ablation results on Qwen3-1.7B over score composition and probe set size; |P| = 512 is the default. 
+
+∆ tasks. On Math, meaningful gaps persist in the Mid and High bins; on Logic, the same monotonic ordering holds across all terciles. This shows that tasks with the same current solvability can still differ substantially in training value, and that this residual difference is captured by learnability. 
+
+5.4 Ablation and Practical Analysis 
+
+We further examine T RAJ VAL along five comple-mentary dimensions: 
+
+Score composition. All three single-dimension variants— pre-only , post-only , and ∆-only —underperform full T RAJ VAL , especially in con-vergence speed on Math. The results in Table 3 indicate that headroom and directional alignment are complementary: pre captures remaining room for improvement, while ∆ captures responsiveness to optimization. Only their combination prioritizes tasks that are both improvable and productively learnable under the current training regime. 
+
+Diagnostic analyses. Appendix B.4 provides two additional findings. First, s(x) concentrates sampling weight on learnable tasks ( 67% of total weight for 41% of the pool), and the score distribu-tion remains nearly unchanged across independent probe sets. Second, the score ranking stabilizes early: the Spearman correlation with the final rank-ing reaches ρ ≥ 0.85 by probe epoch k=14 out of 
+
+T =20 (Figure 9), suggesting the probe horizon can be shortened without changing score quality. 
+
+Hyperparameter sensitivity. We examine two key hyperparameters. A moderate probe set size (|P| =512 , roughly 3% of the pool) in Table 3 provides the best overall trade-off. Across α ∈{0.1, 0.3, 0.5}, all settings improve over R ANDOM 
+
+(Appendix B.7), indicating that T RAJ VAL is not highly sensitive to the exact choice of α.
+
+Computational overhead. TRAJ VAL adds a one-time probe run on ≈3% of the pool and two inference passes for endpoint estimation, while the per-step sampling overhead is negligible ( ≈0.01% 
+
+of total pipeline time; Appendix B.5). This marginal cost is far offset by the S2B reductions. 
+
+Cross-regime reuse. We further examine whether a T RAJ VAL prior estimated under one regime can be reused across model scales or fami-lies, rather than re-estimated for each target model (Appendix B.6). Transfer retains useful signal, par-ticularly within the same family, while in-regime estimation achieves the strongest overall perfor-mance. Taken together, these results show that T RAJ VAL 
+
+is well-behaved in practice: its gains rely on the joint use of headroom and directional response, its ranking remains stable under lightweight probing, its performance is robust to hyperparameter varia-tion, and its one-time preprocessing cost is offset by substantial reductions in steps to baseline and further amortized through cross-model prior reuse. 
+
+6 Conclusion 
+
+We introduced learnability as a regime-conditional dimension of task value in RL that complements current solvability, and showed that tasks with sim-ilar initial pass rates can differ markedly in their re-sponse to continued optimization. To make this sig-nal practical, we proposed T RAJ VAL , a lightweight probe-based estimator that converts early/late end-point statistics from a short probe run into sampling weights for main RL training. Across different tasks, models, and utilized settings, T RAJ VAL im-proves data efficiency over uniform sampling and adds gains when combined with online schedulers. More broadly, our results suggest that task valua-tion for RL post-training should consider not only how solvable a task is now, but also how produc-tively it is likely to improve under further training. 
+
+Limitations 
+
+TRAJ VAL is developed and evaluated on mathemat-ical and logical reasoning tasks with binary reward signals; whether the learnability signal transfers equally well to domains with non-binary or model-graded rewards (e.g., open-ended generation evalu-ated by an LLM judge) remains an open question. In addition, our evaluation is confined to text-only settings, and extending T RAJ VAL to multimodal RL post-training pipelines, where the method is in principle applicable, has not yet been explored. Finally, due to computational resource constraints, our experiments are conducted on models up to 8B parameters; validating the approach at larger model scales is left to future work. 
+
+Ethical Considerations 
+
+This work focuses on improving the data efficiency of reinforcement learning post-training for large language models through learnability-based task scheduling. All base models used in our experi-ments (Qwen3-1.7B, Qwen3-4B, and Llama-3.2-3B) are publicly released under their respective open-source licenses, and all datasets employed (DAPO-Math and GURU) are publicly available re-search resources. We have used these resources in compliance with their stated terms. Generative AI tools were used only for limited language polishing and drafting assistance, while all technical content, experiments, analysis, and conclusions were pro-duced and verified by the authors. Our research is methodological in nature and does not involve human subjects, personal data, or sensitive content. We do not foresee direct ethical risks arising from this work. 
+
+References 
+
+Xiaoyin Chen, Jiarui Lu, Minsu Kim, Dinghuai Zhang, Jian Tang, Alexandre Piché, Nicolas Gontier, Yoshua Bengio, and Ehsan Kamalloo. 2025a. Self-evolving curriculum for llm reasoning. arXiv preprint arXiv:2505.14970 .Zhuoyue Chen, Jihai Zhang, Ben Liu, Fangquan Lin, and Wotao Yin. 2025b. Scale down to speed up: Dynamic data selection for reinforcement learning. 
+
+Training , 2500:3000. Zhoujun Cheng, Shibo Hao, Tianyang Liu, Fan Zhou, Yutao Xie, Feng Yao, Yuexin Bian, Yonghao Zhuang, Nilabjo Dey, Yuheng Zha, and 1 others. 2025. Re-visiting reinforcement learning for llm reasoning from a cross-domain perspective. arXiv preprint arXiv:2506.14965 .Francois Chollet, Mike Knoop, Gregory Kamradt, and Bryan Landers. 2024. Arc prize 2024: Technical report. arXiv preprint arXiv:2412.04604 .Francois Chollet, Mike Knoop, Gregory Kamradt, Bryan Landers, and Henry Pinkard. 2025. Arc-agi-2: A new challenge for frontier ai reasoning systems. 
+
+arXiv preprint arXiv:2505.11831 .Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. Flashattention: Fast and memory-efficient exact attention with io-awareness. 
+
+Advances in neural information processing systems ,35:16344–16359. Zhaolin Gao, Joongwon Kim, Wen Sun, Thorsten Joachims, Sid Wang, Richard Yuanzhe Pang, and Liang Tan. 2025. Prompt curriculum learning for efficient llm post-training. arXiv preprint arXiv:2510.01135 .Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, and 1 others. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 .Zhengyao Gu, Jonathan Light, Raul Astudillo, Ziyu Ye, Langzhou He, Henry Peng Zou, Wei Cheng, Santiago Paternain, Philip S Yu, and Yisong Yue. 2026. Actor-curator: Co-adaptive curriculum learning via policy-improvement bandits for rl post-training. arXiv preprint arXiv:2602.20532 .Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, and 1 others. 2025. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 .Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, and 1 others. 2024. Olympiadbench: A challenging benchmark for pro-moting agi with olympiad-level bilingual multimodal scientific problems. In Proceedings of the 62nd An-nual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 3828– 3850. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Ja-cob Steinhardt. 2021. Measuring mathematical prob-lem solving with the math dataset. arXiv preprint arXiv:2103.03874 .Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richard-son, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, and 1 others. 2024. Openai o1 system card. arXiv preprint arXiv:2412.16720 .Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th symposium on operating systems principles , pages 611–626. Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, and 1 others. 2022. Solving quan-titative reasoning problems with language models. 
+
+Advances in neural information processing systems ,35:3843–3857. Wen-Ding Li, Keya Hu, Carter Larsen, Yuqing Wu, Simon Alford, Caleb Woo, Spencer M Dunn, Hao Tang, Michelangelo Naim, Dat Nguyen, and 1 others. 2024. Combining induction and transduction for abstract reasoning. arXiv preprint arXiv:2411.02272 .Xuefeng Li, Haoyang Zou, and Pengfei Liu. 2025a. Limr: Less is more for rl scaling. arXiv preprint arXiv:2502.11886 .Yu Li, Zhuoshi Pan, Honglin Lin, Mengyuan Sun, Con-ghui He, and Lijun Wu. 2025b. Can one domain help others? a data-centric study on multi-domain reasoning via reinforcement learning. arXiv preprint arXiv:2507.17512 .Niklas Muennighoff, Zitong Yang, Weijia Shi, Xi-ang Lisa Li, Li Fei-Fei, Hannaneh Hajishirzi, Luke Zettlemoyer, Percy Liang, Emmanuel Candès, and Tatsunori B Hashimoto. 2025. s1: Simple test-time scaling. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing ,pages 20286–20332. Xuchen Pan, Yanxi Chen, Yushuo Chen, Yuchang Sun, Daoyuan Chen, Wenhao Zhang, Yuexiang Xie, Yilun Huang, Yilei Zhang, Dawei Gao, and 1 others. 2025. Trinity-rft: A general-purpose and unified framework for reinforcement fine-tuning of large language mod-els. arXiv preprint arXiv:2505.17826 .Shubham Parashar, Shurui Gui, Xiner Li, Hongyi Ling, Sushil Vemuri, Blake Olson, Eric Li, Yu Zhang, James Caverlee, Dileep Kalathil, and 1 others. 2025. Curriculum reinforcement learning from easy to hard tasks improves llm reasoning. arXiv preprint arXiv:2506.06632 .Mansheej Paul, Surya Ganguli, and Gintare Karolina Dziugaite. 2021. Deep learning on a data diet: Find-ing important examples early in training. Advances in neural information processing systems , 34:20596– 20607. Yun Qu, Qi Wang, Yixiu Mao, Vincent Tao Hu, Björn Ommer, and Xiangyang Ji. 2026. Can prompt diffi-culty be online predicted for accelerating rl finetuning of reasoning models? In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1 , pages 1240–1250. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. CoRR , abs/2402.03300. Qianli Shen, Daoyuan Chen, Yilun Huang, Zhenqing Ling, Yaliang Li, Bolin Ding, and Jingren Zhou. 2025. Bots: A unified framework for bayesian online task selection in llm reinforcement finetuning. arXiv preprint arXiv:2510.26374 .Swabha Swayamdipta, Roy Schwartz, Nicholas Lourie, Yizhong Wang, Hannaneh Hajishirzi, Noah A Smith, and Yejin Choi. 2020. Dataset cartography: Mapping and diagnosing datasets with training dynamics. In 
+
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) ,pages 9275–9293. Jiahao Wu, Ning Lu, Shengcai Liu, Kun Wang, Yanting Yang, Li Qing, and Ke Tang. 2026. Train at moving edge: Online-verified prompt selection for efficient rl training of large reasoning model. arXiv preprint arXiv:2603.25184 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jianhong Tu, Jingren Zhou, Junyang Lin, and 1 others. 2024. Qwen2. 5-math technical report: Toward mathe-matical expert model via self-improvement. arXiv preprint arXiv:2409.12122 .Yixin Ye, Zhen Huang, Yang Xiao, Ethan Chern, Shijie Xia, and Pengfei Liu. 2025. Limo: Less is more for reasoning. In Second Conference on Language Modeling .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, and 1 others. 2025. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 .Murong Yue, Wenlin Yao, Haitao Mi, Dian Yu, Ziyu Yao, and Dong Yu. 2025. Dots: Learning to reason dynamically in llms via optimal reasoning trajectories search. In The Thirteenth International Conference on Learning Representations .Yang Zhao, Kai Xiong, Xiao Ding, Li Du, Zhouhao Sun, Jiannan Guan, Wenbin Zhang, Bin Liu, Dong Hu, Bing Qin, and 1 others. 2025. Ufo-rl: Uncertainty-focused optimization for efficient reinforcement learning data selection. In The Thirty-ninth Annual Conference on Neural Information Processing Sys-tems .Yanli Zhao, Andrew Gu, Rohan Varma, Liang Luo, Chien-Chin Huang, Min Xu, Less Wright, Hamid Shojanazeri, Myle Ott, Sam Shleifer, and 1 oth-ers. 2023. Pytorch fsdp: experiences on scal-ing fully sharded data parallel. arXiv preprint arXiv:2304.11277 .Haizhong Zheng, Yang Zhou, Brian R Bartoldson, Bhavya Kailkhura, Fan Lai, Jiawei Zhao, and Beidi Chen. 2025. Act only when it pays: Efficient rein-forcement learning for llm reasoning via selective rollouts. In The Thirty-ninth Annual Conference on Neural Information Processing Systems .Chunting Zhou, Pengfei Liu, Puxin Xu, Srinivasan Iyer, Jiao Sun, Yuning Mao, Xuezhe Ma, Avia Efrat, Ping Yu, Lili Yu, and 1 others. 2023. Lima: Less is more for alignment. Advances in Neural Information Pro-cessing Systems , 36:55006–55021. 
+
+A Details of Experimental Setup 
+
+A.1 Experimental Tasks and Datasets 
+
+We validate our proposed method across two dis-tinct domains to demonstrate its versatility: math-ematical reasoning and logical reasoning. The former assesses the model’s capacity for rigorous, multi-step numerical computation, while the latter evaluates its ability to perform structured, abstract reasoning across diverse puzzle types. 
+
+Mathematics For mathematical reasoning, the objective is to enhance the model’s problem-solving capabilities. We use the DAPO-Math-17k 
+
+dataset (Yu et al., 2025) for training. This dataset consists of 17,398 problems, primarily from com-petitive mathematics, with integer-based answers. The verified and binary reward structure (1.0 for a correct answer, 0.0 otherwise) provides a clear, objective signal for improving logical and compu-tational accuracy. 
+
+Logic For logical and abstract reasoning, the ob-jective is to improve the model’s capacity for struc-tured inference and pattern recognition across di-verse reasoning formats. Training data is sourced from the GURU (Cheng et al., 2025) benchmark collection, a well-curated, cross-domain RL dataset. Specifically, we use the Logic subset (approxi-mately 5.0k problems), which spans several com-plementary reasoning tasks: Ordering Puzzles (re-lational ordering under constraints), Graph Puz-zles (implicit graph traversal and path reasoning), the public training splits of ARC-AGI (Chollet et al., 2024) and ARC-AGI-2 (Chollet et al., 2025) (abstract grid transformation tasks), and a 3.4k-sample subset from BARC (Li et al., 2024) (syn-thetic ARC-style tasks for data augmentation). For all logic tasks, predictions are extracted from 
+
+<answer> tags and evaluated via exact match, yield-ing a binary reward of 1.0 for a correct prediction and 0.0 otherwise. 
+
+A.2 Evaluation and Metrics A.2.1 Evaluation Datasets. Mathematics. We evaluate mathematical reason-ing on a suite of benchmarks commonly used for assessing Qwen-Math series (Yang et al., 2024) models. This selection covers a wide spectrum of difficulty, from challenging high-school problems to graduate-level and Olympiad-level questions: • AIME24 / AIME25 : The American Invita-tional Mathematics Examination (AIME) fea-tures highly challenging, competition-level prob-lems for high-school students. • AMC23 : A benchmark consisting of 40 prob-lems from the American Mathematics Compe-titions (AMC). This widespread contest series for high-school students serves as a key test of foundational mathematical reasoning. • MATH500 (Hendrycks et al., 2021): A classic and challenging benchmark comprising 500 prob-lems from high-school math competitions, de-signed to test multi-step reasoning across algebra, combinatorics, geometry, number theory. • Minerva (Lewkowycz et al., 2022): A bench-mark featuring 272 advanced problems from uni-versity and graduate-level STEM courses, cover-ing subjects like differential equations and spe-cial relativity. • OlympiadBench (He et al., 2024): An Olympiad-level benchmark containing 675 ex-ceptionally difficult problems in mathematics and science that demand profound and complex rea-soning abilities. Logic We evaluate logical and abstract reasoning on a held-out evaluation set of 500 problems, drawn from two complementary benchmarks that probe distinct reasoning faculties: • Ordering Puzzles : A set of relational reasoning problems that require the model to infer and sat-isfy ordering constraints among entities, serving as a probe for general structured logical infer-ence. • ARC-AGI (Chollet et al., 2024): A benchmark of grid-based abstract reasoning tasks requiring the model to identify latent transformation rules from input–output examples and apply them to novel grids. 
+
+A.2.2 Evaluation Metrics. 
+
+All reported scores are averaged over 2 independent random seeds. A sampling temperature of T = 1 .0
+
+is used throughout for generation (Li et al., 2025b; Cheng et al., 2025). To ensure robust estimates on stochastic benchmarks, we generate multiple solu-tions per problem for AIME 24/25 (8 generations) and AMC23 (4 generations). Online evaluation is performed every 12 steps for Mathematics and every 8 steps for Logic. Training curves are visual-ized with an Exponential Moving Average (EMA, factor 0.6) applied solely for display purposes; all quantitative metrics are computed on raw trajecto-ries. We report three complementary metrics for each benchmark as well as their macro-average across all benchmarks ( Avg ): • Best Acc : The peak accuracy achieved over the full training run, computed as the maximum value of a sliding-window mean with a window of 5 consecutive evaluation steps applied to the raw accuracy curve. This windowed estimator reduces sensitivity to stochastic fluctuations at individual checkpoints. For the Avg column in Mathematics, Best Acc is the peak of the macro-averaged accuracy curve, computed by first aver-aging the seed-averaged per-benchmark trajecto-ries across all benchmarks at each step and then applying the same sliding-window procedure. • AUC : The time-averaged accuracy across the entire training run, computed as the arithmetic mean of all evaluation-step accuracies on the seed-averaged trajectory. This metric captures the overall training efficiency of a method, re-warding approaches that not only converge to high accuracy but do so consistently throughout training, rather than merely at the final check-point. • Steps-to-Baseline (S2B) : A data-efficiency metric defined pairwise for each T RAJ VAL -augmented method relative to its corresponding baseline. Let T denote the Best Acc of the base-line and sbase the training step at which the base-line’s sliding-window mean first attains T . S2B is then the first step scomp at which the augmented method’s sliding-window mean reaches T , ex-pressed as a percentage of sbase :S2B = scomp 
+
+sbase 
+
+× 100% .
+
+Lower values indicate that the augmented method matches the baseline’s best performance with fewer training steps. For the Avg column in Math-ematics, S2B is computed on the macro-averaged curve across all benchmarks. 
+
+A.3 Training Details Framework and Infrastructure. All experi-ments are conducted on the Trinity-RFT (Pan et al., 2025) framework, utilizing nodes equipped with 8 NVIDIA A100 (80GB) GPUs. We employ PyTorch’s Fully Sharded Data Parallel (FSDP) (Zhao et al., 2023) for efficient distributed training. During the exploration phase, response generation is accelerated using vLLM (Kwon et al., 2023) via flash-attention (Dao et al., 2022). We uti-lize GRPO (Shao et al., 2024) as the RL algorithm. We set enable_thinking as False for Qwen3 series to avoid the long thinking paradigm. 
+
+Domain-Specific Training Processes. Our ex-perimental design validates our method across two distinct domains—Mathematics and Logic— spanning three model variants to assess generality across both model scale and model family: Qwen3-1.7B , Qwen3-4B (Yang et al., 2025), and Llama-3.2-3B (Grattafiori et al., 2024). • For Mathematics , we perform RL directly on the instruction-tuned variants of all three base models. The reward mechanism is binary: a re-sponse is awarded a reward of 1.0 if the answer extracted from the \boxed{} environment matches the ground truth, and 0.0 otherwise. This verifica-tion is performed using the math-verify library. We employ a relatively large number of rollouts per prompt ( n = 16 ) to provide stable variance estimates for policy gradient updates. • For Logic , we likewise perform RL directly on the instruction-tuned variants of all three mod-els, without any preceding supervised fine-tuning stage. The reward signal is binary and based on exact match: a response receives a reward of 1.0 if the prediction extracted from the <answer> tags exactly matches the ground-truth output, and 0.0 otherwise. We adopt the same number of rollouts per prompt ( n = 16 ) as in the Mathematics setting, maintaining consistency across domains. 
+
+Prompt. We employ domain-specific prompts tailored to the structure of each task type. In Math-ematics, a consistent prompt format is applied to both training and evaluation. For Logic tasks, dis-tinct prompt templates are used for each sub-task category (ARC-style grid tasks, ordering puzzles, and graph puzzles) to match the corresponding in-put format, with the same templates applied during both training and evaluation. The exact templates are shown below. 
+
+Mathematics Training & Evaluation Prompt   
+
+> System_Prompt: Please reason step by step, and put your final answer within \\boxed{}.
+> User_Prompt: {task_text}
+
+Logic-ARC Training & Evaluation Prompt                               
+
+> System_Prompt: You are a world-class puzzle solver with exceptional pattern recognition skills. Your task is to analyze puzzles, spot patterns, and provide direct solutions. Given input-output grid pairs as reference examples, carefully observe the patterns to predict the output grid for new test input. Each pair follows the same transformation rule. Grids are 2D arrays. Here are the input and output grids for the reference examples: {User_Prompt}. What is the output grid? Please put your answer within <answer> and </answer> tags, your final answer should be only the output grid (2d array).
+> User_Prompt: {task_text}
+
+Logic-OrderingPuzzle Training & Evalu-ation Prompt                 
+
+> System_Prompt: Solve the following puzzle to determine the order of the {User_Prompt} from left to right. {User_Prompt}. Please put your answer within <answer> and </answer> tags, for example <answer> [’pigeon’, ’sparrow’, ’quail’] </answer>.
+> User_Prompt: {category} and {task_text}
+
+Logic-GraphPuzzle Training & Evalua-tion Prompt                
+
+> System_Prompt: Given the following list of predicates: {User_Prompt}. Respond with only the trait of the next step. Please put your answer within <answer> and </answer> tags, for example <answer> fdebme </answer>.
+> User_Prompt: {task_text}
+
+Hyperparameters. All three model variants share identical training hyperparameters within each domain; differences arise only between do-mains due to their distinct input length distributions and dataset sizes. Specifically, Logic tasks require substantially longer prompt contexts owing to the structured, multi-example format of ARC-style in-puts, whereas Mathematics tasks demand longer response budgets to accommodate extended chain-of-thought reasoning. A comprehensive summary is provided in Table 4. 
+
+A.4 Policy Optimization Algorithm: GRPO 
+
+We adopt Group Relative Policy Optimization (GRPO) (Shao et al., 2024) as our policy gradient algorithm. A defining characteristic of GRPO is its elimination of a learned value function: rather than relying on a separate critic network to estimate baselines, it constructs the advantage signal directly from intra-group reward comparisons. Concretely, the policy parameters θ are optimized via a clipped surrogate objective of the form: 
+
+LGRPO (θ) = Ey∼πθold 
+
+h
+
+min  rθ(y)A(y),
+
+clip( rθ(y), 1 − ϵ, 1 + ϵ) A(y)i
+
+.
+
+(5) where rθ(y) = πθ(y|x)/π θold (y|x) is the prob-ability ratio measuring how the likelihood of re-sponse y shifts between the updated and reference policies, and the clipping operator constrains this ratio to the interval [1 − ϵ, 1 + ϵ], bounding each gradient step within a trusted region to prevent destabilizing policy updates. The advantage A(yk) in Equation 5 is de-rived through a group normalization procedure. For each prompt x, a group of G responses 
+
+Y = {y1, . . . , y G} is sampled from the old pol-icy πθold , yielding a corresponding set of rewards 
+
+{R(yk)}Gk=1 . The advantage of each response is then defined as its reward standardized by the group Mathematics (RL) Logic (RL) 
+
+Base Model Qwen3-{1.7B, 4B}. / Llama-3.2-3B. Qwen3-{1.7B, 4B}. / Llama-3.2-3B. 
+
+Common Training Parameters 
+
+Optimizer AdamW AdamW Learning Rate 1 × 10 −6 1 × 10 −6
+
+Weight Decay 0.1 0.1 Gradient Clipping 1.0 1.0 Batch Size (Prompts) 64 64 Total Epochs 1 3
+
+RL-Specific Parameters 
+
+Rollouts per Prompt ( n) 16 16 GRPO Clip Ratio ( ϵ) 0.2 0.2 Rollout Temperature 1.0 1.0 
+
+System and Memory Parameters 
+
+Max Prompt Length 4,096 28,672 Max Response Length 8,192 4,096 Rollout Engine Number 4 4Evaluation Steps Interval 12 8
+
+> Table 4: Key hyperparameters for RL training across domains. All three model variants (Qwen3-1.7B, Qwen3-4B, Llama-3.2-3B) share the same configuration within each domain.
+
+statistics: 
+
+A(yk) = R(yk) − μY
+
+σY
+
+, (6) where μY and σY denote the mean and standard deviation of rewards within the group, respectively. This normalization ensures that the advantage sig-nal reflects a response’s relative quality among its peers, providing a low-variance baseline without requiring any additional learned components. 
+
+A.5 Baselines 
+
+To evaluate T RAJ VAL , we select three represen-tative online task-valuation methods as baselines. For each, we report results both with and without TRAJ VAL applied as a sampling-weight multiplier. All baselines share the same base training config-uration described in Appendix A.3; only the task-selection logic differs. Baseline-specific hyperpa-rameters are set according to the recommendations of the respective original works. • BASE -GRPO (Shao et al., 2024): The vanilla GRPO algorithm with uniform random task sam-pling, serving as the primary reference point. Tasks are drawn randomly from the training pool without any curriculum or difficulty-aware selec-tion. This baseline establishes the performance floor that all task-selection methods, including TRAJ VAL , are expected to improve upon. • BOTS (Shen et al., 2025): Bayesian Online 
+
+Task Selection is a unified framework that re-casts dynamic task selection as a Bayesian infer-ence problem over evolving model capabilities. In our experiments, BOTS is initialized with pre-computed pass rates from two reference models (Qwen2.5-7B and Qwen3-32B ) as the initial diffi-culty features. We follow the recommended con-figuration from the original work, with the key task-selector hyperparameters set as: group size 
+
+m = 16 , implicit evidence weight λ = 0 .1, reg-ularization coefficient ρ = 0 .1, target difficulty 
+
+p∗ = 0 .5, and Thompson sampling temperature 
+
+τ = 0 .5.• GRESO (Zheng et al., 2025): GRPO with 
+
+Efficient Selective Rollout is an online pre-rollout filtering algorithm motivated by the empir-ical observation of strong temporal consistency in prompt informativeness: prompts that yield near-zero advantage in one training epoch are likely to remain uninformative in subsequent epochs. We adopt the recommended configu-ration from the original paper, with the key task-selector hyperparameters set as: easy-skipping probability peasy = 0 .5, hard-skipping probabil-ity phard = 0 .5, zero-variance target σ2 
+
+> zero
+
+= 0 .25 ,probability update step ∆p = 0 .01 , and probabil-ity bounds pmin = 0 .05 , pmax = 0 .95 .B Extended Experiments and Analyses 
+
+B.1 Design Intuition of Learnability Score 
+
+Equation 2 is intended as a low-cost operational-ization of the two empirical dimensions introduced in Section 3.1: capacity to improve and construc-tive directional response . The factor 1 − ¯rearly (x)
+
+down-weights tasks that are already near satura-tion, while max(0 , ∆( x)) suppresses tasks whose reward trajectories are flat or regressive under opti-mization. The multiplicative form reflects a conservative conjunctive design: a task should receive a high score only when it satisfies both conditions simulta-neously. If either dimension is weak—for example, a task is already nearly mastered, or its trajectory shows little positive response—the overall score is reduced accordingly. This behavior matches the qualitative motivation in Figure 1, where tasks with meaningful training value tend to exhibit both re-maining headroom and a non-negative optimization trend. We do not claim that this product form is unique or theoretically optimal. Rather, it provides a sim-ple and stable proxy for prioritizing tasks that are both unsaturated and empirically responsive to training, while avoiding additional estimation complexity. The ablations in Section 5.4 further support this choice by showing that combining the two factors is more effective than using either one alone. 
+
+B.2 Stability of Learnability Profiles 
+
+This subsection provides the full visualization for the cross-context stability study summarized in Sec-tion 3.2. We train Qwen3-1.7B for 20 epochs on the full pool D and on two independently sampled subsets P1 and P2, each of size 512, with 256 shared tasks. For each training context, we assign every task a trajectory profile using the criteria in Figure 1. Figure 6(a)–(c) examines stability at the pool level. Despite the substantial difference in set size and the independent sampling of P1 and P2, the profile proportions remain highly similar across all three contexts. In particular, the aggregate mass of learnable profiles and non-learnable pro-files changes only slightly, and the relative ordering of the major categories is preserved. This supports the view that learnability composition is largely a property of the underlying data source, rather than a fragile consequence of a specific training mixture. Figure 6(d)–(e) examines stability at the level of individual tasks. Among the 256 shared tasks, most assignments lie on or near the diagonal of the confusion matrices. Agreement is already strong for the full six-class taxonomy, with most disagree-ment occurring between neighboring learnable cat-egories such as S TABLE , S LUGGISH , and I NEF -
+
+> FECTIVE
+
+. After collapsing profiles into the binary learnable/non-learnable partition, the consistency becomes even stronger, yielding κ = 0 .879 . This pattern is expected: fine-grained labels are more sensitive to small variations in trajectory shape, whereas the coarser partition captures the direc-tional distinction that matters most for data alloca-tion. Taken together, the figure supports two practical conclusions used by T RAJ VAL . First, a uniformly sampled subset can preserve the broad learnabil-ity composition of the full pool. Second, per-task learnability is sufficiently stable across contexts to serve as a reusable signal for probe-based estima-tion.            
+
+> Figure 6: Qwen3-1.7B: Stability of learnability profiles across independently sampled training contexts. (a)–(c):
+> The macroscopic distribution of profiles remains nearly identical across D,P1, and P2, confirming that uniform subsampling preserves the learnability composition of the full pool. (d)–(e): Confusion matrices for the 256 shared tasks, evaluated under P1versus P2. Strong per-task agreement is observed at both the fine-grained six-profile level ( κ= 0 .776 ) and the binary learnable/non-learnable level ( κ= 0 .879 ).
+
+B.3 Learnability Stability Across Model Families on Llama 
+
+To assess whether the observations in Sections 3– 5.2 extend beyond the Qwen family, we repeat the key analyses on Llama-3.2-3B. The goal of this subsection is not to introduce a new setting, but to verify that the main empirical patterns remain visible under a different base model family. 
+
+Cross-context stability. We first examine whether learnability remains stable across training contexts, as in the Qwen-based study of Section 3.2. Figure 7 shows that the macroscopic profile dis-tribution remains similar across independently sampled training contexts, and that the profile assignment of shared tasks is stable at both the six-profile level and the binary learnable/non-learnable level. The resulting agreement scores, κ = 0 .762 
+
+for the six-way taxonomy and κ = 0 .872 for the binary grouping, are close to those observed in the main text. This suggests that learnability remains a measurable and reasonably stable task property under a different model family. 25% 21%                           
+
+> 7% 11%
+> 36% (a) Full Pool
+> n=2048 13% 29%
+> 12%
+> 5%
+> 41% (b) Probe Set 1
+> n=512 12% 26% 14%
+> 5%
+> 42% (c) Probe Set 2
+> n=512
+> Stable Sluggish Ineffective Mastered Unlearned Probe Set 2 Stable Sluggish Ineffective Mastered Unlearned Probe Set 1
+> = 0.762
+> (d) 6-class agreement (n=256)
+> 87% 13% 0% 0% 0% 9% 80% 9% 1% 1% 0% 26% 61% 5% 8% 0% 0% 36% 64% 0% 0% 1% 4% 0% 95%
+> Learnable Not Learnable Probe Set 2 Learnable Not Learnable Probe Set 1
+> = 0.872
+> (e) Binary agreement (n=256)
+> 95% 5% 8% 92%
+> Stable Learner Sluggish Learner Ineffective Learner Already Mastered Stubbornly Unlearned Forgetting
+
+Figure 7: Llama-3.2-3B: Stability of learnability profiles across independently sampled training contexts. The configuration is the same as in Figure 6. 
+
+Learnability structure. We next revisit whether the structural organization of learnability observed in Section 3 also appears under Llama-3.2-3B. Fig-ure 8 reproduces the slope– R2 projection on the full 2,048-task pool, with profile labels derived from the endpoint pair (¯ rearly , ¯rlate ). The same broad geometric structure is preserved: positively trending profiles occupy the high-slope region, while non-learnable profiles remain concentrated near low or negative slopes. This indicates that the endpoint summary continues to recover the global organization of trajectory behavior under Llama-3.2-3B, consistent with the reduction in Section 4. 
+
+End-to-end transfer. Finally, we ask whether the practical benefits of the learnability prior also transfer to downstream RL training. Table 5 reports the end-to-end results on mathematical and logi-cal reasoning. The overall pattern is directionally consistent with the main text: T RAJ VAL usually improves either convergence speed, final accuracy, or AUC when paired with Random or BOTS, and remains particularly helpful on Logic. At the same time, the gains are smaller and less uniform than those observed for Qwen, with one Math configu-ration showing a regression when combined with GRESO. We therefore view the Llama results as supportive rather than definitive: they suggest that the learnability prior transfers across model fami-lies, while also indicating that its interaction with specific schedulers can remain model-dependent. 
+
+Figure 8: Llama-3.2-3B: All tasks in D projected onto the slope– R2 space of their reward trajectories, col-ored by profile labels derived from the endpoint pair 
+
+(¯ rearly , ¯rlate ). The same broad structural separation ob-served in Figure 4 is preserved, indicating that endpoint-derived labels continue to recover the global organi-zation of trajectory behavior under a different model family. 
+
+B.4 Diagnostic Analysis of TrajVal Scores Score distribution across learnability profiles. 
+
+To verify that the continuous score s(x) assigns weight in a manner consistent with the qualita-tive learnability taxonomy introduced in Section 3, we stratify D by trajectory profile and report per-profile score statistics under two independently sampled probe sets P1 and P2 in Table 6. Three pat-terns are evident. First, the learnable profiles collec-tively receive 67% of total sampling weight despite constituting only 41% of the pool, representing a 
+
+1.6× redirection of sampling budget toward tasks with positive learnability. Second, score statistics within each group respect the expected learnability ordering: mean s(x) decreases monotonically from STABLE LEARNER (0.521 ) through S LUGGISH 
+
+LEARNER (0.470 ) and I NEFFECTIVE LEARNER 
+
+(0.391 ), while the fraction of tasks collapsed to the probability floor rises correspondingly, reach-ing 92% for S TUBBORNLY UNLEARNED . Third, distributions under P1 and P2 are nearly identical across all profiles, confirming that the score reflects a stable property of the data rather than an artifact of any particular probe realization. 
+
+Score stability under varying probe horizons. 
+
+TRAJ VAL derives its score from θprobe obtained after T epochs of probe training. We examine how early the resulting score ordering stabilizes by sav-ing intermediate checkpoints θ(k)probe at each epoch 
+
+k ∈ { 1, . . . , T } (T = 20 ), recomputing post k(x)
+
+over the full pool D, and measuring the Spearman Math (Avg) Logic 
+
+Method S2B (%) ↓ Best Acc ↑ AUC ↑ S2B (%) ↓ Best Acc ↑ AUC ↑
+
+Random – 0.1724 0.1582 – 0.1204 0.1031 Random+TrajVal 94.12 0.1800 0.1637 100.00 0.1234 0.1059 
+
+BOTS – 0.1752 0.1585 – 0.1332 0.1055 BOTS+TrajVal 100.00 0.1760 0.1595 96.15 0.1340 0.1094 
+
+GRESO – 0.1765 0.1646 – 0.1252 0.1013 GRESO+TrajVal 90.00 0.1791 0.1634 65.00 0.1288 0.1102 
+
+Table 5: End-to-end results on mathematical and logical reasoning with Llama-3.2-3B. S2B (%) denotes the fraction of baseline training steps required to match the baseline’s peak performance, where lower is better. Best Acc is the peak evaluation accuracy over the full training run, and AUC is the area under the evaluation curve. 
+
+P1 P2
+
+Profile n Share Mean Floor% Share Mean Floor% STABLE LEARNER 200 18.0% 0.521 30.5% 16.3% 0.456 39.0% SLUGGISH LEARNER 394 32.0% 0.470 30.5% 31.9% 0.454 32.0% INEFFECTIVE LEARNER 253 17.1% 0.391 31.2% 17.4% 0.386 31.6% ALREADY MASTERED 659 20.7% 0.182 63.3% 21.4% 0.182 63.6% STUBBORNLY UNLEARNED 527 11.7% 0.129 92.4% 12.1% 0.129 93.6% FORGETTING 15 0.5% 0.210 73.3% 0.9% 0.339 53.3% LEARNABLE (combined) 847 67.0% 0.459 30.7% 65.6% 0.434 33.5% NON -LEARNABLE (combined) 1201 33.0% 0.159 76.2% 34.4% 0.160 76.6% 
+
+Table 6: Per-profile distribution of T RAJ VAL scores under two independent probe sets. Share : fraction of total sampling weight. Mean : mean s(x) within profile. Floor% : fraction of tasks at the probability floor. 
+
+rank correlation ρ between the intermediate score 
+
+sk(x) = (1 − pre( x)) · max(0 , post k(x) − pre( x)) 
+
+and the final score sT (x).As shown in Figure 9, ρ rises rapidly in the early epochs and reaches 0.85 by k = 14 , well before the nominal probe horizon T = 20 . Beyond k = 14 ,the correlation remains stable and the two indepen-dently drawn probe sets stay within 0.04 of each other at all epochs. This indicates that the relative learnability ordering captured by T RAJ VAL crys-tallizes early in probe training, and that the probe budget could be reduced to roughly 70% of the nominal horizon without meaningfully degrading score quality. 
+
+B.5 Computational Cost of TrajVal Cost Structure. The preprocessing overhead of TRAJ VAL decomposes into two components. The dominant cost is the probe training run, in which the base model θ0 is fine-tuned via RL on a uni-formly sampled probe set P ⊂ D . In our pri-mary configuration, |P| = 512 for a pool of 
+
+Figure 9: Spearman rank correlation between sk(x) and 
+
+sT (x) as a function of probe epoch k, evaluated on D.Two independently sampled probe sets are shown. The ordering stabilizes ( ρ ≥ 0.85 ) by k = 14 , well before the full probe horizon T = 20 .
+
+|D| = 17 ,398 tasks, corresponding to approxi-mately 3% of the full training pool; the total probe training cost is therefore O(T · |P| ), which is a small fraction of the main training budget by con-struction. The secondary cost is endpoint estima-tion: for every task x ∈ D , we evaluate ¯rearly (x)
+
+and ¯rlate (x) via two targeted inference passes over the full pool using the recorded probe checkpoints, incurring O(2 · |D| ) forward passes with no gra-dient computation. Crucially, once the per-task sampling weights {p(x)} are computed, T RAJ VAL 
+
+introduces no additional overhead during the main training phase : the weights are fixed prior to train-ing, and sampling at each step reduces to a single weighted multinomial draw. 
+
+Empirical Overhead Measurement. Total train-ing time is dominated by model rollout length— a factor orthogonal to our method—we fo-cus on the experience pipeline processing time 
+
+(time/experience_pipeline/total ) as the pri-mary measurement target. This metric captures the end-to-end latency of the data-processing pipeline at each training step, encompassing experience de-serialization, advantage computation, and output buffer writes, and is the only pipeline-level signal that can reflect task-selector overhead in our log-ging infrastructure. It explicitly excludes model inference and parameter update time, making it a clean proxy for the marginal cost. Table 7 (top) reports the pipeline-level measure-ments over 271 training steps. Across the reported percentiles up to p95, the difference between T RA -
+
+> J
+
+VAL and random sampling remains below 0.02 s, well within the variability attributable to system-level noise such as network I/O and serialization. The cumulative pipeline times are statistically indis-tinguishable. To further isolate the selector’s con-tribution, Table 7 (bottom) presents a direct micro-benchmark of the Trinity-Operator call. T RA -
+
+> J
+
+VAL ’s weighted multinomial sampling takes ap-proximately 0.24 ms per call, compared to 0.02 ms for uniform random sampling. While the relative difference is large in percentage terms, the abso-lute per-step overhead is 0.22 ms—accumulating to roughly 59 ms over 271 steps, or 0.01% of the total pipeline time. This confirms that the learnability-aware sampling logic is entirely subsumed by other pipeline components and does not constitute a mea-surable bottleneck in practice. 
+
+Cost-Benefit Summary. The marginal cost of TRAJ VAL —a one-time probe run on ≈ 3% of the training pool, two inference passes for end-point estimation, and a negligible per-step selector overhead—is offset by substantial gains in train-ing efficiency. As reported in Section 5.2, T RAJ -VAL -augmented methods consistently reduce the Steps-to-Baseline (S2B) metric across all evaluated configurations, with S2B as low as 40 .0% on Logic at the 4B scale. This indicates that the same final performance level is achievable in less than half the training steps, implying a net computational gain that far exceeds the preprocessing overhead introduced by T RAJ VAL .
+
+B.6 Cross-Regime Reuse of the Learnability Prior 
+
+Since learnability is regime-conditional, estimat-ing the prior on the target regime itself ( in-regime )is our default and most accurate setting. As re-running the probe for every regime repeats the one-time preprocessing cost of Appendix B.5, we ask whether an existing prior can be reused: (i) same-family, cross-scale , from a smaller to a larger model in the same family; and (ii) cross-family , from a different family. All runs are on Math; each trans-ferred prior guides RL on the target without re-estimation, against uniform sampling (Random / BASE -GRPO) on that target, with the in-regime result on Qwen3-4B as a reference. 
+
+Same-family, cross-scale reuse. Within Qwen3, a prior from a smaller model remains useful on a larger one, improving all three metrics over uni-form sampling: Qwen3-1.7B →Qwen3-4B reaches the baseline peak in 66.0% of steps, and Qwen3-4B →Qwen3-8B in 87.5% (Table 8). A single prior can thus be shared across scales rather than recom-puted per model. 
+
+Cross-family reuse. Transfer across families also helps, but less. Llama-3.2-3B →Qwen3-4B raises Best Acc (0.5060 →0.5129) and reaches the peak in 84.0% of steps, while AUC is essentially unchanged (0.4817 vs. 0.4829). Both the smaller Best Acc gain and the flat AUC are consistent with a prior less matched to the target regime. Overall, the in-regime prior on Qwen3-4B is strongest (Best Acc 0.5190), slightly above same-family (0.5180) and cross-family (0.5129) trans-fer; same-family reuse stays closest to it and con-verges fastest (S2B 66.0 vs. 84.0). In-regime esti-mation therefore remains the default for peak per-formance, while transfer is a lower-cost alternative that spreads the probe cost across models—same-family reuse being the more dependable of the two. 
+
+B.7 Hyper-parameter Sensitivity: Power Compression Exponent 
+
+Table 11 reports the sensitivity of T RAJ VAL to the power compression exponent α, which con-trols the degree to which learnability scores are Statistic Random TRAJ VAL Abs. Diff. Change 
+
+Mean 2.301 s 2.247 s −0.055 s −2.4% Median 2.286 s 2.304 s +0.018 s +0.8% p90 2.957 s 2.971 s +0.014 s +0.5% p95 3.177 s 3.173 s −0.003 s −0.1% Cumulative (271 steps) 623.6 s 608.9 s −14.8 s −2.4% 
+
+> (a) Experience pipeline total time ( time/experience_pipeline/total ).
+
+Statistic Random TRAJ VAL Abs. Diff. Pipeline Share 
+
+Mean latency 0.019 ms 0.239 ms +0.220 ms 0.010% p99 latency 0.033 ms 0.253 ms +0.221 ms 0.011% Cumulative (271 steps) 5.2 ms 64.8 ms +59.4 ms 0.010%   
+
+> (b) Micro-benchmark: get_indices() latency over 1,000 independent calls; pipeline share computed relative to the 623.6 s random baseline.
+
+Table 7: Empirical overhead of T RAJ VAL relative to random sampling. Top : Experience pipeline processing time over 271 training steps. Mean and percentile differences are within measurement noise. Bottom : Micro-benchmark isolating operator latency over 1,000 calls. Although the relative increase appears large, the absolute per-step cost is equivalent to 0.01% of total pipeline time.                                 
+
+> Target Prior source Best Acc ↑AUC ↑S2B ↓
+> Qwen3-4B
+> Random –0.5060 0.4829 –+ T RAJ VAL (transfer) Qwen3-1.7B 0.5180 0.4889 66.0 + T RAJ VAL (transfer) Llama-3.2-3B 0.5129 0.4817 84.0 + T RAJ VAL (in-regime )Qwen3-4B 0.5190 0.4931 60.0 Qwen3-8B
+> Random –0.5342 0.4999 –+ T RAJ VAL (transfer) Qwen3-4B 0.5484 0.5109 87.5
+
+Table 8: Reusing the T RAJ VAL prior across regimes (Math). Each transferred prior is estimated on the prior source 
+
+and guides RL on the target without re-estimation. S2B is the fraction of steps to reach the Random baseline’s peak accuracy (lower is better; “–” marks that baseline). The in-regime row is a reference, not a competing method. 
+
+flattened before conversion to sampling probabil-ities. Across three values α ∈ { 0.1, 0.3, 0.5}, the overall pattern of improvement over the R ANDOM 
+
+baseline is preserved on both domains. On Math, all three settings advance Best Acc beyond the ran-dom baseline ( 0.3967 ), and α = 0 .3 achieves the most favorable convergence speed, reaching the random baseline’s peak accuracy in only 60 .6% of the steps while maintaining a competitive AUC of 
+
+0.3729 . On Logic, the Best Acc increases monoton-ically with α from 0.1884 to 0.1924 , while α = 0 .3
+
+yields the highest AUC ( 0.1663 ) among all variants, suggesting that a moderate compression level best balances priority concentration and distributional coverage. Taken together, these results indicate that T RA -
+
+> J
+
+VAL is not sensitive to the precise choice of α
+
+within the range evaluated: all three settings pro-duce non-trivial improvements over uniform sam-pling on both domains and both metrics, and no single value of α degrades performance below the RANDOM baseline. The moderate value α = 0 .3
+
+provides the best overall trade-off and is therefore adopted as the default throughout the main experi-ments. 
+
+C Complete Experimental Results 
+
+C.1 Rollout Dynamics Under Learnability-Aware Sampling 
+
+Figure 10 visualizes the training-time rollout accu-racy under different sampling strategies for Qwen3-1.7B on Math and Logic. These curves are intended as a diagnostic view of how T RAJ VAL reshapes the sampled training stream. They are not a direct substitute for downstream benchmark performance, MATH500 Minerva Olympiad AMC23 AIME25 AIME24                                                                                                       
+
+> Method Best AUC S2B Best AUC S2B Best AUC S2B Best AUC S2B Best AUC S2B Best AUC S2B Random 75.5 72.1 –19.6 18.0 –43.2 39.9 –60.4 53.1 –17.6 15.3 –21.9 18.7 –+Ours 76.3 72.9 75.8 19.5 18.4 –44.0 40.5 84.4 62.6 55.1 90.9 20.6 16.5 45.5 24.0 20.3 50.5
+> BOTS 75.5 72.1 –19.7 18.1 –44.1 39.9 –61.1 54.1 –18.8 15.7 –23.5 18.9 –+Ours 76.6 72.9 94.4 20.0 18.1 95.0 44.9 40.9 85.0 62.4 54.9 95.0 18.5 15.9 –23.8 19.5 75.0
+> GRESO 75.3 71.7 –20.1 18.4 –44.1 39.7 –60.9 53.4 –18.2 15.4 –23.1 18.8 –+Ours 76.0 72.6 85.0 19.7 18.3 –44.9 40.2 90.0 61.8 54.3 100.0 19.0 15.9 84.2 24.3 19.6 85.0
+
+Table 9: Per-benchmark results on mathematical reasoning, Qwen3-1.7B. Best Acc ( ↑), AUC ( ↑), and S2B (%, ↓)for each benchmark and method. Best results per column in bold .                                                                                                                                   
+
+> MATH500 Minerva Olympiad AMC23 AIME25 AIME24
+> Method Best AUC S2B Best AUC S2B Best AUC S2B Best AUC S2B Best AUC S2B Best AUC S2B Random 82.6 80.9 –24.8 23.5 –52.2 50.0 –79.5 75.8 –28.4 27.0 –36.3 32.6 –+Ours 83.8 81.9 60.0 24.6 23.5 –53.8 51.0 60.0 80.9 77.8 60.0 31.3 28.6 43.6 37.6 32.9 72.0
+> BOTS 82.9 80.9 –24.4 23.4 –52.0 49.3 –80.5 75.0 –29.5 26.2 –35.9 31.2 –+Ours 83.8 81.5 70.0 24.8 23.5 94.4 53.5 50.4 68.4 80.5 76.3 95.0 31.0 27.9 65.0 37.4 32.2 75.0
+> GRESO 83.2 80.8 –24.9 23.3 –51.6 48.5 –81.3 74.2 –29.0 25.4 –35.4 29.6 –+Ours 83.5 81.2 80.0 25.1 23.4 100.0 53.3 49.9 73.7 80.3 74.6 –31.2 27.1 70.0 37.2 31.4 75.0
+
+Table 10: Per-benchmark results on mathematical reasoning, Qwen3-4B. Best Acc ( ↑), AUC ( ↑), and S2B (%, ↓) for each benchmark and method. Best results per column in bold .
+
+Math (Avg) Logic 
+
+Method S2B (%) ↓ Best Acc ↑ AUC ↑ S2B (%) ↓ Best Acc ↑ AUC ↑
+
+Random – 0.3967 0.3620 – 0.1826 0.1544 TrajVal ( α = 0 .1) 78.79 0.4062 0.3656 69.57 0.1884 0.1611 TrajVal ( α = 0 .3) 60.61 0.4035 0.3729 73.91 0.1904 0.1663 TrajVal ( α = 0 .5) 78.79 0.4071 0.3647 69.57 0.1924 0.1660 
+
+Table 11: Sensitivity to the power compression exponent α on Qwen3-1.7B. All other hyperparameters are held fixed. 
+
+which is reported in Section 5.2. • Earlier rise in rollout accuracy. Across both domains, the T RAJ VAL -augmented variants gen-erally increase rollout accuracy faster than their corresponding baselines, with a clearer separa-tion on Math. This pattern is consistent with the intended effect of learnability-aware sampling: allocating more updates to tasks whose rewards are more responsive to continued optimization. • Baseline-specific behavior is preserved early on. 
+
+In the early stage of training, each augmented curve remains close to its underlying baseline, rather than collapsing to a common trajectory. This suggests that T RAJ VAL acts as a mild prior on top of the original scheduler, instead of over-riding its native sampling behavior. • Greater alignment later in training. As train-ing proceeds, the augmented variants become more similar to one another than the original baselines do, especially on Math. We view this as qualitative evidence that different schedulers equipped with the same learnability prior are gradually steered toward a more similar set of high-potential samples. The contrast between Math and Logic is also informative: the same qualitative trends appear in both domains, but the Logic curves are noisier and the separations are smaller. This may reflect greater heterogeneity in the logic training pool, making rollout-level improvements less smooth even when the sampling prior is beneficial. 
+
+C.2 Evaluation Curves 
+
+Figure 11 presents the full evaluation trajectories for the main configurations across Math and Logic. Figure 10: Training-time rollout accuracy under differ-ent sampling strategies for Qwen3-1.7B. Left: Math. Right: Logic. Solid lines denote the original baselines, and dashed lines denote their T RAJ VAL -augmented counterparts. The plots provide a qualitative view of how learnability-aware sampling changes the training dynamics on the sampled pool. 
+
+Several consistent patterns are visible. First, T RAJ -VAL -augmented variants generally rise earlier than their corresponding baselines, indicating improved data efficiency in the early and middle stages of training. Second, these gains are not limited to faster initial progress: in most settings, the aug-mented curves also maintain a higher or compara-ble plateau, consistent with the improvements in Best Acc and AUC reported in Table 1. Third, the qualitative trend is shared across both standalone and plug-in use cases, suggesting that the learn-ability prior remains beneficial whether used on its own or combined with an online scheduler. Over-all, the trajectory-level view reinforces the main conclusion that learnability-aware allocation im-proves training efficiency without sacrificing final evaluation performance. 
+
+C.3 Complete Per-Benchmark Results 
+
+Tables 9 and 10 report per-benchmark break-downs of the main Math results for Qwen3-1.7B and Qwen3-4B, respectively. Each table reports Best Acc, AUC, and S2B for all six evalua-tion benchmarks (MATH500, Minerva, Olympiad-Bench, AMC23, AIME25, AIME24) under all three base training strategies and their T RAJ VAL -augmented counterparts. Results on Llama-3.2-3B are reported separately in Appendix B.3. 
+
+D Algorithm and Pseudocode of TrajVal 
+
+Algorithm 1 summarizes the full procedure. Figure 11: Evaluation accuracy curves for all main configurations on Math and Logic. The x-axis shows training steps and the y-axis shows evaluation accuracy. 
+
+Algorithm 1 TRAJ VAL : Probe-Based Learnability Estimation for RL Post-Training  
+
+> 1:
+
+Input: training pool D, base model θ0, probe size |P| , probe epochs T , checkpoint window size K,compression exponent α, floor ϵ 
+
+> 2:
+
+Output: sampling distribution {p(x)}x∈D  
+
+> 3:
+
+// Phase I: estimate a learnability prior from a probe run  
+
+> 4:
+
+Sample a probe set P ⊂ D uniformly, with |P| ≪ |D|  
+
+> 5:
+
+Train θ0 on P for T epochs to obtain probe checkpoints {θt} 
+
+> 6:
+
+Select early checkpoints Tearly and late checkpoints Tlate , where |T early | = |T late | = K 
+
+> 7:
+
+for each task x ∈ D do  
+
+> 8:
+
+Compute endpoint estimates 
+
+¯rearly (x) = 1
+
+K
+
+X
+
+> t∈T early
+
+acc( x, θ t), ¯rlate (x) = 1
+
+K
+
+X
+
+> t∈T late
+
+acc( x, θ t) 
+
+> 9:
+
+end for  
+
+> 10:
+
+{p(x)}x∈D ← COMPUTE WEIGHTS 
+
+ {¯rearly (x), ¯rlate (x)}x∈D , α, ϵ  
+
+> 11:
+
+// Phase II: main RL training with prior-weighted sampling  
+
+> 12:
+
+for training step t = 1 , 2, . . . do  
+
+> 13:
+
+Sample a batch from D according to p(x)
+
+or use the composed weight wfinal (x, t ) = p(x) wonline (x, t ) 
+
+> 14:
+
+Perform one standard RL update on the sampled batch  
+
+> 15:
+
+end for  
+
+> 16:
+
+function COMPUTE WEIGHTS ({¯rearly (x), ¯rlate (x)}, α, ϵ ) 
+
+> 17:
+
+for each task x ∈ D do  
+
+> 18:
+
+∆( x) ← ¯rlate (x) − ¯rearly (x) 
+
+> 19:
+
+s(x) ←  1 − ¯rearly (x) max  0, ∆( x) 
+
+> 20:
+
+w(x) ← max  s(x)α, ϵ  
+
+> 21:
+
+end for  
+
+> 22:
+
+return p(x) = w(x)
+
+P 
+
+> x′∈D
+
+w(x′) for all x ∈ D  
+
+> 23:
+
+end function
