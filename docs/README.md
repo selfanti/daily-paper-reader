@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 19 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-16 20:18:37 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-17 20:56:40 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读19篇，聚焦AI自主进化，重点锁定两篇9分高分论文。OpenLoopEvolve提出长程任务循环策略的可验证自进化，Macaron-V1则用Mixture-of-LoRA实现开放持续学习与自我改进，值得优先关注。其它可瞄一眼：机器人操作强化学习有集中训练新招，零和博弈也揭示了非对称恢复快收敛的巧思；建议从OpenLoopEvolve入手，顺带看Macaron-V1的LoRA方案，理解“边用边学”新思路。</p>
+<p>今日精读聚焦 AI 智能体长期记忆与反思，另涉机器人操作与社交导航等强化学习前沿。</p>
+<p>最值得看的是 9.0 分双雄《Beyond Memory》提出事务性连续性内核，以及《LoongReflect》用全局视角蒸馏提升搜索智能体反思能力。</p>
+<p>下一步可优先深入这两篇精读，把握长寿命智能体与推理增强的核心进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +76,7 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="OpenLoopEvolve: A Verifiable Self-Evolution Framework for Loop Policies in Long-Horizon Complex Tasks">OpenLoopEvolve: A Verifiable Self-Evolution Framework for Loop Policies in Long-Horizon Complex Tasks</span></li><li><span class="dpr-home-dashboard-paper-title" title="Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA">Macaron-V1: Towards Open Continual Learning with Self-Improvement and Mixture-of-LoRA</span></li><li><span class="dpr-home-dashboard-paper-title" title="Boundary-Seeking Policy Gradient for Safe Reinforcement Learning">Boundary-Seeking Policy Gradient for Safe Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Beyond Memory: A Transactional Continuity Kernel for Long-Lived AI Agents">Beyond Memory: A Transactional Continuity Kernel for Long-Lived AI Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="LoongReflect: Boosting Long-Horizon Reflection in Search Agents via Global Perspective Distillation">LoongReflect: Boosting Long-Horizon Reflection in Search Agents via Global Perspective Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="HELIX: Model-Harness Co-evolution for Recursive Self-Improvement">HELIX: Model-Harness Co-evolution for Recursive Self-Improvement</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>8</strong></span></div>
 </section>
@@ -87,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Muscle Memory for Agents: Compile not Merely Retrieve">Muscle Memory for Agents: Compile not Merely Retrieve</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Real-World Online Reinforcement Learning for Robot Manipulation via Centralized Training and Critic Decomposition">Efficient Real-World Online Reinforcement Learning for Robot Manipulation via Centralized Training and Critic Decomposition</span></li><li><span class="dpr-home-dashboard-paper-title" title="Algorithmic Asymmetry in Zero-Sum Games: Unilateral Recovery of Fast Convergence Against a Slow Opponent">Algorithmic Asymmetry in Zero-Sum Games: Unilateral Recovery of Fast Convergence Against a Slow Opponent</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning Loco-Manipulation From SMPC Demonstrations With Sparse Offline-to-Online RL">Learning Loco-Manipulation From SMPC Demonstrations With Sparse Offline-to-Online RL</span></li><li><span class="dpr-home-dashboard-paper-title" title="Towards Socially Compliant Navigation in Deep Reinforcement Learning via Proxemics-Based Reward Modeling">Towards Socially Compliant Navigation in Deep Reinforcement Learning via Proxemics-Based Reward Modeling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Teach the Magnitude, Not the Direction: Verifier-Bounded Credit Assignment for Multi-Turn Multi-step LLM Agents">Teach the Magnitude, Not the Direction: Verifier-Bounded Credit Assignment for Multi-Turn Multi-step LLM Agents</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
