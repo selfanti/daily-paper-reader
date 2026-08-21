@@ -1,0 +1,664 @@
+Title: LOCAL: Enabling Learning On-device Contiguously for Agent LLMs
+
+URL Source: https://arxiv.org/pdf/2608.15241v1
+
+Published Time: Tue, 18 Aug 2026 00:39:38 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# LOCAL: Enabling Learning On-device Contiguously for Agent LLMs 
+
+## Xinxin Liu 
+
+Nanjing University Nanjing, China 
+
+xinxinliunju@gmail.com 
+
+## Jiaxin Li 
+
+Nanjing University Nanjing, China 
+
+jiaxin66778@gmail.com 
+
+## Zibo Wang 
+
+Nanjing University Nanjing, China 
+
+wangzb@smail.nju.edu.cn 
+
+## Yun Ji 
+
+Nanjing University Nanjing, China 
+
+jiyun@smail.nju.edu.cn 
+
+## Zhangqi Zhu 
+
+Nanjing University Nanjing, China 
+
+231880166@smail.nju.edu.cn 
+
+## Qing Hu 
+
+Nanjing University Nanjing, China 
+
+231880407@smail.nju.edu.cn 
+
+## Zhibin Wang ∗
+
+Nanjing University Nanjing, China 
+
+wzbwangzhibin@gmail.com 
+
+## Rong Gu 
+
+Nanjing University Nanjing, China 
+
+gurong@nju.edu.cn 
+
+## Sheng Zhong 
+
+Nanjing University Nanjing, China 
+
+sheng.zhong@gmail.com 
+
+## Chen Tian 
+
+Nanjing University Nanjing, China 
+
+tianchen@nju.edu.cn 
+
+## Abstract 
+
+On-device LLM agents interact repeatedly with users on lo-cal hardware, producing private traces that are valuable for adaptation but should not be sent to a remote trainer. Ide-ally, such agents would learn contiguously —adapting from every interaction without pausing or suspending user-facing inference—yet existing inference runtimes assume stable weights and existing RL systems assume separated resources, so neither can support this continuity. We present LOCAL, the first single-GPU runtime that enables contiguous on-device learning for LLM agents. The key insight is that GPU scheduling, adapter version management, and KV-cache va-lidity cannot be handled by independent subsystems: adapter updates invalidate cached KV tensors from older versions, and cache retention affects the memory available for train-ing. LOCAL makes adapter version, task priority, and cache state visible to three cooperating components—a cooperative scheduler, a version-aware KV-cache manager, and a multi-agent model runtime—that share this state to keep schedul-ing, execution, and cache maintenance mutually consistent. On a single 24 GB GPU with 7B-class models, LOCAL lowers foreground queue-wait p95 by 3.1 × over FIFO, lowers p95 time-to-first-token (TTFT) by 1.55 × versus non-preemptible training, cuts post-publish first-hit prefill p99 by 25.6% and cross-agent TTFT p99 by 21.9%, and keeps background learn-ing progressing under tight KV budgets. 
+
+> ∗Corresponding author.
+
+## 1 Introduction 
+
+Local LLM deployment is becoming practical on consumer hardware, driven largely by privacy. Systems such as MLC-LLM [30] and ExecuTorch [38] target mobile and edge back-ends, while PowerInfer [48] and LLM in Flash [3] reduce the computational and memory barriers to running large lan-guage models locally. Running models locally keeps private data, such as conversation history, personal preferences, and tool interactions, on the user’s device instead of sending it to a remote service. These local deployments are also beginning to move be-yond one-shot inference toward interactive agents that could improve from user feedback. An on-device LLM agent main-tains session state, invokes tools, observes outcomes, and revisits the same personal context across many turns [42, 50, 57]. These repeated interactions produce traces that are both private and valuable for adaptation—user corrections, repeated preferences, failed tool calls, and follow-up ques-tions that reveal whether an earlier response helped [47, 52]. LoRA-style adapters [15] make such adaptation feasible on a single device: instead of fine-tuning the full model, only small low-rank modules are trained, and different adapters can specialize the same base model for different roles or pref-erences with minimal memory overhead. Sending interaction traces to a remote trainer weakens the privacy motivation for local deployment; keeping adaptation local preserves that motivation, but it means that inference, feedback recovery, and adapter updates must share the same device resources. The ideal is contiguous learning : the agent adapts from every 
+
+> 1arXiv:2608.15241v1 [cs.DC] 15 Aug 2026
+
+interaction without interrupting user-facing inference, as though learning and serving were a single unbroken process. Neither existing inference runtimes nor existing RL train-ing systems can support contiguous on-device learning. In-ference engines such as vLLM [19] and SGLang [63] are built around a stable-weight assumption : loaded model pa-rameters do not change during serving, so KV-cache entries remain valid as long as the visible token prefix matches. This assumption makes prefix caching safe and scheduling simple, but it breaks continuity when an online training loop updates adapter weights on the same device—cached KV tensors produced under an older adapter version are no longer valid, and reusing them silently mixes hidden states from different adapter states. Distributed RL systems such as HybridFlow [44], OpenRLHF [16], and ReaL [29] adopt a 
+
+resource-separation assumption : rollout, reward computation, reference scoring, and training can be placed on separate accelerators and optimized for aggregate throughput. This assumption also breaks continuity for on-device agents: a single consumer GPU may have to respond to the user, run judge inference, train an adapter, and maintain KV state si-multaneously, with no separate cluster to absorb the load. The two assumptions that make existing systems work— stable weights and separated resources—are precisely what prevent contiguous learning. To enable contiguous learning for on-device LLM agents, we present LOCAL, a single-GPU runtime in which infer-ence and adaptation share the same model instance without interrupting each other. Realizing this requires addressing three challenges. 
+
+(1) Foreground–background contention on a single GPU. 
+
+Foreground inference, judge inference, training steps, and cache refresh all compete for the same GPU. A foreground-only policy preserves responsiveness but starves background learning and cache maintenance; a background-heavy policy creates visible stalls. Training is not cheaply preemptible at arbitrary points: safe interruption boundaries occur around mini-steps and optimizer commits, so the runtime must rep-resent background work as bounded tasks that yield at these boundaries and admit them only when the foreground path leaves a usable idle window. 
+
+(2) KV-cache reuse under evolving adapters. KV caching is central to interactive throughput, but adapter updates break the token-equality assumption used by ordinary prefix caches. Cached KV tensors generated under adapter version 𝑣 
+
+are unsafe to reuse after the adapter commits version 𝑣 +1, even if the visible token prefix is identical. Reusing such entries silently mixes hidden states from different adapter states, while invalidating all stale entries destroys long-prefix reuse after every update. The runtime therefore needs a cache contract that remains correct when adapter versions change, rather than relying on token prefix equality alone. 
+
+(3) Memory management under constrained and con-tended VRAM. Consider a 24 GB consumer GPU running a 7B-parameter model in FP16. The weights alone occupy roughly 13.5 GB; the remaining budget must accommodate KV cache for long agent contexts, LoRA adapter parameters, judge and replay batches, training activations, gradients, op-timizer state, and checkpoint staging. These objects have different lifetimes—KV cache persists across turns, training activations exist only during a gradient step, and adapter weights change at commit boundaries—but they compete for the same physical memory. The pressure grows when mul-tiple agents share one model instance: several agents may carry long overlapping contexts, but each LoRA adapter may need its own valid KV entries after adapter-specific updates, and a naive policy that duplicates shared prefixes or retains stale entries can quickly exhaust VRAM. The root difficulty is that these three concerns are coupled: foreground latency, adapter publication, and KV-cache valid-ity cannot be managed by independent subsystems without breaking learning continuity. Treating them independently leads to unbounded foreground stalls, stale KV reuse, or memory exhaustion—all forms of discontinuity. The key in-sight behind LOCAL is that the three components respon-sible for these concerns—the scheduler, the model runtime, and the KV-cache manager—must operate over shared state. Adapter version, task priority, and cache validity are visible to all three so that scheduling decisions, execution, and cache maintenance remain mutually consistent and learning pro-ceeds without interruption. This paper makes the following contributions: 
+
+(1) We design a cooperative scheduler (§4) that centralizes GPU admission: it separates the foreground inference queue from the background task queue, gives foreground requests strict priority, and admits background judge, training, and cache refresh tasks only as bounded chunks that yield at safe boundaries when the foreground path leaves usable GPU windows. 
+
+(2) We design a version-aware KV-cache manager (§5) that makes adapter version part of the cache key so that stale coverage is rejected at lookup. The manager maintains hot-prefix statistics to decide which entries are worth retaining, refreshing, or offloading: when an adapter commits a new version, it issues stale-coverage prefill instructions for hot prefixes; when the model runtime reports memory pressure, it offloads colder entries to host memory according to the same statistics. A radix-indexed prefix table separates logical validity from physical residency. 
+
+(3) We design a multi-agent model runtime (§6) that executes model inference and training tasks, senses current memory pressure, and communicates offload requests to the KV-cache manager. The runtime extends the cache contract with agent-scoped KV identity—a cached entry is reusable only when its 
+
+> 2
+
+token prefix, context namespace, logical adapter, and adapter version all match the request—and adapter-scoped invalida-tion that limits the effect of training so that one adapter pub-lish does not invalidate KV owned by other adapters. Cross-agent pre-prefill uses multi-agent communication structure to propose speculative cache work without bypassing the scheduler. We implement a prototype and evaluate it on a single con-sumer GPU with 7B-class models. Under mixed foreground inference, judge inference, training, and cache-maintenance work, LOCAL reduces foreground queue p95 and p99 by 3.1 ×
+
+and 3.4 × over FIFO while completing 34 adapter training commits. Cooperative interruption makes p95 TTFT 1.55 ×
+
+lower than non-preemptible training and reduces accumu-lated training blocking by 2.6 ×. Compared with a vLLM full-LoRA path, LOCAL lowers p95 queue wait by 5.9 ×–12.8 × across admission policies. Its cache mechanisms lower post-publish first-hit prefill p99 by 25.6%, reduce cross-agent TTFT p99 by 21.9%, and keep the runtime operating while peak GPU memory ranges from 21.6 GB to 23.5 GB. 
+
+## 2 Background and Motivation 
+
+2.1 On-Device LLM Agents 
+
+On-device LLM deployment keeps private data local, reduces dependence on network services, and can respond to users when connectivity is unavailable. Recent work has made this setting increasingly practical from several directions: deployment runtimes and compiler stacks target mobile and edge backends [12, 30, 38], while inference engines exploit consumer-grade CPU/GPU or flash/DRAM memory hierar-chies [3, 48]. An on-device LLM agent is a local application-level control loop around such a model. It maintains session state, receives user instructions, invokes tools, observes tool or environment outcomes, and uses later turns to decide what to do next. Unlike one-shot local inference, the agent repeatedly revisits the same personal context on the same device. This setting exposes private traces that are useful for adap-tation: user corrections, repeated preferences, failed tool re-sults, abandoned plans, and follow-up questions that clarify whether an earlier response helped. Sending these traces to a remote trainer weakens the privacy motivation for local deployment. Keeping adaptation local preserves that moti-vation, but it also means that foreground inference, judge inference, and model updates must share the same device resources. Agent interaction is therefore not a stateless prompt-response call. A typical agent session is multi-turn: the model proposes an action, invokes a tool or environment operation, observes the result, and uses that observation in later turns. ReAct formalizes this interleaving of reasoning, acting, and obser-vation for language agents [57]; related agent work extends the pattern to API/tool use, verbal feedback, and embod-ied environments [42, 47, 50]. As applications become more complex, multi-agent frameworks such as CAMEL, AutoGen, and MetaGPT further decompose applications into conver-sations or workflows among specialized agents [13, 20, 53]. This structure is useful for local assistants because a planner, tool agent, critic, judge, or coordinator may share task con-text while applying different prompts, tools, or adaptation policies. 
+
+2.2 Online RL for On-Device Agents 
+
+On-device agents need to learn from the traces their interac-tions produce. Online reinforcement learning (RL) provides a natural framework: a policy generates responses, a reward source evaluates them, and an optimizer updates the policy. In the agent setting, the reward comes from the next state af-ter an action—user replies, tool outputs, terminal states, and GUI state changes all carry information about whether the previous response helped. We adopt the term next-state feed-back for this signal, following recent work that formalizes it for personal agents [52]. The signal is useful but delayed and noisy: a local runtime must record enough metadata on the foreground path and later recover rewards, build re-play samples, and update adapters without blocking the next foreground inference. Two technical mechanisms make on-device RL both feasi-ble and challenging. 
+
+LoRA adapters make training feasible within a single de-vice’s memory budget. Instead of fine-tuning the full model, LoRA adds small trainable low-rank modules while sharing a frozen base model [15]; recent work has shown that on-device training with LoRA is practical when memory pres-sure is managed carefully [10]. For agents, different adapters can represent different roles, preferences, or task types, and a runtime must route each request to the correct adapter, publish adapter updates atomically, and avoid using partially updated weights for inference. However, adapter updates also invalidate previously valid inference state, as we explain next. 
+
+KV cache and prefix caching make multi-turn inference efficient but break when adapters change. During inference, the model stores key and value tensors (KV cache) for previ-ous tokens so that later decode steps attend to cached ten-sors instead of recomputing the full history. Prefix caching further reuses KV tensors when a new request shares a to-ken prefix with a previous request: vLLM shows that paged KV-cache management is important for high-throughput in-ference [19], while SGLang shows that prefix reuse is impor-tant for efficient execution of structured LLM programs [63]. These optimizations rely on an implicit contract: the model weights that produced the cached tensors have not changed. When an adapter is updated from version 𝑣 to 𝑣 +1, cached   
+
+> 3Distributed RL Runtime
+> Rollout Reward Train
+> Inference
+> Model
+> Cluster A Cluster B
+> Model
+
+(a) Distributed RL runtime On-Device Agent   
+
+> Inference Environment Judge
+> delayed feedback
+> Train Adapter
+> contention
+> Shared GPU / VRAM
+> Model
+
+(b) On-device agent runtime 
+
+Figure 1. Resource coupling in on-device learning. KV tensors produced under version 𝑣 are no longer valid— reusing them silently mixes hidden states from different adapter states. On a device where inference and training coexist, this contract is continuously broken. 
+
+2.3 Co-Locating Inference and Training 
+
+Existing local and production inference systems are built around a relatively stable inference state. Local and edge runtimes such as MLC-LLM and ExecuTorch support device-specific deployment and execution, while inference systems such as vLLM and SGLang optimize batching, KV-cache man-agement, and prefix reuse for loaded weights [19, 30, 38, 63]. In both cases, the common contract is that weights used for inference are not continuously mutated by an online train-ing loop on the same device. Existing RL systems make a different resource assumption: rollout workers, reward work-ers, and training workers can run on different devices and optimize aggregate training throughput [16, 29, 44]. Recent RL/RFT frameworks further broaden the design space with asynchronous rollout, flexible data generation, and agent-environment interaction support [9, 34, 49]. On-device agent training breaks both assumptions, as shown in Figure 1. The inference state evolves because adapters are updated from local feedback, and the rollout, reward, training, and cache-maintenance work all contend for one local model instance. This coexistence requirement is the core problem. The run-time cannot treat inference, training, and cache management as independent subsystems, because adapter updates affect inference-time KV validity, cache retention affects training memory, and delayed feedback requires attribution to the agent and adapter that produced a response. 
+
+2.4 Challenges of On-Device Inference-Training Coexistence 
+
+The hardware envelope is close to a consumer device: one model instance, one consumer-grade GPU, and no sepa-rate accelerator dedicated to reward modeling or training. Consider a 24 GB consumer GPU running a 7B model in FP16/BF16. The weights alone occupy roughly 13.5 GB. The remaining gigabytes must accommodate KV cache for long context, LoRA adapters, judge and replay batches, training Contention VRAM Pressure Versioned KV Reuse  
+
+> Inference GPU Judge Train Refresh
+
+*contention          
+
+> shared compute
+> 24 GB VRAM
+> Weights 13.5 GB KV Adapter Replay Act/Opt
+> limited VRAM
+> Adapter 𝐀 𝐀 Adapter 𝐀 𝐀+1
+> Under 𝐀 𝐀 (hot prefix)
+> …
+> Under 𝐀 𝐀+1 (reused KV)
+> ✕
+> stale real-time re-prefill
+> Under 𝐀 𝐀+1 (refreshed prefix)
+> …
+
+Figure 2. Runtime challenges for on-device RL. activations, gradients, optimizer state, and checkpoint stag-ing. Figure 2 summarizes the coupled runtime challenges in this envelope. 
+
+(1) Foreground–background contention on a single GPU. 
+
+Foreground inference, judge inference, training steps, and cache refresh all compete for the same GPU. A foreground-only policy preserves responsiveness but starves judging and training under frequent interaction; a background-heavy pol-icy advances training but creates visible stalls when training steps allocate activations and optimizer state. Worse, training is not cheaply preemptible at arbitrary points: safe interrup-tion boundaries occur around mini-steps, optimizer commits, or adapter publication. The runtime therefore needs a sin-gle admission point that represents background work as bounded tasks, exposes safe interruption boundaries, and admits them only when the foreground path leaves a usable idle window. 
+
+(2) KV-cache reuse under evolving adapters. KV caching is central to interactive throughput, but adapter updates break the token-equality assumption used by ordinary prefix caches. A cached entry generated under adapter version 
+
+𝑣 is not generally valid after the adapter commits version 
+
+𝑣 +1, even if the visible token prefix is identical. Reusing such an entry silently mixes computations from different adapter states, while invalidating all stale entries destroys long-prefix reuse after every update. The runtime therefore needs a cache contract in which adapter identity and version are part of the cache key, stale coverage is rejected at lookup, and hot prefixes can be refreshed under the new version outside the foreground critical path. 
+
+(3) Memory management under constrained and con-tended VRAM. After loading a 7B model in FP16/BF16, a 24 GB local GPU has only a small remaining budget for mu-table runtime state. This budget must be shared by KV cache, judge prompts, replay batches, LoRA parameters, training activations, gradients, optimizer state, and checkpoint stag-ing. These objects have different lifetimes and correctness constraints, but they compete for the same physical mem-ory. KV cache is the largest inference state that grows with interaction length. Retaining long prefixes reduces time-to-first-token, but reduces the memory available for judging, training, and future foreground requests. Evicting aggres-sively preserves headroom for training, but destroys prefix reuse. With multiple adapters, KV reuse is further scoped    
+
+> 4Cooperative Scheduler Multi-agent Model Runtime
+> Foreground Queue Background Queue GPU Executor Adapter Manager Version-aware KV Cache Manager
+> GPU Memory
+> Adapter 0 @ v3 Adapter 1 @ v1 Adapter n @ v1 Training n @ v2
+> Host
+> KV read/write
+> Trace Feedback User Request
+> Agent Runtime
+> Adapter 1 ...
+> GPU task dispatch
+> Results & Metrics Adapter 0 Adapter n
+> Scheduling Policy
+> Preemption
+> Judge Inference Train Stale-Coverage Prefill Cross-Agent Pre-Prefill
+> Offload Hotness
+
+Figure 3. LOCAL architecture. by adapter identity and version, not only by visible tokens. Multi-agent execution makes the pressure worse: several agents may carry long overlapping contexts, but each LoRA adapter may need its own valid KV entries after adapter-specific updates. A naive policy that duplicates shared pre-fixes per agent or retains stale entries can quickly exhaust VRAM. Therefore, memory management cannot be a local cache policy alone: shared metadata is needed about prefix utility, residency, adapter provenance, version, workspace de-mand, and memory pressure in order to coordinate retention, offload, refresh, and training admission. These challenges motivate three runtime mechanisms de-veloped in the rest of the paper: a cooperative scheduler that centralizes GPU admission and bounds background work (§4), a version-aware KV-cache manager that main-tains cache correctness and hot-prefix-driven maintenance (§5), and a multi-agent model runtime that executes infer-ence and training, senses memory pressure, and extends the cache contract with agent-scoped identity (§6). 
+
+## 3 System Overview 
+
+The design of LOCAL is grounded in one insight. 
+
+Key insight. Foreground latency, adapter publication, and KV-cache validity cannot be managed independently without breaking learning continuity. Background online RL changes adapter parameters, which invalidates KV tensors produced by older adapter versions even when the visible token prefix is unchanged. LOCAL therefore treats adapter version, task priority, and cache validity as first-class runtime state, so that the three components responsible for these concerns—the scheduler, the model runtime, and the KV-cache manager— operate over the same state and keep learning uninterrupted. Figure 3 shows how LOCAL realizes this insight. The runtime sits between a local agent API and a single model instance and is organized into three components that share adapter version, task priority, and cache validity as common state: a cooperative scheduler that is the only GPU admission point, a version-aware KV-cache manager that owns cache validity and hot-prefix metadata, and a multi-agent model runtime that executes inference and training, senses memory pressure, and communicates with the other two components. 
+
+Cooperative scheduler (§4). The scheduler separates the foreground inference queue from the background task queue and admits only one active GPU task at a time. Foreground requests retain strict priority; background judge inference, training, and cache-maintenance tasks run only at safe yield or commit boundaries when the foreground path leaves us-able GPU windows. 
+
+Version-aware KV-cache manager (§5). The KV-cache manager makes adapter version part of the cache key so that stale coverage is rejected at lookup. It maintains hot-prefix statistics to decide which entries are worth retaining, refresh-ing, or offloading. When an adapter commits a new version, the manager issues re-prefill instructions for hot prefixes as scheduler-visible background tasks. When the model run-time reports memory pressure, the manager offloads colder entries to host memory according to the same statistics. A radix-indexed prefix table separates logical validity from physical residency. 
+
+Multi-agent model runtime (§6). The model runtime ex-ecutes model inference and training tasks, senses current memory pressure, and communicates offload requests to the KV-cache manager. When multiple agents share one model instance, the runtime preserves per-agent identity, adapter binding, and KV provenance across inference, judging, replay, and adaptation. Adapter-scoped invalidation limits the effect of training: when one adapter commits a new version, only entries owned by that adapter become stale; entries owned by other adapters remain valid. Cross-agent pre-prefill uses multi-agent communication structure to propose speculative cache work without bypassing the scheduler. The current prototype targets one local GPU, one base model instance, and LoRA-style adapter updates. It does not assume a remote rollout, reward, or training cluster. The rest of the paper details the three components inside this boundary. 
+
+## 4 Cooperative Scheduler 
+
+This section describes LOCAL’s cooperative scheduler, which bounds foreground interference when serving, judging, train-ing, and stale-coverage prefill share one GPU. Other runtime components may prepare work, but only the scheduler may admit GPU-bound model execution. This invariant gives LO-CAL one place to reason about task priority, estimated cost, memory pressure, adapter visibility, and safe yield bound-aries. The scheduler represents heterogeneous model op-erations with a common task interface, gives foreground inference strict admission priority, and admits background work only as bounded chunks whose memory demand and non-yielding duration are visible before execution. 
+
+> 5
+
+4.1 Task Model 
+
+Every GPU-bound model operation is represented as a task. A foreground inference task carries the request, agent iden-tity, adapter binding, and cache context needed to return a user-visible response. A judge task carries batched inference inputs, a training task carries a prepared replay batch and safe yield or commit boundaries, and a stale-coverage prefill task carries a prefix chunk, target adapter version, cache priority, and refresh state. Preparation alone does not grant GPU access: ready tasks enter either the foreground infer-ence queue or the background task queue, and the scheduler invokes the GPU single-task executor only after admission. Tasks expose the metadata needed to make heterogeneous work comparable. The scheduler does not require one global cost model for the whole runtime; it only needs local esti-mates sufficient to decide whether a task can fit the current time and memory window. For a task 𝑥 , the scheduler records 
+
+𝑑 (𝑥 ) =  𝑐 𝑥 , 𝑝 𝑥 , 𝑎 𝑥 , ˆ𝑡 (𝑥 ), ˆ𝑚 (𝑥 ), ˆ𝑦 (𝑥 ), 𝑢 (𝑥 ),
+
+where 𝑐 𝑥 is the task class, 𝑝 𝑥 is its hard priority, 𝑎 𝑥 is the required adapter state, ˆ 𝑡 (𝑥 ) is the estimated admitted-chunk duration, ˆ 𝑚 (𝑥 ) is the estimated peak memory or KV-page demand, ˆ 𝑦 (𝑥 ) is the longest non-yielding interval before the next safe boundary, and 𝑢 (𝑥 ) is the task-specific utility used to rank otherwise admissible background work. Duration estimates are calibrated online from completed chunks. For each measured quantity 𝑧 such as judge duration, training-chunk duration, or prefill seconds per token, LOCAL maintains an exponential moving average 
+
+𝐸 (𝑖 ) 
+
+> 𝑧
+
+=
+
+(
+
+𝑣 𝑖 , 𝐸 (𝑖 −1) 
+
+> 𝑧
+
+is unset ,
+
+(1 − 𝛼 𝑧 )𝐸 (𝑖 −1) 
+
+> 𝑧
+
++ 𝛼 𝑧 𝑣 𝑖 , otherwise ,
+
+where 𝑣 𝑖 is the most recent observation. Judge and training estimates use class-specific duration EMAs. Prefill addition-ally records a per-token rate ˆ 𝜌 𝑏 (𝐿 ) for prefix-length bucket 
+
+𝑏 (𝐿 ), giving ˆ𝑡 pf (Δ, 𝐿 ) = ˆ𝜌 𝑏 (𝐿 ) Δ, 𝑏 (𝐿 ) ∈ { 512 , 1024 , 2048 , . . . , 32768 }.
+
+The prototype also caps prefill chunks by configured chunk size, available KV pages, and foreground reserve. Before a judge or training duration sample exists, that task family is admitted only in an explicit turn-finished background window. 
+
+4.2 Foreground Priority and Cooperative Training 
+
+Foreground inference is always considered before new back-ground work because it is the only task type on the user-visible latency path. When the foreground inference queue is non-empty, the scheduler dispatches foreground inference and does not start new judge, training, or stale-coverage prefill tasks. This rule is deliberately simple: it makes the latency policy easy to audit and gives the agent runtime a stable contract. wait Foreground Queue Scheduler GPU Execution Adapter State        
+
+> Foreground
+> Inference (request i+1)
+> Training Adapter @ 𝐀 𝐀 Adapter @ 𝐀 𝐀 +𝐀
+> Inference (request i) Judge Train Background Adapter @ 𝐀 𝐀
+> Foreground Safe Boundary Safe Boundary Foreground Background
+> Stale-coverage Prefill Inference (request i+2)
+> Inference (request i) Inference (request i+1) Inference (request i+2) Adapter @ 𝐀 𝐀
+
+Figure 4. Bounded background admission. The remaining problem is already-running background work. LOCAL does not assume arbitrary preemption of GPU kernels, model forward passes, backward passes, or optimizer updates. Instead, training follows a cooperative interruption contract. When a foreground request arrives while training is running, the scheduler issues an interruption signal. The training task observes this signal only at safe boundaries inside the step, after a non-yielding phase has completed and before the next phase begins. Once the signal is observed, training stops at that boundary and returns control to the scheduler, allowing foreground inference to be admitted. This contract bounds foreground waiting time without requiring unsafe GPU preemption. A foreground request can-not stop a model kernel or optimizer update in the middle of execution; it can only prevent the training task from enter-ing the next non-yielding phase. The blocking time seen by the foreground path is therefore bounded by the remaining time to the next safe training boundary, rather than by the duration of an entire training procedure. An interrupted training task never exposes partial adapter state to foreground inference. Foreground inference binds only the last committed serving adapter; in-progress training state remains private until the adapter manager publishes a staged version at a controlled publication point. Figure 4 illustrates this contract. A foreground request does not interrupt arbitrary GPU execution. Instead, it pre-vents new background admission and takes over at the next safe yield boundary of the currently running background chunk. 
+
+4.3 Timeslice-Aware Background Admission 
+
+When no foreground task is ready, the scheduler admits back-ground work opportunistically. For each ready background task, the scheduling policy considers estimated duration, es-timated peak memory, next-yield interval, task priority, and replay or cache utility. A short judge batch may fit where a training chunk does not; a bounded stale-coverage pre-fill chunk may fit where a full prefix rebuild would not. The scheduler therefore treats background progress as a sequence of small, schedulable units rather than as a fixed background loop. Let 𝑀 free denote currently available GPU memory, 𝑀 reserve 
+
+denote the reserve kept for unexpected foreground work, and 
+
+𝑊 bg denote the conservative background window selected by the runtime. A background task 𝑥 is admissible only if ˆ𝑚 (𝑥 ) + 𝑀 reserve ≤ 𝑀 free and ˆ𝑦 (𝑥 ) + 𝛿 ≤ 𝑊 bg ,
+
+> 6
+
+where 𝛿 is a conservative latency margin. When the agent runtime exposes a tool or subtask deadline 𝐷 tool , the policy also checks the remaining window 
+
+𝑅 = 𝐷 tool − 𝑡 now , ˆ𝑡 (𝑥 ) + 𝛿 ≤ 𝑅. 
+
+Among admissible tasks, the scheduler prefers the task with the highest foreground-safe utility, such as urgent reward recovery, a training update close to publication, or a stale-coverage prefill chunk for a hot prefix. If no task satisfies the memory and yield constraints, the scheduler leaves the GPU idle briefly or asks the KV cache manager to create room by offloading cold spans. This policy does not rely on perfect prediction of the next user request. Foreground interference is controlled by bound-ing the non-yielding portion of each admitted background task. If a duration estimate is too small, the excess cost is lim-ited to the current chunk; once a foreground request arrives, no new background task is admitted. If a memory estimate is too small, page or allocator checks reject the task, or the run-time offloads lower-priority cache state before retrying. A failed training chunk does not publish a staged adapter, and a failed prefill chunk does not create reusable KV coverage. Timeslice admission also centralizes memory backpres-sure. Under high memory pressure, the scheduler can reduce cross-agent pre-prefill, avoid starting a training chunk, or prefer judge inference over training until offload has created sufficient headroom. This keeps memory decisions in the shared runtime policy rather than scattering them across unrelated background pipelines. Overall, the cooperative scheduler converts on-device learning from a set of competing threads into a single GPU-admission problem. Foreground inference keeps strict pri-ority, background learning progresses in bounded chunks, training publishes adapter updates only at safe boundaries, and stale-coverage prefill remains correct because every re-freshed span is tied to an explicit adapter version. 
+
+## 5 Version-Aware KV Cache Manager 
+
+The version-aware KV cache manager owns the reusable inference state shared by foreground inference, online adap-tation, and multi-agent cache preparation. It does not admit GPU work directly. Instead, it maintains cache identity, hot-prefix statistics, residency state, and adapter-version stale-ness, then exports bounded cache-maintenance tasks and offload candidates to the scheduler. The manager provides four mechanisms: agent-scoped KV identity, hot-prefix sta-tistics, stale-coverage prefill for staged adapter versions, and priority-based retention/offload under memory pressure. 
+
+5.1 Agent-Scoped KV Identity 
+
+Multi-agent workflows create repeated prefixes from task descriptions, shared environment observations, tool histo-ries, role prompts, and mailbox state. These repetitions make prefix reuse valuable, especially on a single GPU where long Prefix Hotness                   
+
+> 𝐀 𝐀 (p)
+> 𝐀 𝐀
+> shared / reused
+> 𝐀 𝐀
+> less reused
+> Adapter Hotness
+> 𝐀 𝐀 (a, v)
+> 𝐀 𝐀 @𝐀 𝐀
+> active
+> 𝐀 𝐀 @𝐀 𝐀
+> less active
+> Joint KV Hotness
+> 𝐀 𝐀𝐀 (e) = 𝐀 𝐀 (p) ×𝐀 𝐀 (a, v) ×length bonus
+> e = (p, a, v)
+> Cache Decisions
+> Resident KV
+> low keep priority → offload
+> (𝐀 1,𝐀 0@𝐀 3)(𝐀 2,𝐀 1@𝐀 1)Host
+> Pre-publication KV
+> high prefill priority → prefill
+> (𝐀 1,𝐀 1@𝐀 2)
+> Stale-coverage Prefill
+> (𝐀 2,𝐀 1@𝐀 2)
+
+Figure 5. Version-aware KV management. prefill windows compete with foreground latency and back-ground learning. However, the same visible prefix may be executed under different roles, different adapters, or different adapter versions. Reusing KV tensors across incompatible contexts would mix hidden states produced under different computation states. LOCAL therefore separates validity keys from provenance metadata . A KV entry is reusable only when its validity key matches the request: 
+
+𝜅 = (token span , context namespace , adapter , adapter version ).
+
+The token span identifies the textual prefix covered by the KV tensors. The context namespace distinguishes role- or session-specific state that is not otherwise captured by the token span and adapter binding. The adapter identifies the LoRA slot selected for the request, and the adapter version identifies the committed serving state that produced the KV tensors. Agent identity is recorded as provenance rather than al-ways being a hard cache key. If two agents share the same serialized prefix, context namespace, adapter, and adapter version, their KV coverage may be shared even if the pro-ducer agents differ. If agent identity changes the role prompt, private memory, mailbox view, adapter routing, or commu-nication context, that difference is reflected in the context namespace or adapter binding. The cache manager stores these records in a radix-indexed prefix table so shared token paths need not be duplicated for every agent or adapter state. 
+
+5.2 Hot-Prefix Statistics 
+
+Correct invalidation prevents stale reuse, but it does not de-cide which KV spans should remain resident, which stale spans should be refreshed, or which missing spans should be materialized before they are requested. LOCAL uses hotness as a compact ranking signal for these cache-maintenance decisions. Instead of modeling hotness as a collection of low-level implementation counters, the cache manager de-composes KV demand into two factors: prefix hotness and 
+
+adapter hotness . A KV record is valuable only when both its token prefix is likely to be reused and the adapter version that produced the hidden states is likely to be selected again. 
+
+> 7
+
+Let 𝑝 denote a radix-tree prefix and let 𝜈 = (𝑎, 𝑣 ) de-note an adapter and its adapter version. The manager main-tains a prefix heat 𝐻 𝑃 (𝑝 ) and an adapter heat 𝐻 𝐴 (𝜈 ). Prefix heat is adapter-independent: it captures whether a token span is repeatedly reached by foreground requests, shared among agents, or predicted by the multi-agent runtime to be consumed by downstream turns. Adapter heat is prefix-independent: it captures whether an adapter version is ac-tively serving traffic, routed by recent requests, or staged for imminent publication. Both quantities are maintained as decayed statistics: 
+
+𝐻 𝑃 (𝑝 ) ← 𝜆 𝑃 𝐻 𝑃 (𝑝 ) + ( 1 − 𝜆 𝑃 ) ( 𝑢 𝑃 (𝑝 ) + 𝛽𝑑 𝑃 (𝑝 ) + 𝜒𝑠 𝑃 (𝑝 )) ,𝐻 𝐴 (𝜈 ) ← 𝜆 𝐴 𝐻 𝐴 (𝜈 ) + ( 1 − 𝜆 𝐴 ) ( 𝑢 𝐴 (𝜈 ) + 𝜂𝑑 𝐴 (𝜈 ) + 𝜁𝑔 𝐴 (𝜈 )) .
+
+Here 𝑢 𝑃 (𝑝 ) and 𝑢 𝐴 (𝜈 ) are observed-use signals from the current request, 𝑑 𝑃 (𝑝 ) and 𝑑 𝐴 (𝜈 ) are predicted downstream demand signals, 𝑠 𝑃 (𝑝 ) captures cross-agent sharing of the prefix, and 𝑔 𝐴 (𝜈 ) marks adapter versions that are staged or expected to become visible soon. The coefficients only tune the relative importance of observed reuse, predicted reuse, sharing, and staged-adapter urgency; the policy does not rely on an exact performance model. For a KV coverage record 𝑒 = (𝑝, 𝜈 ), LOCAL combines the two heat values into a KV hotness score: 
+
+𝐻 KV (𝑒 ) = (𝜖 + 𝐻 𝑃 (𝑝 )) ( 𝜖 + 𝐻 𝐴 (𝜈 )) 
+
+
+
+1 + 𝛼 𝐿 
+
+min (𝐿 𝑒 , 𝐿 max )
+
+𝐿 max 
+
+
+
+,
+
+where 𝐿 𝑒 is the covered prefix length and 𝜖 > 0 prevents one dimension from completely suppressing the other. The mul-tiplicative form is intentional: a globally popular adapter should not protect an irrelevant prefix, and a hot prefix should not be retained under an adapter version that is un-likely to be used. The length term favors longer reusable spans because they save more prefill work, but caps the ben-efit to avoid letting very long prefixes dominate the cache. The hotness score is then converted into a retention prior-ity for resident KV. The cache manager ranks how valuable the object is to keep: 
+
+Πkeep (𝑒 ) = 𝐻 KV (𝑒 ) · b𝐶 recompute (𝑒 )
+
+max (1, 𝐵 𝑒 ) ,
+
+where 𝐵 𝑒 is the resident memory footprint and b𝐶 recompute (𝑒 )
+
+estimates the cost of reconstructing the coverage. Lower 
+
+Πkeep means the resident KV is colder relative to its memory cost and is therefore a better eviction candidate. For missing or stale coverage, this section only records that the span may be useful to materialize later; downstream mechanisms combine this heat with their own demand signals. At request time, the cache manager refreshes heat only along matched radix paths and relevant adapter versions, avoiding a global scan. The updated records expose three decisions: hot resident spans are protected from eviction, hot stale spans become stale-coverage prefill candidates, and hot missing spans provide candidate inputs for cross-agent pre-prefill. Spans with low joint prefix–adapter heat are released first under memory pressure. 
+
+5.3 Scheduler-Visible Stale-Coverage Prefill 
+
+Stale-coverage prefill is the pre-publication cache warmup performed after training produces a new adapter version but before that version becomes visible to foreground inference. The adapter manager first places the newly trained adapter in a staged state. While the old adapter continues to serve user requests, the KV cache manager selects hot prefixes, creates bounded prefill chunks for the staged adapter ver-sion, and submits those chunks to the scheduler as ordinary background work. The purpose of this mechanism is to reduce the time-to-first-token after an adapter update. Without stale-coverage prefill, the first foreground requests served by the new adapter would encounter cold hot-path coverage: although the run-time may already have KV entries for the same token prefixes under the old adapter, those entries cannot be reused because KV states are adapter-version dependent. The foreground path would therefore need to rebuild the hot prefix under the new adapter before decoding, increasing post-update TTFT. By computing the hot-path KV coverage before the adapter is published, LOCAL shifts this cost into foreground-idle GPU windows and preserves the low-latency path after the update becomes visible. The scheduler treats each stale-coverage prefill chunk as explicit GPU work rather than as a hidden cache optimiza-tion. A chunk carries the target staged adapter version, the prefix span to prefill, its cache priority, estimated memory demand, and the next safe yield boundary. The scheduler admits it only when the foreground path has no waiting request and the chunk fits the current time and memory budget. Thus, stale-coverage prefill competes with judge and training work under the same background-admission policy, and it cannot bypass foreground priority. This design separates adapter readiness from adapter vis-ibility. During stale-coverage prefill, foreground inference continues to bind the last committed serving adapter, and KV generated for the staged adapter is kept private until pub-lication. If publication happens before all hot prefixes have been warmed, the new adapter reuses only prefetched spans that match its version and falls back to ordinary prefill for the remaining spans. Thus, stale-coverage prefill trades idle GPU windows for lower post-update TTFT without exposing partially updated adapter state or stale KV to the foreground path. Stale-coverage prefill is distinct from cross-agent pre-prefill (§6): both are background cache-maintenance tasks, but the former is tied to adapter-version publication, while the latter is tied to anticipated context sharing. 
+
+> 8
+
+5.4 Priority-Based Retention and Offload 
+
+When the scheduler or multi-agent runtime requests memory headroom, the KV cache manager chooses low-value resident spans according to Πkeep . The offload order is offload order = sort asc 
+
+ Πkeep (𝑒 ), −𝐵 𝑒 
+
+.
+
+Thus, resident KV with weak joint prefix–adapter heat is released first, and ties release larger objects first. Active adapter weights and the active request’s KV state are not eligible offload candidates. To satisfy a target release 𝑅 , the manager filters resident records to offload-eligible entries, applies this ordering, and releases the shortest prefix of the ordered list whose total footprint reaches 𝑅 .This policy retains shared hot prefixes only under adapter versions likely to be used, avoids protecting stale KV merely because the prefix was recently accessed, and ranks back-ground materialization with the same joint heat signal used for retention. 
+
+## 6 Multi-Agent Runtime 
+
+The multi-agent runtime sits above the cooperative sched-uler (§4) and the version-aware KV cache manager (§5). It turns agent handles, communication state, and delayed feed-back context into scheduler-visible work and cache-manager requests when several local agents, adapters, and online adapter updates share one model instance. KV validity, hot-ness, stale-coverage prefill, and concrete offload selection remain owned by the KV cache manager; the multi-agent run-time only proposes cross-agent pre-prefill tasks and requests offload when background work needs memory headroom. 
+
+6.1 Cross-Agent Pre-Prefill 
+
+Cross-agent pre-prefill is a multi-agent runtime extension of the cache-maintenance interface. Unlike stale-coverage prefill, which repairs known missing or stale coverage for a useful prefix, cross-agent pre-prefill is speculative and is trig-gered by pending multi-agent communication. The runtime uses this state to propose prefill tasks for shared context pre-fixes before the downstream agent reaches the foreground path. A cross-agent pre-prefill proposal contains the target agent, context namespace, adapter, adapter version, prefix span, cur-rently covered length, estimated token cost, memory demand, and confidence. The proposal itself is not a separate cache policy. Instead, it is converted into a predicted-demand sig-nal for the KV cache manager. For a candidate 𝑐 with shared prefix 𝑝 𝑐 , target adapter version 𝜈 𝑐 = (𝑎 𝑐 , 𝑣 𝑐 ), missing-token count Δ𝑐 , downstream confidence 𝜌 𝑐 , and 𝑠 𝑐 pending con-sumers, the multi-agent runtime reports 
+
+𝐷 ma (𝑐 ) = 𝜌 𝑐 (1 + 𝛽 𝑠 log (1 + 𝑠 𝑐 )) min (Δ𝑐 , 𝑀 max )
+
+𝑀 max 
+
+.
+
+This signal is folded into the prefix heat of 𝑝 𝑐 and the adapter heat of 𝜈 𝑐 . The final cross-agent pre-prefill priority is com-puted only after this multi-agent demand signal is available: 
+
+Πxpre (𝑐 ) = 𝐷 ma (𝑐 ) · 𝐻 KV (𝑒 𝑐 ) · b𝐶 prefill (𝑒 𝑐 ), 𝑒 𝑐 = (𝑝 𝑐 , 𝜈 𝑐 ).
+
+Thus, a shared-context prefix is pre-prefilled only when it is both likely to be reused and likely to be consumed under a relevant adapter version. Full-hit candidates and candidates with nonpositive predicted demand are discarded; the re-maining candidates are handed to the KV cache manager and admitted only by the scheduler. When admitted, a cross-agent pre-prefill task materializes a bounded prefix chunk under the target adapter version and publishes coverage through the KV cache manager. If a foreground request reaches the same prefix first, the fore-ground path performs ordinary prefill and updates the same metadata. If the target adapter commits a new version before the prefetched span is consumed, the prefetched coverage is marked stale and cannot be reused. Thus, cross-agent pre-prefill can move repeated shared-context computation out of the foreground path, but it never weakens the versioned-KV correctness rule. 
+
+6.2 Memory-Pressure Offload Requests 
+
+The multi-agent runtime therefore treats memory pressure as a signal to the KV cache manager, not as a reason to manip-ulate KV tensors directly. Before it submits foreground-safe background work, the runtime compares the projected mem-ory demand of the next task with the scheduler’s available headroom. Training is the most common trigger: a prepared train chunk may need activation and optimizer memory in addition to resident KV pages. If the projected demand would consume the foreground reserve, the runtime sends a KV-offload request before the train task is admitted. The cache manager then applies the priority-based offload policy in §5. The same path handles cache-maintenance work. Before admitting stale-coverage prefill or cross-agent pre-prefill, the scheduler can ask the KV cache manager whether the candidate fits the current page budget. Under pressure, the runtime can shrink a cross-agent pre-prefill chunk, delay a training chunk, restore a high-priority offloaded span, or request offload of low-priority resident spans. If the KV man-ager cannot create enough headroom without touching ac-tive adapter weights or the active request’s KV state, the scheduler leaves the background task pending. 
+
+6.3 Integration with the Core Runtime 
+
+The multi-agent runtime does not introduce a separate model stack. Agent handles, adapter provenance, and communica-tion state only create additional task proposals and cache-manager requests. All GPU-bound work still passes through the cooperative scheduler, all visible adapter updates pass through the adapter manager, and all reusable KV cover-age passes through the version-aware KV cache manager. A 
+
+> 9
+
+cross-agent pre-prefill task cannot bypass foreground prior-ity, and a prefetched span is reusable only when its token span, context namespace, adapter, and adapter version match the eventual foreground request. In a single-agent deployment, the multi-agent-specific path largely disappears: the scheduler and KV cache man-ager still provide version-aware reuse, stale-coverage prefill, retention, and offload, but no communication structure is available for cross-agent pre-prefill. 
+
+## 7 Evaluation 
+
+We evaluate the current LOCAL with mechanism-level ex-periments on a single consumer GPU. The evaluation asks six questions: 
+
+• Does the scheduler protect foreground agent turns when judge, training, and cache maintenance are also enabled? 
+
+• How much does interruptible training reduce foreground tail latency? 
+
+• Is a conventional full-LoRA sleep/train/wake serving path sufficient for interactive local learning? 
+
+• Can stale-coverage prefill reduce the first foreground use after adapter updates? 
+
+• Can cross-agent pre-prefill reduce foreground TTFT when judge and training also run? 
+
+• How does the runtime behave under low VRAM and KV-page pressure? 
+
+7.1 Experimental Setup 
+
+Most experiments are 24-task runs on an RTX 3090-class 24GB GPU with CUDA 13.0 and a single model instance. Unless stated otherwise, we use xLAM-7b-r [41, 60], LoRA rank 4, and a judge budget of 512 output tokens. The main workload is the real tau-bench retail train split [56] with up to four agent steps per task. LOCAL is implemented in 24,447 lines of Python code and uses a FlashInfer-based inference engine [58]. We report foreground inference latency, fore-ground queue wait, TTFT, background task progress, adapter publishes, and peak GPU memory. We use tau-bench [56] success and reward only to check that runs complete under the same agent workload. They are not interpreted as model-quality claims, because the ex-periments vary runtime policy rather than agent prompts or model weights. For latency metrics, we report both the absolute value and the relative change against the most rele-vant baseline. A “ 𝑘 × lower” tail means that the baseline tail latency divided by LOCAL’s tail latency is 𝑘 .The scheduler uses a task-cost EMA weight 𝛼 𝑧 = 0.2 and a conservative admission margin 𝛿 = 0.05 s. The cache man-ager reserves 8 FlashInfer KV pages for foreground work and keeps a 512 MiB safety margin before issuing training offload. Hotness statistics use a 512-access half-life ( 𝜆 = 0.998647 per access), cap prefix and missing-token terms at 8192 to-kens, and use a shared-context priority default of 2.0 with a pending-consumer multiplier 𝛽 𝑠 = 0.5 for cross-agent pre-prefill. 
+
+7.2 Foreground-Aware Scheduling 
+
+Figure 6 compares three admission policies on the same tau-bench workload with foreground inference, judge inference, training, and stale-coverage prefill enabled. Foreground-first keeps foreground queue wait to 1.433s p95 and 1.758s p99 while still completing 34 training commits and 34 adapter publishes. Round-robin task-type scheduling has a similar p95 of 1.530s but a larger 3.625s p99 wait and only 21 training commits, because it continues cycling through background task types even when foreground work arrives. FIFO is the clearest negative baseline: its p95 queue wait reaches 4.403s and its p99 reaches 5.908s after foreground turns wait behind already-admitted judge and training work. In relative terms, foreground-first reduces p95 queue wait by 3.1 × compared with FIFO, a 67.5% reduction, and reduces p99 queue wait by 3.4 ×. The comparison with round-robin is more subtle: p95 queue wait is only 6.4% lower, but p99 queue wait is 2.1 × lower and the run finishes 1.6 × more training commits (34 versus 21). This indicates that round-robin can look acceptable at p95 while still creating larger outliers and less useful background learning progress. The queue-attribution logs explain these tails. Foreground-first queue wait is mostly behind judge work (68.7%) and training work (18.7%), with smaller contributions from stale-coverage prefill and inference. Round-robin spends 68.4% behind judge work and 28.8% behind training. FIFO splits its foreground wait between training (44.2%) and judge (44.0%), with another 9.7% behind stale-coverage prefill. These results match the scheduler design: foreground-first cannot inter-rupt a GPU kernel that is already running, but it prevents new background admissions from extending the foreground tail. 
+
+7.3 Interruptible Training 
+
+Figure 7 isolates the cost of training preemption on the tau-bench workload. Foreground-only service has essentially no queueing tail, with p95 queue wait of 0.0018s. Adding judge inference raises p95 queue wait to 1.424s. Adding training without preemption raises p95 queue wait to 4.140s and p95 TTFT to 4.247s. With training preemption enabled, p95 queue wait drops to 2.676s and p95 TTFT drops to 2.749s. This is the intended trade-off. Interruptible training re-duces p95 foreground queue wait by 1.464s and p95 TTFT by 1.498s, but it also lowers effective training throughput from 346.8 to 271.8 completed training steps per hour. The runtime chooses this trade-off because local agents are interactive: background learning can lose throughput, but it should not hold the only GPU across a foreground turn boundary. The TTFT CDF in Figure 8 shows the same tail shift at the re-quest level. Equivalently, cooperative interruption makes p95 queue wait and p95 TTFT 1.55 × lower than non-preemptible         
+
+> 10 FG-first Round-robin FIFO 0.0 1.5 3.0 4.5 6.0
+> Queue wait (s)
+> 0.27 0.64 0.74 1.43 1.53 4.40 1.76 3.62 5.91
+> 010 20 30 40
+> Train
+> 34 21 32
+> mean p95 p99 train
+
+Figure 6. Scheduling tails. FG only Judge Pre. on Pre. off 01234   
+
+> Latency (s)
+> 0.00 1.42 2.68 4.14 0.13 2.43 2.75 4.25
+> queue p95 TTFT p95
+
+Figure 7. Training preemption. 0 2 4
+
+TTFT (s)   
+
+> 0.00 0.25 0.50 0.75 1.00
+> CDF
+> Preempt on Preempt off
+
+Figure 8. TTFT under preemption. FG-first Round-robin FIFO 0510 15 20 25 30    
+
+> Queue p95 (s)
+> 1.43 1.53 4.40 8.42 19.61 27.64
+> LOCAL vLLM full-LoRA
+
+Figure 9. Sleep/train/wake tails. Stale-coverage prefill off Stale-coverage prefill on 0.0 0.3 0.6 0.9 1.2    
+
+> Latency (s)  1.06 0.79 1.15 0.89 1.21 0.90
+> mean p95 p99
+
+Figure 10. Stale-coverage first hits. Pre-prefill off Pre-prefill on 0.0 0.5 1.0 1.5 2.0     
+
+> TTFT (s)
+> 0.71 0.44 1.59 1.38 2.04 1.60
+> mean p95 p99
+
+Figure 11. Cross-agent pre-prefill. 512p 768p 1024p 1280p 0.0 0.4 0.8 1.2 1.6   
+
+> Queue p95 (s)  1.31 1.24 0.85 1.00
+
+16 19 22 25 
+
+> Memory (GB)
+
+queue p95 memory 
+
+Figure 12. Memory pressure. training, while reducing effective training throughput by 21.6%. The foreground wait attributed to training drops from 108.4s to 41.2s across the run, a 2.6 × reduction in accumu-lated training-induced blocking. 
+
+7.4 Comparison with Full-LoRA Sleep/Train 
+
+Figure 9 compares LOCAL’s custom FlashInfer runtime against a vLLM full-LoRA sleep/train/wake path on the same work-load. In foreground-first mode, the vLLM path has p95 queue wait of 8.418s, compared with 1.433s in LOCAL. Under round-robin, vLLM reaches 19.609s p95 queue wait, compared with 1.530s in LOCAL. Under FIFO, vLLM reaches 27.643s p95 queue wait, compared with 4.403s in LOCAL. The median sleep/train/wake window in vLLM is about 12.1s, including roughly 1.0s to sleep, 9.7s to train, and 1.5s to wake. Thus, sleep/train/wake makes p95 foreground queue wait 5.9 × higher than LOCAL under foreground-first admission, 12.8 × higher under round-robin, and 6.3 × higher under FIFO. The gap comes from the granularity of the adaptation path: a full sleep/train/wake window is seconds long, while LOCAL admits judge, training, publish, and cache work as smaller scheduler-visible units. This result shows why LOCAL exposes judge, training, publish, and prefill as scheduler-visible GPU tasks instead of treating local adaptation as a separate serving mode. Sleep/train/wake reduces peak GPU memory in this run, but the foreground tail cost is too high for interactive agents. Fine-grained ad-mission keeps the model available for foreground inference while still letting background learning progress. 
+
+7.5 Stale-Coverage Prefill 
+
+Figure 10 evaluates stale-coverage prefill with foreground-first admission, judge inference, and training. The baseline disables stale-coverage prefill; the enabled condition warms up to eight hot prefixes with 128-token chunks after training produces a new adapter version. Both runs publish more than 30 adapter versions. Stale-coverage prefill lowers the first foreground prefill under a newly published adapter. Among exact post-publish first hits, mean prefill falls from 1.064s to 0.789s, p95 falls from 1.146s to 0.894s, and p99 falls from 1.210s to 0.900s. This corresponds to a 25.8% mean reduction, a 22.0% p95 reduction, and a 25.6% p99 reduction. The measured first-hit cache coverage p50 rises from 0 to 0.210, showing that the gain comes from materialized hot-prefix KV rather than a lighter foreground request mix. 
+
+> 11
+
+7.6 Cross-Agent Pre-Prefill 
+
+Multi-agent handoffs often reuse a long shared context: one agent observes or updates the environment, and another consumes the resulting state. LOCAL can run cross-agent pre-prefill for reusable hot contexts as scheduler-visible back-ground work before a later foreground turn needs the same prefix. Figure 11 evaluates this mechanism on the real tau-bench retail workload with judge inference, training, and adapter publishing enabled. Both conditions execute the same foreground sequence; the enabled condition adds 43 prefill tasks and 5.184s of prefill GPU time. Without cross-agent pre-prefill, foreground turns see 0.711s mean TTFT, 1.587s p95, and 2.042s p99. Enabling cross-agent pre-prefill lowers these metrics to 0.441s, 1.384s, and 1.595s, respectively. This corresponds to a 38.0% mean reduction, a 12.8% p95 reduction, and a 21.9% p99 reduction. In the full run, queue attribution shows that prefill rarely blocks fore-ground work and accounts for 0.018s of queued foreground time; the dominant blockers remain judge and training work. 
+
+7.7 Memory Pressure 
+
+Figure 12 sweeps the cache-maintenance parameters that directly affect admission: KV-page budget, CUDA graph en-tries, hot-prefix count, and prefill chunk tokens. On xLAM-7b-r, all tested configurations from 512 to 1280 FlashInfer pages complete the workload without OOM or adapter pub-lish failures. Peak GPU memory ranges from 21.6GB to 23.5GB, and each passing configuration still completes 31–35 training commits plus 146–283 stale-coverage prefill progress events. The best queue tail among the xLAM runs is 0.850s p95 with 1024 pages, 32 graph entries, four hot prefixes, and 64-token chunks. Across the passing xLAM configurations, queue p95 varies by 1.5 × even though every run has the same model and workload. Increasing the page budget from 512 to 1024 pages lowers queue p95 from 1.312s to 0.850s, a 1.5 × improve-ment. Moving to 1280 pages with a larger graph and cache-maintenance budget raises peak memory to 23.5GB and queue p95 to 0.997s, which is still below the 512-page and 768-page runs but no longer the best tail. These results show that memory configuration affects latency through scheduler admission, not only through whether the run avoids OOM. Together, these results support the design choice of mak-ing memory pressure visible to the scheduler: foreground latency depends not only on model size, but also on KV page budget, graph capture budget, hot-prefix admission, and stale-coverage prefill chunk size. 
+
+7.8 Summary 
+
+The experiments support the two main mechanisms in LO-CAL. First, cooperative scheduling keeps foreground latency bounded under mixed inference, judge, training, and cache-maintenance work, and interruptible training converts a large blocking window into a latency-throughput trade-off. Second, the model runtime can reduce first-use cost after adapter publication, use shared-context metadata to prefill future consumer contexts during idle windows, and continue operating under tight KV memory budgets when cache work is admitted conservatively. 
+
+## 8 Related Work 
+
+Local inference and LLM serving. Local LLM stacks make single-device deployment feasible through portable runtimes, quantization, and heterogeneous memory use. Existing sys-tems provide portable local backends, exploit CPU/GPU or flash/DRAM hierarchies, and reduce model footprint through compression and quantization [3, 8, 11, 12, 23, 28, 30, 38, 46, 48, 54]. Serving systems optimize request admission and KV residency under an inference-only contract: Orca sched-ules iterations, vLLM manages paged KV, SGLang exploits structured programs and prefix reuse, and recent systems split or disaggregate prefill and decode work [1, 19, 36, 59, 63, 64]. KV-reduction systems such as StreamingLLM, H 2O, SnapKV, and KIVI further show that KV state is a first-order resource [22, 27, 55, 62]. LOCAL shares the same hardware pressure, but the runtime state is mutable: judge, training, refresh, and foreground inference compete on one GPU, and KV validity depends on adapter identity and adapter version rather than only on the prompt and base model. 
+
+Adapter serving. Parameter-efficient methods make lo-cal adaptation plausible by updating a small set of param-eters instead of the full model. Adapters, prefix tuning, P-tuning v2, IA 3, LoRA, AdaLoRA, and QLoRA expose different trade-offs between update cost, memory, and specialization quality [7, 14, 15, 21, 24, 25, 61]. Multi-adapter serving sys-tems then batch, place, or share LoRA state for inference workloads, including Punica, S-LoRA, LoRAX, LRAgent, and ForkKV [5, 17, 37, 45, 51]. LOCAL does not propose a new adapter method or a new LoRA serving engine. Instead, it treats adapter identity and adapter version as runtime state that determines KV validity, cache refresh, and foreground-safe adapter publication. 
+
+Reinforcement learning and post-training systems. 
+
+RLHF and reinforcement fine-tuning systems organize roll-out, reward, reference scoring, and policy updates. Prior algorithms define policy-gradient, preference-learning, and reasoning-RL objectives [4, 6, 33, 40, 43]. Distributed RL and LLM post-training frameworks then scale these stages across separate rollout, reward, reference, and trainer work-ers, using systems such as Ray and recent RLHF/RFT frame-works to optimize cluster throughput [9, 16, 29, 31, 34, 44, 49]. OpenClaw-RL is closer in spirit to agent-facing reinforce-ment learning because it studies learning from interaction feedback in an agent setting [52]. LOCAL is complementary: it targets the single-device runtime case where rollout, judg-ing, cache maintenance, and adapter updates are not placed 
+
+> 12
+
+on separate workers, so background learning must become scheduler-visible, interruptible, and memory-aware. 
+
+LLM agents and multi-agent runtimes. Agent systems study tool use, environment interaction, delayed feedback, and coordination. ReAct, Toolformer, MRKL, WebGPT, Say-Can, ToolLLM, and AgentBench connect LLMs to tools, web or embodied actions, and evaluation tasks [2, 18, 26, 32, 39, 42, 57]. Reflexion, Voyager, and OpenClaw-RL use later ob-servations or feedback to improve behavior [47, 50, 52], and CAMEL, AutoGen, MetaGPT, and generative agents orga-nize applications around roles, messages, shared context, and collaboration [13, 20, 35, 53]. These frameworks usually treat orchestration metadata as application state. LOCAL treats the same metadata as runtime state: it drives feedback attribution, adapter binding, cross-agent pre-prefill, and safe KV reuse on a single constrained GPU. 
+
+## 9 Conclusion 
+
+On-device interactive RL breaks the inference-only assump-tion behind many local LLM runtimes, preventing agents from learning contiguously from their interactions. Fore-ground inference, delayed reward recovery, adapter training, and KV-cache lifecycle management all compete for one GPU and one memory budget. LOCAL addresses this mismatch through three runtime components: a cooperative sched-uler, a version-aware KV-cache manager, and a multi-agent model runtime that carries agent, adapter, feedback, and KV provenance through serving and learning. The scheduler centralizes GPU admission, protects fore-ground inference, supports interruptible training, and ad-mits judge, training, and cache refresh work only when the runtime can account for their cost. The KV-cache manager preserves versioned cache correctness and manages reten-tion, offload, and refresh under memory pressure. The model runtime preserves agent identity, communication context, adapter attribution, and adapter-scoped KV state across in-teraction, judging, replay, and adaptation. Our prototype evaluation shows that these mechanisms keep foreground queue tails bounded under mixed agent workloads, reduce the tail cost of training via interruption, improve first-consumer latency for shared-context handoffs during idle windows, and continue to make background progress under tight KV memory budgets. The remaining work is to broaden the evidence to longer multi-agent ses-sions, larger adapter populations, and policy-level learning quality. 
+
+## References 
+
+[1] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav S. Gulavani, Alexey Tumanov, and Ramachandran Ramjee. 2024. Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve. In 18th USENIX Symposium on Operating Systems Design and Implementation . 117–134. https://arxiv.org/abs/2403.02310 
+
+[2] Michael Ahn, Anthony Brohan, Noah Brown, Yevgen Chebotar, Omar Cortes, Byron David, Chelsea Finn, Chuyuan Fu, Keerthana Gopalakr-ishnan, Karol Hausman, Alexander Herzog, Daniel Ho, Jasmine Hsu, Julian Ibarz, Brian Ichter, Alex Irpan, Eric Jang, Rosario Jauregui Ru-ano, Kyle Jeffrey, Sally Jesmonth, Nikhil Joshi, Ryan Julian, Dmitry Kalashnikov, Yuheng Kuang, Kuang-Huei Lee, Sergey Levine, Yao Lu, Linda Luu, Carolina Parada, Peter Pastor, Jerry Quiambao, Kanishka Rao, Jarek Rettinghouse, Diego Reyes, Pierre Sermanet, Nicolas Siev-ers, Clayton Tan, Alexander Toshev, Vincent Vanhoucke, Fei Xia, Ted Xiao, Peng Xu, Sichun Xu, and Mengyuan Yan. 2022. Do As I Can, Not As I Say: Grounding Language in Robotic Affordances. arXiv preprint arXiv:2204.01691 (2022). https://arxiv.org/abs/2204.01691 
+
+[3] Keivan Alizadeh, Iman Mirzadeh, Dmitry Belenko, Karen Khatamifard, Minsik Cho, Carlo C. Del Mundo, Mohammad Rastegari, and Mehrdad Farajtabar. 2024. LLM in a Flash: Efficient Large Language Model Inference with Limited Memory. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics .[4] Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jack-son Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen, Catherine Olsson, Christopher Olah, Danny Hernandez, Dawn Drain, Deep Ganguli, Dustin Li, Eli Tran-Johnson, Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Kamile Lukosiute, Liane Lovitt, Michael Sellitto, Nelson Elhage, Nicholas Schiefer, Noemí Mercado, Nova Das-Sarma, Robert Lasenby, Robin Larson, Sam Ringer, Scott Johnston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Tamera Lanham, Tim-othy Telleen-Lawton, Tom Conerly, Tom Henighan, Tristan Hume, Samuel R. Bowman, Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom Brown, and Jared Kaplan. 2022. Constitutional AI: Harmlessness from AI Feedback. arXiv preprint arXiv:2212.08073 (2022). https://arxiv.org/abs/2212.08073 
+
+[5] Lequn Chen, Zihao Ye, Yizhuo Wu, Danyang Zhuo, Luis Ceze, and Arvind Krishnamurthy. 2024. Punica: Multi-Tenant LoRA Serving. In 
+
+Proceedings of Machine Learning and Systems , Vol. 6. https://arxiv.org/ abs/2310.18547 
+
+[6] DeepSeek-AI. 2025. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. arXiv preprint arXiv:2501.12948 
+
+(2025). https://arxiv.org/abs/2501.12948 
+
+[7] Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. 2023. QLoRA: Efficient Finetuning of Quantized LLMs. In Advances in Neural Information Processing Systems . https://arxiv.org/abs/2305. 14314 
+
+[8] Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh. 2023. GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers. In International Conference on Learning Representations .[9] Wei Fu, Jiaxuan Gao, Xujie Shen, Chen Zhu, Zhiyu Mei, Chuyi He, Shusheng Xu, Guo Wei, Jun Mei, Jiashu Wang, Tongkai Yang, Binhang Yuan, and Yi Wu. 2025. AReaL: A Large-Scale Asynchronous Rein-forcement Learning System for Language Reasoning. arXiv preprint arXiv:2505.24298 (2025). [10] Lei Gao, Amir Ziashahabi, Yue Niu, Salman Avestimehr, and Murali Annavaram. 2025. MobiZO: Enabling Efficient LLM Fine-Tuning at the Edge via Inference Engines. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing . Association for Computational Linguistics, Suzhou, China, 20206–20223. doi: 10.18653/ v1/2025.emnlp-main.1022 
+
+[11] Georgi Gerganov. 2023. llama.cpp: Port of LLaMA model in C/C++. 
+
+https://github.com/ggml-org/llama.cpp . GitHub repository. Accessed: 2026-06-08. [12] Google AI Edge. 2026. LiteRT-LM: Run LLMs on Device. https://ai. google.dev/edge/litert/litert-lm/overview . Accessed: 2026-06-11. [13] Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang, Jinlin Wang, Zili Wang, Steven Ka Shing Yau, 
+
+> 13
+
+Zijuan Lin, Liyang Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. 2024. MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework. In International Conference on Learning Representations .[14] Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin de Laroussilhe, Andrea Gesmundo, Mona Attariyan, and Sylvain Gelly. 2019. Parameter-Efficient Transfer Learning for NLP. In International Conference on Machine Learning . https://arxiv.org/ abs/1902.00751 
+
+[15] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2022. LoRA: Low-Rank Adaptation of Large Language Models. In International Confer-ence on Learning Representations . https://openreview.net/forum?id= nZeVKeeFYf9 
+
+[16] Jian Hu, Xibin Wu, Zilin Zhu, Xianyu, Weixun Wang, Dehao Zhang, and Yu Cao. 2024. OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework. arXiv preprint arXiv:2405.11143 (2024). [17] Hyesung Jeon, Hyeongju Ha, and Jae-Joon Kim. 2026. LRAgent: Effi-cient KV Cache Sharing for Multi-LoRA LLM Agents. In International Conference on Machine Learning . https://arxiv.org/abs/2602.01053 
+
+[18] Eyal Karpas, Omri Abend, Yonatan Belinkov, Barak Lenz, Opher Lieber, Nir Ratner, Yoav Shoham, Yoav Bata, Yoav Levine, Kevin Leyton-Brown, Dor Muhlgay, Paul Roit, and Amnon Shashua. 2022. MRKL Systems: A Modular, Neuro-Symbolic Architecture That Combines Large Language Models, External Knowledge Sources and Discrete Reasoning. arXiv preprint arXiv:2205.00445 (2022). https://arxiv.org/ abs/2205.00445 
+
+[19] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles . 611–626. doi: 10.1145/ 3600006.3613165 
+
+[20] Guohao Li, Hasan Abed Al Kader Hammoud, Hani Itani, Dmitrii Khizbullin, and Bernard Ghanem. 2023. CAMEL: Communicative Agents for “Mind” Exploration of Large Language Model Society. arXiv preprint arXiv:2303.17760 (2023). [21] Xiang Lisa Li and Percy Liang. 2021. Prefix-Tuning: Optimizing Continuous Prompts for Generation. In Proceedings of the 59th An-nual Meeting of the Association for Computational Linguistics . https: //arxiv.org/abs/2101.00190 
+
+[22] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, An-drea Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024. SnapKV: LLM Knows What You are Looking for Before Generation. In Advances in Neural Information Processing Systems .
+
+https://arxiv.org/abs/2404.14469 
+
+[23] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Wei-Ming Chen, Wei-Chen Wang, Guangxuan Xiao, Xingyu Dang, Chuang Gan, and Song Han. 2024. AWQ: Activation-aware Weight Quantization for LLM Compression and Accelera-tion. In Proceedings of Machine Learning and Systems , Vol. 6. 
+
+https://proceedings.mlsys.org/paper_files/paper/2024/hash/ 42a452cbafa9dd64e9ba4aa95cc1ef21-Abstract-Conference.html 
+
+[24] Haokun Liu, Derek Tam, Muqeeth Mohammed, Jay Mohta, Tenghao Huang, Mohit Bansal, and Colin A. Raffel. 2022. Few-Shot Parameter-Efficient Fine-Tuning is Better and Cheaper than In-Context Learning. In Advances in Neural Information Processing Systems . https://arxiv. org/abs/2205.05638 
+
+[25] Xiao Liu, Kaixuan Ji, Yicheng Fu, Weng Lam Tam, Zhengxiao Du, Zhilin Yang, and Jie Tang. 2022. P-Tuning v2: Prompt Tuning Can Be Comparable to Fine-tuning Universally Across Scales and Tasks. In 
+
+Proceedings of the 60th Annual Meeting of the Association for Computa-tional Linguistics . https://arxiv.org/abs/2110.07602 
+
+[26] Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen Men, Kejuan Yang, Shudan Zhang, Xiang Deng, Aohan Zeng, Zhengxiao Du, Chenhui Zhang, Sheng Shen, Tianjun Zhang, Yu Su, Huan Sun, Minlie Huang, Yuxiao Dong, and Jie Tang. 2024. AgentBench: Evaluating LLMs as Agents. In International Conference on Learning Representations . https://arxiv.org/abs/2308. 03688 
+
+[27] Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir Braverman, Beidi Chen, and Xia Hu. 2024. KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache. In Proceedings of the 41st International Conference on Machine Learning (Proceed-ings of Machine Learning Research, Vol. 235) , Ruslan Salakhutdinov, Zico Kolter, Katherine Heller, Adrian Weller, Nuria Oliver, Jonathan Scarlett, and Felix Berkenkamp (Eds.). PMLR, 32332–32344. https: //proceedings.mlr.press/v235/liu24bz.html 
+
+[28] Zechun Liu, Changsheng Zhao, Forrest Iandola, Chen Lai, Yuan-dong Tian, Igor Fedorov, Yunyang Xiong, Ernie Chang, Yangyang Shi, Raghuraman Krishnamoorthi, Liangzhen Lai, and Vikas Chandra. 2024. MobileLLM: Optimizing Sub-billion Parameter Language Mod-els for On-Device Use Cases. In International Conference on Machine Learning .[29] Zhiyu Mei, Wei Fu, Kaiwei Li, Guangju Wang, Huanchen Zhang, and Yi Wu. 2025. ReaL: Efficient RLHF Training of Large Language Models with Parameter Reallocation. In Proceedings of Machine Learning and Systems , Vol. 7. 
+
+https://proceedings.mlsys.org/paper_files/paper/2025/hash/ 3b3889d313ba9476c12c2d77ea66b24f-Abstract-Conference.html 
+
+[30] MLC Team. 2023. MLC-LLM: Universal LLM Deployment Engine with ML Compilation. https://github.com/mlc-ai/mlc-llm . Accessed: 2026-04-29. [31] Philipp Moritz, Robert Nishihara, Stephanie Wang, Alexey Tumanov, Richard Liaw, Eric Liang, Melih Elibol, Zongheng Yang, William Paul, Michael I. Jordan, and Ion Stoica. 2018. Ray: A Distributed Framework for Emerging AI Applications. In 13th USENIX Symposium on Operating Systems Design and Implementation . 561–577. https://www.usenix. org/conference/osdi18/presentation/moritz 
+
+[32] Reiichiro Nakano, Jacob Hilton, Suchir Balaji, Jeff Wu, Long Ouyang, Christina Kim, Christopher Hesse, Shantanu Jain, Vineet Kosaraju, William Saunders, Xu Jiang, Karl Cobbe, Tyna Eloundou, Gretchen Krueger, Kevin Button, Matthew Knight, Benjamin Chess, and John Schulman. 2021. WebGPT: Browser-assisted Question-Answering with Human Feedback. arXiv preprint arXiv:2112.09332 (2021). https: //arxiv.org/abs/2112.09332 
+
+[33] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wain-wright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F Chris-tiano, Jan Leike, and Ryan Lowe. 2022. Training language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems , S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (Eds.), Vol. 35. Curran Associates, Inc., 27730–27744. https://proceedings.neurips.cc/paper_files/paper/2022/ file/b1efde53be364a73914f58805a001731-Paper-Conference.pdf 
+
+[34] Xuchen Pan, Yanxi Chen, Yushuo Chen, Yuchang Sun, Daoyuan Chen, Wenhao Zhang, Yuexiang Xie, Yilun Huang, Yilei Zhang, Dawei Gao, Weijie Shi, Yaliang Li, Bolin Ding, and Jingren Zhou. 2025. Trinity-RFT: A General-Purpose and Unified Framework for Reinforcement Fine-Tuning of Large Language Models. arXiv preprint arXiv:2505.17826 
+
+(2025). https://arxiv.org/abs/2505.17826 
+
+[35] Joon Sung Park, Joseph C. O’Brien, Carrie J. Cai, Meredith Ringel Mor-ris, Percy Liang, and Michael S. Bernstein. 2023. Generative Agents: Interactive Simulacra of Human Behavior. In In the 36th Annual ACM Symposium on User Interface Software and Technology (UIST ’23) (San Francisco, CA, USA) (UIST ’23) . Association for Computing Machinery, 
+
+> 14
+
+New York, NY, USA. [36] Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Íñigo Goiri, Saeed Maleki, and Ricardo Bianchini. 2025. Splitwise: Efficient Generative LLM Inference Using Phase Splitting. In Proceedings of the 51st Annual International Symposium on Computer Architecture 
+
+(Buenos Aires, Argentina) (ISCA ’24) . IEEE Press, 118–132. doi: 10. 1109/ISCA59077.2024.00019 
+
+[37] Predibase. 2023. LoRAX: Multi-LoRA Inference Server. https://github. com/predibase/lorax . GitHub repository. Accessed: 2026-06-08. [38] PyTorch Team. 2024. ExecuTorch: End-to-End Solution for On-Device Inference. https://pytorch.org/executorch/ . Accessed: 2026-06-07. [39] Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin, Xin Cong, Xiangru Tang, Bill Qian, Sihan Zhao, Runchu Tian, Ruobing Xie, Jie Zhou, Mark Gerstein, Dahai Li, Zhiyuan Liu, and Maosong Sun. 2024. ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs. In International Conference on Learning Representations . https://arxiv.org/abs/2307.16789 
+
+[40] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Man-ning, Stefano Ermon, and Chelsea Finn. 2023. Direct Pref-erence Optimization: Your Language Model is Secretly a Re-ward Model. In Advances in Neural Information Processing Sys-tems , A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.), Vol. 36. Curran Associates, Inc., 53728– 53741. https://proceedings.neurips.cc/paper_files/paper/2023/file/ a85b405ed65c6477a4fe8302b5e06ce7-Paper-Conference.pdf 
+
+[41] Salesforce AI Research. 2024. xLAM-7b-r. https://huggingface.co/ Salesforce/xLAM-7b-r . Model card. Accessed: 2026-06-11. [42] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language Models Can Teach Themselves to Use Tools. In Advances in Neural Information Processing Systems .
+
+https://arxiv.org/abs/2302.04761 
+
+[43] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proximal Policy Optimization Algorithms. arXiv preprint arXiv:1707.06347 (2017). https://arxiv.org/abs/1707.06347 
+
+[44] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2025. Hy-bridFlow: A Flexible and Efficient RLHF Framework. In Proceed-ings of the Twentieth European Conference on Computer Systems .doi: 10.1145/3689031.3696075 
+
+[45] Ying Sheng, Shiyi Cao, Dacheng Li, Coleman Hooper, Nicholas Lee, Shuo Yang, Christopher Chou, Banghua Zhu, Lian-min Zheng, Kurt Keutzer, Joseph E. Gonzalez, and Ion Sto-ica. 2024. SLoRA: Scalable Serving of Thousands of LoRA Adapters. In Proceedings of Machine Learning and Systems ,P. Gibbons, G. Pekhimenko, and C. De Sa (Eds.), Vol. 6. 296– 311. https://proceedings.mlsys.org/paper_files/paper/2024/file/ 906419cd502575b617cc489a1a696a67-Paper-Conference.pdf 
+
+[46] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Daniel Y. Fu, Zhiqiang Xie, Beidi Chen, Clark Barrett, Joseph E. Gonzalez, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. 2023. FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU. In International Confer-ence on Machine Learning . https://arxiv.org/abs/2303.06865 
+
+[47] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Reflexion: Language Agents with Verbal Reinforcement Learning. In Advances in Neural Information Processing Systems . https://arxiv.org/abs/2303.11366 
+
+[48] Yixin Song, Zeyu Mi, Haotong Xie, and Haibo Chen. 2024. PowerInfer: Fast Large Language Model Serving with a Consumer-grade GPU. In 
+
+Proceedings of the ACM SIGOPS 30th Symposium on Operating Systems Principles . https://arxiv.org/abs/2312.12456 
+
+[49] THUDM. 2025. slime: An LLM Post-Training Framework for RL Scal-ing. https://github.com/THUDM/slime . GitHub repository. Accessed: 2026-06-08. [50] Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. 2023. Voyager: An Open-Ended Embodied Agent with Large Language Models. arXiv preprint arXiv:2305.16291 (2023). https://arxiv.org/abs/2305.16291 
+
+[51] Shao Wang, Rui Ren, and Lin Gui. 2026. ForkKV: Scaling Multi-LoRA Agent Serving via Copy-on-Write Disaggregated KV Cache. arXiv preprint arXiv:2604.06370 (2026). https://arxiv.org/abs/2604.06370 
+
+[52] Yinjie Wang, Xuyang Chen, Xiaolong Jin, Mengdi Wang, and Ling Yang. 2026. OpenClaw-RL: Train Any Agent Simply by Talking. arXiv preprint arXiv:2603.10165 (2026). https://arxiv.org/abs/2603.10165 
+
+[53] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Shaokun Li, Erkang Zhu, Beibin Jiang, Li Zhang, Xiaoyun Zhang, Ahmed Has-san Awadallah, Ryen W. White, Doug Burger, and Chi Wang. 2024. AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Con-versation Framework. In Conference on Language Modeling . https: //arxiv.org/abs/2308.08155 
+
+[54] Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han. 2023. SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models. In International Conference on Machine Learning . https://arxiv.org/abs/2211.10438 
+
+[55] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis. 2024. Efficient Streaming Language Mod-els with Attention Sinks. In International Conference on Learning Representations , B. Kim, Y. Yue, S. Chaudhuri, K. Fragkiadaki, M. Khan, and Y. Sun (Eds.), Vol. 2024. 21875– 21895. https://proceedings.iclr.cc/paper_files/paper/2024/file/ 5e5fd18f863cbe6d8ae392a93fd271c9-Paper-Conference.pdf 
+
+[56] Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. 2024. 𝜏 -bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. arXiv preprint arXiv:2406.12045 (2024). https://arxiv. org/abs/2406.12045 
+
+[57] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In International Conference on Learning Representations . https://arxiv.org/abs/2210.03629 
+
+[58] Zihao Ye, Lequn Chen, Ruihang Lai, Wuwei Lin, Yineng Zhang, Stephanie Wang, Tianqi Chen, Baris Kasikci, Vinod Grover, Arvind Krishnamurthy, and Luis Ceze. 2025. FlashInfer: Efficient and Cus-tomizable Attention Engine for LLM Inference Serving. In Proceedings of Machine Learning and Systems . https://arxiv.org/abs/2501.01005 
+
+[59] Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soojeong Kim, and Byung-Gon Chun. 2022. Orca: A Distributed Serving System for Transformer-Based Generative Models. In 16th USENIX Symposium on Operating Systems Design and Implementation . 521–538. https: //www.usenix.org/conference/osdi22/presentation/yu 
+
+[60] Jianguo Zhang, Tian Lan, Ming Zhu, Zuxin Liu, Thai Hoang, Shirley Kokane, Weiran Yao, Juntao Tan, Akshara Prabhakar, Haolin Chen, Zhiwei Liu, Yihao Feng, Tulika Awalgaonkar, Rithesh Murthy, Eric Hu, Zeyuan Chen, Ran Xu, Juan Carlos Niebles, Shelby Heinecke, Huan Wang, Silvio Savarese, and Caiming Xiong. 2024. xLAM: A Family of Large Action Models to Empower AI Agent Systems. arXiv preprint arXiv:2409.03215 (2024). https://arxiv.org/abs/2409.03215 
+
+[61] Qingru Zhang, Minshuo Chen, Alexander Bukharin, Pengcheng He, Yu Cheng, Weizhu Chen, and Tuo Zhao. 2023. Adaptive Budget Allocation for Parameter-Efficient Fine-Tuning. In The Eleventh International Con-ference on Learning Representations . https://openreview.net/forum? id=lq62uWRJjiY 
+
+[62] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lian-min Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang "Atlas" Wang, and Beidi Chen. 2023. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. In Advances in Neural Information Pro-cessing Systems , A. Oh, T. Naumann, A. Globerson, K. Saenko, 
+
+> 15
+
+M. Hardt, and S. Levine (Eds.), Vol. 36. Curran Associates, Inc., 34661– 34710. https://proceedings.neurips.cc/paper_files/paper/2023/file/ 6ceefa7b15572587b78ecfcebb2827f8-Paper-Conference.pdf 
+
+[63] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez, Clark Barrett, and Ying Sheng. 2024. SGLang: Effi-cient Execution of Structured Language Model Programs. In Advances in Neural Information Processing Systems . https://arxiv.org/abs/2312. 07104 
+
+[64] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xu-anzhe Liu, Xin Jin, and Hao Zhang. 2024. DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . USENIX Association, Santa Clara, CA, 193– 210. https://www.usenix.org/conference/osdi24/presentation/zhong-yinmin

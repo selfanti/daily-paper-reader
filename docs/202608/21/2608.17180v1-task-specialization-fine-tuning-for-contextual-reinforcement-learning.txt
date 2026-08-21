@@ -1,0 +1,1182 @@
+Title: Task Specialization Fine-Tuning for Contextual Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.17180v1
+
+Published Time: Wed, 19 Aug 2026 00:16:57 GMT
+
+Number of Pages: 30
+
+Markdown Content:
+# Task Specialization Fine-Tuning for Contextual Reinforcement Learning 
+
+Jianan Zhou 1 Jung-Hoon Cho 2 Tianyue Zhou 2 Han Zheng 2
+
+Jie Zhang 1 Roy Dong 3 Yining Ma 2∗ Cathy Wu 21Nanyang Technological University 2MIT 3UIUC 
+
+jianan004@e.ntu.edu.sg , zhangj@ntu.edu.sg , roydong@illinois.edu {jhooncho, tianyuez, hanzheng, yiningma, cathywu}@mit.edu 
+
+Abstract 
+
+Contextual Reinforcement Learning (CRL) seeks to generalize classical RL by maximizing task coverage across a context space of related tasks. While prior works often train from scratch and rely on either multi-task learning for a single policy or strategically training multiple policies, we advocate for a unified alternative: pretraining a single policy with good initial performance, followed by fine-tuning multiple policies for task specialization. This new paradigm, however, introduces unique challenges, such as heterogeneous marginal returns and sample inefficiency. This raises a critical research question: given a pretrained policy and a constrained budget, how much fine-tuning should each task region receive to enable sample-efficient CRL? To this end, we propose Task Specialization Fine-Tuning (TSFT) , an online framework that predicts fine-tuning performance with a simple parametric model and exactly solves the resulting discrete budget allocation problem via integer linear programming. Extensive experiments across diverse decision domains, including combinatorial optimization, continuous control, and LLM fine-tuning, demonstrate that TSFT significantly outperforms baselines in task coverage and approaches oracle performance. Our work charts a new direction for model-based CRL, aligning with the modern pretrain-finetune era. 
+
+1 Introduction 
+
+Reinforcement learning (RL) has achieved remarkable success across various domains [1–5], yet it remains fragile when applied to families of related tasks that differ only in a few key environment parameters [6, 7]. Contextual RL (CRL) [6, 8, 9] explicitly formalizes such families as Contextual Markov Decision Processes (CMDPs), where individual tasks are parameterized by vectors within a unified context space, with the objective of achieving broad coverage across that space. Existing paradigms for solving CMDPs fall into three categories (see also Table 1): 1) independent training [1, 6, 10, 11], which learns a separate policy for each task, straightforward yet expensive for covering high-dimensional context spaces; 2) multi-task training [12–15], which learns a single unified policy across all tasks but is constrained by limited model capacity and susceptible to negative transfer; 3) multi-policy training [16–20], which trains multiple policies, each on a single task, and relies on their generalization to cover the unseen tasks. Despite their differences, these paradigms share a common assumption: each policy is trained from scratch until convergence. Such an approach stands at odds with the pretrain-finetune convention of modern machine learning [21–25], limiting the potential scalability of CRL in expansive, high-dimensional context space [6, 16, 19]. 
+
+> ∗Corresponding author. Preprint. arXiv:2608.17180v1 [cs.LG] 17 Aug 2026
+
+Table 1: Comparison of CRL paradigms along three orthogonal axes.                     
+
+> Paradigm # Policy Training Method Training Mode Independent Training Multiple NSingle-task From scratch Multi-Task Training Single Multi-task From scratch Multi-Policy Training Multiple N≪ N Single-task From scratch
+> TSFT (Ours) Multiple N≪ N Multi-task Pretrain + Fine-tune
+
+In this paper, we advocate for a unified alternative: pretrain a single policy with good initial perfor-mance across the context space, then fine-tune the trained policy with multiple specialized variants under a constrained budget. A conceptual overview of the studied problem is illustrated in Fig. 1. This pretrain-finetune paradigm unifies multi-task and multi-policy training and holds potential advantages for three reasons. First, the pretrained policy may offer a good initialization across the context space. Second, fine-tuning enables the specialization of multiple policies, mitigating negative transfer without the computational expense of training from scratch. Finally, this approach integrates CRL into the scalable frameworks characteristic of modern machine learning. However, this paradigm introduces unique challenges: fine-tuning gains are heterogeneous across tasks, where some regions improve rapidly while others quickly saturate or even degrade. Con-sequently, a uniform allocation of fine-tuning compute is often sample-inefficient, prompting a key research question: given a pretrained policy and a constrained budget, how much fine-tuning should each task region receive to enable sample-efficient CRL? Notably, existing CRL literature has primarily investigated where to train, selecting source tasks to maximize coverage under the implicit assumption of a fixed per-policy budget. The orthogonal question of how much fine-tuning each region should receive remains largely open. To this end, this paper introduces a budget-aware perspective on CRL that complements existing source-task selection. We introduce Task Specialization Fine-Tuning (TSFT), an online framework for model-based budget allocation in CRL. Specifically, TSFT leverages a simple yet effective parametric model to predict how task performance, and consequently the induced coverage set, evolves as additional budget is assigned. Based on these predictions, each planning step reduces to a maximum coverage problem (MCP) variant over allocation vectors, which can be solved exactly through integer linear programming (ILP). While ILP yields an optimal solution with respect to the model-based allocation, its theoretical optimality may be compromised by modeling errors. To mitigate this issue, we further embed ILP solving into an online framework with periodic model re-estimation. At each step, TSFT solves the current ILP, executes the derived allocation policy for a limited horizon, collects new data, and updates the model accordingly. Empirical results demonstrate the promise of online budget allocation in CRL, enabling the coverage landscape to be substantially expanded under a constrained budget. 
+
+Contributions : 1) Conceptually , we formulate a budget-constrained fine-tuning problem in CRL, shifting the focus from where to train to how much fine-tuning to allocate under a pretrain-finetune paradigm; 2) Methodologically , we introduce TSFT , an online framework that optimizes model-based budget allocation via ILP, accompanied by a theoretical error analysis. 3) Experimentally , we validate TSFT across combinatorial optimization, continuous control, and LLM fine-tuning, with up to 2– 3× improvements in task coverage over simple strategies, and 2 × gains in sample efficiency over multi-task training baselines, while performing comparably to an oracle policy under diverse settings. 
+
+2 Related Work 
+
+Multi-Task Learning and Contextual RL. Multi-task learning improves generalization by jointly learning related tasks, but often suffers from negative transfer when tasks are insufficiently related [12, 26, 27]. In reinforcement learning, this challenge is further exacerbated by diverse task dynamics, sparse feedback, and unstable optimization. Contextual RL can be viewed as a structured form of multi-task RL, where a family of related tasks is parameterized by a context variable that affects the environment dynamics, rewards, or initial-state distributions [6, 8, 9]. A common approach in both multi-task RL and CRL is to train a single policy that generalizes across tasks, often through shared task representations, context-conditioned policies, or task-conditioned policy and value heads [11, 15, 28, 29]. Although recent work shows that larger and better-regularized value functions can 2improve generalization across diverse tasks [28], single-policy approaches remain limited by model capacity and may suffer from negative transfer as task diversity increases. Another line of work addresses this through transfer learning [14] or policy composition [30], which alleviates task interference by allowing different components to specialize. Recent multi-policy CRL methods also address contextual generalization by strategically selecting source tasks and relying on zero-shot transfer to cover the remaining context space [16, 19, 20]. For example, MBTL models source task performance and transfer gaps to guide source task selection, while SD-MBTL further detects the underlying generalization structure of the CMDP and switches between suitable task selection strategies. These methods primarily address where to train and typically assume that each selected policy is trained under a fixed or converged budget. Our work follows this multi-policy paradigm to mitigate negative transfer, while addressing their lack of budget allocation mechanism. 
+
+RL Fine-Tuning. Fine-tuning has become a common way to reuse experience in RL. Early related work focused on learning an initialization or task representation that can adapt with a small amount of new data, such as MAML and PEARL [31, 32]. Another line learns reusable behaviors before downstream training, for example through unsupervised skill discovery [33]. More recent work studies pretraining followed by fine-tuning more directly: multi-task pretraining with task-specific fine-tuning has been shown to be a strong and simple alternative to meta-RL [34], and multi-task pretraining on Atari variants has been shown to improve generalization to unseen variants even after substantial fine-tuning [24]. Self-supervised multi-task pretraining has also been explored for sequential decision-making models, improving downstream fine-tuning efficiency across seen and unseen control tasks [25]. Offline-to-online RL methods use prior datasets to accelerate later online improvement [35–37]; and parameter-efficient methods such as L2M reduce forgetting when adapting pretrained decision-making models [38]. These works mainly address how to obtain a useful initialization, stabilize one fine-tuning run, or adapt a single agent to a new task. In contrast, TSFT treats fine-tuning progress itself as a planning signal: it models heterogeneous marginal gains from specialization and coordinates compute across a portfolio of fine-tuned policies. 
+
+3 Problem Statement 
+
+Contextual MDP. Let M = ( S, A, P, R, ρ ) denote a standard MDP, where S is the state space, 
+
+A the action space, P the transition dynamics, R the reward function, and ρ the initial state distribution. A contextual MDP, denoted by {Mx}x∈X , is a family of context-specific MDPs 
+
+Mx = ( S, A, P x, R x, ρ x) parameterized by a context vector x drawn from a finite and bounded context set X , which can influence transition dynamics, reward function, and initial state distribution [6, 8, 9]. Hereafter, we simplify notation by using x to refer to a specific task. 
+
+Task Specialization Fine-Tuning. Given a pretrained policy with parameters θ, it can be fine-tuned on a source task set XS ⊂ X with k budget units to achieve task specialization ( θ → θkXS ) on a context subspace. The performance of the policy on a task x ∈ X is denoted by J(θkXS , x ). A task x
+
+is considered covered by the policy if its performance satisfies a predefined threshold, J(θkXS , x ) ≤ ϵ,assuming a minimization objective. The coverage set of the policy is defined as the union of all such covered tasks, C(θkXS ) = {x ∈ X | J(θkXS , x ) ≤ ϵ}. This convention is without loss of generality: for a maximization objective, the inequality is simply reversed. Prior studies typically assume full training to convergence, which can be sample inefficient. This paper instead considers a more practical budget-constrained setting and formulates task specialization as a budget allocation problem. Formally, given N distinct source task sets {XS1 , X S2 , . . . , X SN }
+
+and a total budget of K units, the goal is to distribute this constrained budget to maximize the global coverage of the context space (i.e., the union of converage sets). Starting from a pretrained policy θ,we independently fine-tune it on each source task set XSn , resulting in N specialized policies. The allocation objective is thus formulated as follows: 
+
+max  
+
+> K
+
+G(K),
+
+s.t. ∥K∥ 1 ≤ K, (1) where K = [ k1, k 2, . . . , k N ]T ∈ ZN 
+
+> ≥0
+
+denotes the allocation vector, and kn denotes the number of budget units allocated to fine-tuning the n-th policy on its source task set XSn . Given that specialized policies may exhibit overlapping coverage across the context space, we define the global coverage as 3Context Space Task Coverage 
+
+> Budget Policy 1
+> Mass
+> Task Specialization Fine Tuning
+> Policy 2 Policy 3
+> Pretrained Policy
+
+Figure 1: Conceptual Overview of Task Specialization Fine-Tuning for Contextual RL. We illustrate the framework using a two-dimensional CartPole context space, where a pretrained policy is fine-tuned on three source task sets under different budget allocations to maximize final task coverage. the measure of the union of individual coverage sets: 
+
+G(K) = X
+
+> x∈X
+
+I x ∈
+
+> N
+
+[
+
+> n=1
+
+C(θkn 
+
+> XSn
+
+)
+
+!
+
+= X
+
+> x∈X
+
+I
+
+
+
+min  
+
+> n
+
+J(θkn 
+
+> XSn
+
+, x ) ≤ ϵ
+
+
+
+. (2) In this paper, we define a budget unit as the number of data samples consumed over training epochs or gradient steps, depending on the specific domain. This formulation induces a combinatorial search space and leads to a non-convex optimization problem, whose solution strategy is discussed next. 
+
+4 Methodology 
+
+In this section, we formalize the problem as a model-based allocation problem and solve it exactly via ILP. Then, we introduce the overall framework TSFT, which embeds ILP solving into an online setting to enable effective task specialization in CRL. 
+
+4.1 Problem Formulation 
+
+Given a pretrained policy, a policy class, an RL training algorithm, a set of source task distributions 
+
+{XS1 , . . . , X SN }, and a total budget K, the goal is to decide how much budget should be assigned to each policy. Each allocation decision assigns one fixed budget unit to a policy, e.g., by running the given RL algorithm for a fixed number of samples or epochs on the corresponding source task set. Although the total budget induces a finite horizon of K allocation decisions, the final objective depends only on the resulting allocation vector, rather than on the order of decisions. We therefore directly optimize over feasible allocations subject to the budget constraint. An alternative MDP perspective is provided in Appendix B.1. 
+
+ILP Formulation. We first consider the model-free setting in which the coverage set C(θkXSn ) is known for every policy n and allocation level k. Under this assumption, Eq. (1) can be reformulated exactly as an ILP. Specifically, we introduce a binary decision variable zn,k to indicate whether policy 
+
+n is allocated k budget units, and a binary decision variable qx to indicate whether task x is covered by at least one policy. The resulting ILP formulation is defined as follows: 
+
+max 
+
+> z,q
+
+X
+
+> x∈X
+
+qx, (3) s.t. 
+
+> K
+
+X
+
+> k=0
+
+zn,k = 1 , ∀n ∈ { 1, . . . , N }, (4) 
+
+> N
+
+X
+
+> n=1
+> K
+
+X
+
+> k=0
+
+k z n,k ≤ K, (5) 
+
+qx ≤
+
+> N
+
+X
+
+> n=1
+
+X 
+
+> k:x∈C (θkXSn
+> )
+
+zn,k , ∀x ∈ X , (6) 
+
+zn,k ∈ { 0, 1}, qx ∈ { 0, 1}. (7) 4Constraint (4) selects exactly one allocation level for each policy. Constraint (5) ensures that the total allocated budget does not exceed K. Constraint (6) enforces that qx can be set to one only if task x is covered by at least one policy. The optimal solution to Eq. (1) is recovered as K∗ = [ k∗ 
+
+> 1
+
+, k ∗ 
+
+> 2
+
+, . . . , k ∗ 
+
+> N
+
+],where k⋆n = PKk=0 kz ⋆n,k . Note that this formulation follows the standard ILP formulation of the maximum coverage problem (MCP), as our problem can be viewed as a multiple-choice budgeted MCP (see alternative formulations in Appendix B.2). In specific, each policy is associated with 
+
+K + 1 candidate coverage sets, among which exactly one must be selected. The formulation contains 
+
+N (K + 1) + |X | decision variables and N + |X | + 1 constraints. The ILP solver (e.g., CBC) operates on the precomputed coverage sets and leverages mature branch-and-bound and cutting-plane methods for efficient optimization. When a time limit is imposed, the solver returns the best feasible incumbent along with its optimality status. However, in practice, the coverage set C(θkXSn ) is not known a priori. We therefore introduce a surrogate performance model to approximate the induced coverage sets. 
+
+Surrogate Performance Model. We model the evolution of each policy’s task-wise performance and thereby implicitly estimate its coverage set. For each policy-task pair (n, x ), we fit a parametric performance model of the form: 
+
+F(y) = L ± Be −dy , (8) where L, B ≥ 0, and d > 0 are learnable parameters, and y denotes the consumed budget. The sign of B controls the direction of the performance shift, capturing both improvement and degradation during fine-tuning. We fit Fxn (y) via non-linear least squares (NLLS), which predicts the performance of policy n on task x after consuming a given amount of budget y. Empirically, this fitting process can be performed in parallel over thousands of tasks within seconds. We refer the reader to Appendix E.2 for a comprehensive study of alternative models. The true optimal solution (i.e., Oracle) could, in principle, be obtained by training each policy to completion using the full budget K, and then solving Eq. (1) exactly in a model-free manner. However, in practice, when computing G via Eq. (2), J(θkn 
+
+> XSn
+
+, x ) is unknown during the planning phase. We therefore replace it with our model prediction Fxn (·), yielding a surrogate objective bG that we optimize within our framework. To optimize bG via ILP, we replace C(θkXSn ) in constraint (6) with the estimated coverage set bC(θkXSn ) = {x ∈ X |F xn (k) ≤ ϵ}. The resulting ILP can be solved exactly with respect to bG, although its solution may differ from that of G because of modeling error. 
+
+4.2 Overall Framework 
+
+The above subsections detail how we solve the ILP to obtain the solution (i.e., allocation policy) at a single decision-making step (line 7). We now embed this procedure into our online framework TSFT for task specialization in contextual RL. The detailed algorithmic workflow is presented in Alg. 1. Concretely, the framework begins with a warmup stage (lines 1-4), in which the warmup budget W
+
+is uniformly allocated across N policies. Each policy n is then trained on its corresponding source task set XSn according to this allocation. During training, we save checkpoints for every budget unit. Subsequently, all checkpoints Θ = {θ0 
+
+> XSn
+
+, θ 1 
+
+> XSn
+
+, . . . , θ kn 
+
+> XSn
+
+}Nn=1 are evaluated on each task x ∈ X 
+
+to collect training data Z. In practice, this evaluation can be performed online if checkpoint storage becomes prohibitive. This warmup phase ensures that all policies receive equal initial training and provides sufficient data to enable reliable model learning. Next (lines 5-12), the framework iteratively allocates an execution budget E at each decision-making step until the remaining budget b is exhausted. In specific, at each step, for each policy-task pair 
+
+(n, x ), we first fit a model Fxn to the available training data Z. By calculating the surrogate objective with these models, we solve the model-based allocation via ILP to derive its solution bK. However, due to inherent modeling errors, we do not execute bK to completion. Instead, we allocate the execution budget E proportionally according to bK, which may prevent over-committing to an imperfect model and ensure balanced exploration. We then train the policies under this allocation and collect new data through evaluation. This newly acquired data Z′ is appended to the existing training dataset Z,which may progressively reduce modeling error in subsequent iterations. Furthermore, if the ILP solver terminates early without allocating the entire execution budget, any unused budget is carried forward and reconsidered in subsequent TSFT iterations. 5Algorithm 1 Task Specialization Fine-Tuning (TSFT) 
+
+Input : Context space X , policy count N , total budget K, warmup budget W , execution budget E,Source task sets {XSn }Nn=1 ;
+
+Output : N trained policies;  
+
+> 1:
+
+Initialize: K = {kn}Nn=1 , kn = WN 
+
+> 2:
+
+Θ ← Train N policies on {XSn }Nn=1 following K 
+
+> 3:
+
+Z ← Evaluate Θ on each task x ∈ X to construct dataset  
+
+> 4:
+
+Remaining budget b ← K − W 
+
+> 5:
+
+while b > 0 do  
+
+> 6:
+
+∀n, x : Fxn ← Fit models using dataset Z 
+
+> 7:
+
+bK ← Solve ILP with models {F xn }n,x  
+
+> 8:
+
+Θ ← Distribute budget min( b, E ) based on bK; Train N policies  
+
+> 9:
+
+Z′ ← Evaluate Θ on each task x ∈ X  
+
+> 10:
+
+Update dataset Z ← Z ∪ Z ′ 
+
+> 11:
+
+Update remaining budget b = b − min( b, E ) 
+
+> 12:
+
+end while 
+
+To analyze TSFT, we introduce two oracle allocation policies. The Oracle directly optimizes the true coverage objective over the entire budget and represents the best possible allocation in hindsight. The Oracle-Warmup follows the same warmup stage as TSFT but optimizes the remaining allocation using the true coverage objective. We then present the following error bound and decomposition. 
+
+Theorem 1 (Oracle Gap Decomposition) . Let G(K) denote the global coverage achieved by K, K∗
+
+denote the Oracle allocation, K∗ 
+
+> OW
+
+denote the Oracle-Warmup allocation, and KTSFT denote the allocation returned by TSFT. Under Assumptions 1 and 2, the optimality gap of TSFT satisfies 
+
+G(K∗) − G(KTSFT ) ≤ G(K∗) − G(K∗
+
+> OW
+
+) + 2 δm + ηalg . (9) Theorem 1 shows that the gap between TSFT and the Oracle decomposes into three terms: the warmup error G(K∗) − G(K∗
+
+> OW
+
+), the surrogate-model error 2δm, and the algorithmic planning error 
+
+ηalg . If the post-warmup state lies on an optimal trajectory, the warmup error becomes zero. Moreover, this provides a conditional post-warmup guarantee with respect to a fixed surrogate objective. For a one-shot exact full-horizon planner that optimizes this fixed surrogate and executes the returned allocation exactly, ηalg = 0 . We refer to Appendix C for proofs and further discussion. In summary, our proposed online framework solves a model-based allocation via ILP at each decision-making step, while allowing for periodic model re-estimation to mitigate error accumulation. This enables adaptive and sample-efficient policy training, facilitating effective task specialization in CRL. 
+
+5 Experiment 
+
+In this section, we empirically validate our framework across continuous control, combinatorial optimization, and LLM fine-tuning. The source code will be publicly released upon publication. 
+
+Baseline. 1) Oracle : We first train each policy to completion (i.e., using the maximal budget K), and then solve the ILP defined in Eqs. (3)-(7). This serves as a standard oracle reference, representing an upper bound on achievable performance. 2) Oracle-Warmup : Similar to the Oracle, but isolates the warmup phase by solving the ILP after warmup. Specifically, it treats the post-warmup allocation 
+
+K0 as the initial state and optimizes the true coverage objective over ΩW = {K ∈ ZN 
+
+> ≥0
+
+: K ⪰ K0, ∥K∥ 1 ≤ K}. Therefore, Oracle-Warmup shares the same initial decision-making state as our proposed framework, serving as an additional oracle reference for validating model error. 3) 
+
+Pretrained : The given pretrained policy without further adaptation. Depending on the decision domain, the pretrained policy may be trained outside the context space. 4) MTL : This approach fine-tunes the pretrained policy over the entire context space in a multi-task learning manner, using the same computation budget as the other methods. 5) Random : This approach randomly allocates the compute budget across the N policies. 6) Uniform : This approach evenly allocates the compute budget across the N policies. 7) Adaptive : At each decision-making step, this approach adaptively allocates the decision budget D according to a probability distribution derived from the observed 6Table 2: Performance Comparison in Combinatorial Optimization and Continuous Control.                                                                                                                            
+
+> CVRP CVRPTW CartPole Ant
+> N/K 3/100 3/150 4/150 3/100 3/150 4/150 3/50 3/100 4/100 3/50 3/100 4/100 Oracle 26.7% 29.3% 32.5% 49.4% 50.0% 50.0% 89.2% 89.7% 90.5% 100.0% 100.0% 100.0% Oracle-Warmup 21.4% 24.5% 28.0% 46.6% 47.5% 47.5% 86.8% 87.5% 90.4% 100.0% 100.0% 100.0% Pretrained 6.8% 6.8% 6.8% 40.9% 40.9% 40.9% 66.6% 66.6% 66.6% 31.1% 31.1% 31.1% MTL 9.5% 11.0% 11.0% 44.8% 46.0% 46.0% 71.9% 74.5% 74.5% 31.1% 31.1% 31.1% Random 10.1% 11.0% 12.9% 42.9% 43.2% 43.3% 75.4% 75.0% 82.4% 15.8% 42.5% 45.7% Uniform 7.9% 15.4% 12.4% 42.8% 41.8% 42.0% 72.8% 65.4% 82.8% 25.7% 53.0% 64.7% Adaptive 10.4% 16.1% 14.5% 43.2% 44.0% 44.0% 75.1% 76.9% 87.3% 54.1% 88.0% 91.9% LinUCB 12.6% 20.5% 20.8% 42.8% 44.3% 44.3% 77.7% 82.6% 82.6% 64.3% 88.2% 76.9% TSFT 18.7% 23.0% 26.4% 45.8% 46.2% 46.9% 82.2% 84.0% 87.6% 88.4% 97.7% 99.5%
+
+improvement rate of each policy’s coverage set. 8) LinUCB [39, 40]: This approach formulates the compute allocation as a contextual multi-armed bandit problem. At each decision step, it utilizes the Linear Upper Confidence Bound (LinUCB) algorithm to select a policy for training. The context vector encodes the normalized training progress and coverage momentum, while the reward is defined as the monotonic improvement in the policy’s coverage set to account for temporary performance dips. We refer to Appendix D.1 for additional details on the baselines. We report average results in the main paper (see Appendix E for full results). During inference, we evaluate all N policies and select the best one for each task, following the convention in CRL. 
+
+5.1 Combinatorial Optimization Environment and Context Space. We consider the capacitated vehicle routing problem (CVRP) and its variant with time window constraints (CVRPTW). 1) CVRP : We construct a 2D context space defined by customer node distribution and vehicle capacity. The distribution parameter ranges from [0.01, 0.25] with a step size of 0.01, while the vehicle capacity ranges from [10, 400] with a step size of 10. This results in a total of 1,000 tasks in the context space. 2) CVRPTW : We construct a 2D context space defined by time window tightness and vehicle capacity. The time window parameter ranges from [0.04, 1.00] with a step size of 0.04, while the vehicle capacity ranges from [10, 400] with a step size of 100. This also yields a total of 1,000 tasks in the context space. Each source task set corresponds to a square region in the context space, comprising 49 tasks centered around a reference task. More details are presented in Appendix D.3. 
+
+Setup. We adopt POMO [41] as the policy network, consisting of 1.27M parameters, and train it using the REINFORCE algorithm [42], following the training configurations in [41] (see Appendix D.2). In this domain, one budget unit corresponds to 100 training epochs, with each epoch processing 10,000 data samples. Starting from a policy pretrained over the entire context space for 5,000 epochs, we perform task specialization via multi-task fine-tuning on the corresponding source task sets. Performance is evaluated in terms of optimality gap with respect to HGS [43]. We set the performance threshold ϵ to 1.25% for CVRP and 3% for CVRPTW. We consider a range of budget configurations. For example, 3/100 denotes training N = 3 policies with a total budget of K = 100 
+
+units, as shown in Table 2. In our framework, the warmup budget is set to W = 5 × N units. The execution budget is initially set to E = 5 units, and is increased to 10 after a cumulative budget of 
+
+10 × N has been consumed. This reflects increased confidence in the model as more data becomes available and reduces the frequency of ILP solving. 
+
+Result. We report the best coverage rate achieved by all approaches on CVRP and CVRPTW in Table 2, where the coverage rate is defined as the global coverage divided by the total number of tasks in the context space. TSFT achieves the best non-oracle performance across all six settings. On CVRP, TSFT brings substantial improvements over the strongest baseline, especially as the budget or number of policies increases, and closely approaches Oracle-Warmup. On CVRPTW, the gains are more moderate because several baselines, particularly MTL, already achieve strong coverage, possibly due to reduced task interference in the considered context space. Nevertheless, TSFT still consistently improves over all non-oracle baselines and remains close to Oracle-Warmup. 
+
+5.2 Continuous Control Environment and Context Space. We evaluate on three continuous control suites: 1) CartPole 3D from CARL [6], where the context varies pole length, cart mass, and pole mass. Each axis is 7discretized into 10 values evenly spaced over [0 .1, 10] × the CARL defaults, yielding a 10 3-task grid. 2) Ant 2D from CARL [6], where the context varies gravity and friction over [0 .2, 2.0] × their defaults 
+
+(g0, μ 0) = (9 .8, 1.0) on a 25 ×40 -task grid. 3) Meta-World MT50 [11], a benchmark of 50 robotic manipulation tasks. We refer to Appendix D.3 for more details. 
+
+Setup for CartPole and Ant. We use PPO [44] as the base RL algorithm, with an MLP policy/value network of hidden sizes [64 , 64] for CartPole and [256 , 256] for Ant. The pretrained policy θ is obtained by multi-task PPO on the full grid for 5M (CartPole) and 1M (Ant) environment steps. One budget unit corresponds to 10,000 steps for CartPole and 40,000 steps for Ant. Source task sets correspond to N axis-aligned regions of the grid, each containing 33 = 27 contexts for CartPole and 5×4 = 20 contexts for Ant. We set the performance threshold ϵ to 500 for CartPole and 6.9 for Ant. Note that, in contrast to combinatorial optimization, larger values indicate better performance in continuous control. We consider budget settings with N ∈ 3, 4 and K ∈ 50 , 100 for both environments. For TSFT, we set E = 50 for CartPole and E = 10 for Ant, while keeping the other hyperparameters the same as those used for combinatorial optimization. We report the average performance across seeds in the main paper, with per-seed results provided in Appendix E. 
+
+Setup for Meta-World. We use MOORE [45] as the base multi-task RL algorithm. Specifically, we pretrain MOORE on the full MT50 benchmark for 50M steps to obtain the pretrained policy. The remaining 50M steps are used for task specialization, where each budget unit corresponds to 1M steps. To construct the source task sets, we extract the task-specific expert weights learned by pretrained MOORE and apply K-means clustering to partition the 50 tasks into 10 groups, each containing 5 tasks. We set the performance threshold to ϵ = 1 .0, corresponding to a success rate of 100% over five evaluation episodes. We consider the budget setting with N = 10 policies and K = 50 units. For TSFT, we set the warm-up budget to W = 3 × N . The remaining hyperparameters are the same as those used for combinatorial optimization. To evaluate robustness, we additionally report results on a smaller setting with 5 random seeds in Appendix E. Table 3: Results for Meta-World and LLM-FT. Meta-World (10/50) LLM-FT (4/100) Oracle 86.0% 77.8% Oracle-Warmup 84.0% 77.8% Pretrained 58.0% 0.0% MOORE 60.0% /Random 71.2% 26.7% Uniform 70.0% 22.2% Adaptive 71.2% 28.9% LinUCB 68.0% 33.3% TSFT 74.0% 55.6% Result. Table 2 reports global coverage on Cart-Pole and Ant. Gains over adaptive and ban-dit baselines are moderate, but TSFT consis-tently improves coverage and narrows the gap to Oracle-Warmup as the budget grows. MTL can be unstable here, e.g., on Ant, additional train-ing does not necessarily yield higher task cov-erage. In contrast, Meta-World results (Table 3) show strong MTL performance, yet TSFT still achieves better coverage. Specifically, MOORE achieves an average success rate of 0.68 with 60% task coverage, whereas TSFT improves these to 0.72 and 74%, respectively. We also note that task grouping plays an important role, yet it is not deliberately optimized in this paper. Further improving the task grouping in Meta-World could yield even better performance and higher sample efficiency. Overall, these results show that model-based budget allocation is effective for continuous-control CRL, especially in higher-dimensional settings where naive multi-task fine-tuning is sample-inefficient. 
+
+5.3 LLM Fine-Tuning Environment and Context Space. We evaluate TSFT on reinforcement fine-tuning (RFT) of LLMs. The discrete 1D context space consists of 9 reasoning tasks (benchmarks). The in-distribution (ID) set comprises the test splits of our four fine-tuning corpora: DAPO-17K [46], MATH-500 [47, 48], GSM8K [49], and CodeContests+ [50]. The out-of-distribution (OOD) set comprises five held-out benchmarks: AIME 2024/2025, Minerva Math [51], MBPP [52], and BigCodeBench [53]. 
+
+Setup. We adopt Qwen3-4B-Base [54] as the pretrained policy and apply GRPO [55] with verifiable rule-based rewards. We construct N = 4 specialized policies, each fine-tuned on one of {DAPO-17K, MATH, GSM8K, CodeContests+}, under a total budget of K = 100 , where one budget unit corresponds to a single GRPO update step. Per Eq. (1), each task is dispatched to all N policies and the best pass@1 (greedy decoding) is taken. A task is covered if pass@1 exceeds a per-benchmark 860 70 80 90 100 110 120 130 140 150            
+
+> Budget Unit
+> 100 150 200 250 300
+> Global Coverage
+> Oracle Oracle-Warmup MTL Adaptive LinUCB TSFT 10 20 30 40 50
+> Num. of Data
+> 0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90
+> Recall
+> Policy 0 Policy 1 Policy 2 Policy 0 Policy 1 Policy 2
+> 020 40 60 80
+> Budget Unit
+> Oracle Oracle-Warmup Adaptive LinUCB TSFT 020 40 60 80 100
+> Consumed Budget Unit
+> 50 100 150 200 250
+> Global Coverage
+> Oracle Oracle-Warmup Adaptive LinUCB TSFT
+
+Figure 2: From left to right: Performance comparison under diverse budget settings; Average recall for predicting coverage sets over the future 50 budget units, given varying amounts of data for model fitting; An example run illustrating the allocation policies and the global coverage trajectories over the training process across different methods for the case with N = 3 and K = 100 .threshold. For TSFT, we use the same hyperparameters as in the combinatorial optimization setting. Full training, decoding, and threshold details are presented in Appendices D.2 and D.3. 
+
+Result. Table 3 reports the global coverage on the LLM suite. TSFT consistently outperforms all non-oracle baselines and approach Oracle-Warmup, whereas heuristic allocation baselines recover only part of the specialization benefit. These results suggest that model-based budget allocation can scale to LLM RFT with billions of parameters. 
+
+5.4 Analysis 
+
+We further present detailed analyses using CVRP as a standard testbed. See Appendix E for additional empirical results and analyses (e.g., full results, performance model studies, sensitivity analyses, low-cost evaluation, computational cost, and visualizations). 
+
+Diverse Budget. We provide a detailed comparison of performance across varying budget settings for the case of N = 3 in Fig. 2. The results consistently demonstrate the superiority of TSFT in terms of global coverage across both low- and high-budget regimes. In contrast, LinUCB performs well only in high-budget settings, as it requires sufficient exploration to identify which bandit (policy) has the potential for improvement through trial-and-error, highlighting its relative sample inefficiency. 
+
+Computational Cost. TSFT introduces only modest overhead, as both surrogate performance modeling and ILP optimization are efficient. Thousands of surrogate models can be fitted in parallel within seconds, and an ILP with N = 10 and K = 150 can be solved to optimality in under one second. This cost is minor compared with policy training, which takes about one week for CVRP. 
+
+Model Error. For each policy-task pair (n, x ), TSFT collects one data point per budget unit, which is used to fit the predictive model Fnx at each decision-making step. We report the recall rate of the coverage set estimated by the fitted model as more data becomes available. The results in Fig. 2 demonstrate the effectiveness of our simple parametric model and justify the design of online model re-estimation with newly collected data. More detailed results are provided in Appendix E.2. 
+
+Sample Efficiency. We compare TSFT with the MTL baseline, which performs further training over the entire context space without task specialization. As shown in Fig. 8, MTL typically requires roughly 2× more samples to achieve global coverage comparable to that of our method. 
+
+Allocation Policy. In the right two panels of Fig. 2, we present the allocation policies derived by each approach and the corresponding global coverage in the CVRP setting with N = 3 and K = 100 . The coverage set may initially shrink due to the distribution shift between pretraining and fine-tuning. 
+
+Comparison with MTL. Since TSFT fine-tunes multiple policies during the specialization stage, we provide a comprehensive comparison with the MTL baseline on CVRP under matched training compute. Let Φ denote the number of parameters in the pretrained model, and let ˆK = 200 denote the total budget (pretraining + fine-tuning). We compare TSFT against two MTL settings: (1) MTL with a total compute budget of Φ × ˆK, corresponding to the standard setup; and (2) MTL with a matched compute budget of 5Φ × ˆK 
+
+> 5
+
+, which uses a model with five times the parameters but one-fifth of the budget so that the overall number of parameter updates is comparable to TSFT. These two MTL baselines achieve only 11.0% and 7.8% task coverage, respectively, despite being trained on a larger set of source tasks (i.e., the entire context space) than TSFT (see Fig. 5). 96 Conclusion 
+
+This paper introduces Task Specialization Fine-Tuning (TSFT), a framework that intelligently guides task specialization in contextual reinforcement learning (CRL) by explicitly optimizing how much budget should be allocated to each task region under a constrained budget. Specifically, TSFT formulates the process as a model-based allocation problem using a simple parametric model, and solves it exactly via integer linear programming (ILP). We further embed the process into an online framework with periodic model re-estimation to mitigate modeling errors. Experiments on combina-torial optimization, continuous control, and large language model fine-tuning demonstrate that TSFT significantly improves task coverage, highlighting the promise of intelligent task specialization as a principled mechanism for sample-efficient policy training in complex CRL environments. The limitations of this work are fourfold. First, the surrogate objective used for model-based allocation may be misaligned with the original objective. As a result, solutions that are optimal under the surrogate objective may not achieve strong performance under the original objective. Second, exhaustive evaluation can become computationally prohibitive as the context space grows or the number of specialized policies increases, potentially limiting the scalability of TSFT. Third, we assume a fixed task grouping and do not optimize the partitioning of the context space, which may significantly affect the final coverage, particularly in challenging domains such as Meta-World. Finally, the exponential performance model is not universally applicable and may be inadequate for domains with strongly non-monotonic fine-tuning dynamics. Developing better-aligned optimization objectives, more efficient evaluation strategies, joint optimization of task grouping and budget allocation, and more expressive performance models are promising directions for future work. 
+
+References 
+
+[1] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G Bellemare, Alex Graves, Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski, et al. Human-level control through deep reinforcement learning. nature , 518(7540):529–533, 2015. [2] David Silver, Aja Huang, Chris J Maddison, Arthur Guez, Laurent Sifre, George Van Den Driessche, Julian Schrittwieser, Ioannis Antonoglou, Veda Panneershelvam, Marc Lanctot, et al. Mastering the game of go with deep neural networks and tree search. nature , 529(7587):484–489, 2016. [3] Alhussein Fawzi, Matej Balog, Aja Huang, Thomas Hubert, Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov, Francisco J R. Ruiz, Julian Schrittwieser, Grzegorz Swirszcz, et al. Discovering faster matrix multiplication algorithms with reinforcement learning. Nature , 610(7930):47–53, 2022. [4] Daniel J Mankowitz, Andrea Michi, Anton Zhernov, Marco Gelmi, Marco Selvi, Cosmin Paduraru, Edouard Leurent, Shariq Iqbal, Jean-Baptiste Lespiau, Alex Ahern, et al. Faster sorting algorithms discovered using deep reinforcement learning. Nature , 618(7964):257–263, 2023. [5] Han Zheng, Yining Ma, Brandon Araki, Jingkai Chen, and Cathy Wu. Learning-guided prioritized planning for lifelong multi-agent path finding in warehouse automation. Journal of Artificial Intelligence Research ,85, 2026. [6] Carolin Benjamins, Theresa Eimer, Frederik Schubert, Aditya Mohan, Sebastian Döhler, André Biedenkapp, Bodo Rosenhahn, Frank Hutter, and Marius Lindauer. Contextualize me–the case for context in reinforce-ment learning. Transactions on Machine Learning Research , 2023. [7] Jonas Degrave, Federico Felici, Jonas Buchli, Michael Neunert, Brendan Tracey, Francesco Carpanese, Timo Ewalds, Roland Hafner, Abbas Abdolmaleki, Diego de Las Casas, et al. Magnetic control of tokamak plasmas through deep reinforcement learning. Nature , 602(7897):414–419, 2022. [8] Assaf Hallak, Dotan Di Castro, and Shie Mannor. Contextual markov decision processes. arXiv preprint arXiv:1502.02259 , 2015. [9] Aditya Modi, Nan Jiang, Satinder Singh, and Ambuj Tewari. Markov decision processes with continuous side information. In Algorithmic learning theory , pages 597–618. PMLR, 2018. [10] Andrei A Rusu, Sergio Gomez Colmenarejo, Caglar Gulcehre, Guillaume Desjardins, James Kirkpatrick, Razvan Pascanu, Volodymyr Mnih, Koray Kavukcuoglu, and Raia Hadsell. Policy distillation. In 
+
+International Conference on Learning Representations , 2016. 
+
+10 [11] Tianhe Yu, Deirdre Quillen, Zhanpeng He, Ryan Julian, Karol Hausman, Chelsea Finn, and Sergey Levine. Meta-world: A benchmark and evaluation for multi-task and meta reinforcement learning. In Conference on robot learning , pages 1094–1100. PMLR, 2020. [12] Rich Caruana. Multitask learning. Machine learning , 28(1):41–75, 1997. [13] Aaron Wilson, Alan Fern, Soumya Ray, and Prasad Tadepalli. Multi-task reinforcement learning: a hierarchical bayesian approach. In Proceedings of the 24th international conference on Machine learning ,pages 1015–1022, 2007. [14] Yee Teh, Victor Bapst, Wojciech M Czarnecki, John Quan, James Kirkpatrick, Raia Hadsell, Nicolas Heess, and Razvan Pascanu. Distral: Robust multitask reinforcement learning. Advances in neural information processing systems , 30, 2017. [15] Shagun Sodhani, Amy Zhang, and Joelle Pineau. Multi-task reinforcement learning with context-based representations. In International Conference on Machine Learning , pages 9767–9779. PMLR, 2021. [16] Jung-Hoon Cho, Vindula Jayawardana, Sirui Li, and Cathy Wu. Model-based transfer learning for contextual reinforcement learning. In Advances in Neural Information Processing Systems , volume 37, pages 88279–88319, 2024. [17] Dmitry Ivanov and Omer Ben-Porat. Personalized reinforcement learning with a budget of policies. In 
+
+Proceedings of the AAAI Conference on Artificial Intelligence , 2024. [18] Luise Ge, Michael Lanier, Anindya Sarkar, Bengisu Guresti, Chongjie Zhang, and Yevgeniy Vorobeychik. Learning policy committees for effective personalization in MDPs with diverse tasks. In Forty-second International Conference on Machine Learning , 2025. [19] Tianyue Zhou, Jung-Hoon Cho, and Cathy Wu. Structure detection for contextual reinforcement learning. In Proceedings of the AAAI Conference on Artificial Intelligence , 2026. [20] Jung-Hoon Cho, Sirui Li, Jeongyun Kim, and Cathy Wu. Temporal transfer learning for traffic optimization with coarse-grained advisory autonomy. IEEE Transactions on Robotics , 2026. [21] Rishi Bommasani, Drew A Hudson, Ehsan Adeli, Russ Altman, Simran Arora, Sydney von Arx, Michael S Bernstein, Jeannette Bohg, Antoine Bosselut, Emma Brunskill, et al. On the opportunities and risks of foundation models. arXiv preprint arXiv:2108.07258 , 2021. [22] Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. [23] Sherry Yang, Ofir Nachum, Yilun Du, Jason Wei, Pieter Abbeel, and Dale Schuurmans. Foundation models for decision making: Problems, methods, and opportunities. arXiv preprint arXiv:2303.04129 , 2023. [24] Adrien Ali Taiga, Rishabh Agarwal, Jesse Farebrother, Aaron Courville, and Marc G Bellemare. Investi-gating multi-task pretraining and generalization in reinforcement learning. In The eleventh international conference on learning representations , 2023. [25] Yanchao Sun, Shuang Ma, Ratnesh Madaan, Rogerio Bonatti, Furong Huang, and Ashish Kapoor. SMART: Self-supervised multi-task pretraining with control transformers. In The Eleventh International Conference on Learning Representations , 2023. [26] Trevor Standley, Amir Zamir, Dawn Chen, Leonidas Guibas, Jitendra Malik, and Silvio Savarese. Which tasks should be learned together in multi-task learning? In International conference on machine learning ,pages 9120–9132. PMLR, 2020. [27] Yu Zhang and Qiang Yang. A survey on multi-task learning. IEEE transactions on knowledge and data engineering , 34(12):5586–5609, 2021. [28] Michal Nauman, Marek Cygan, Carmelo Sferrazza, Aviral Kumar, and Pieter Abbeel. Bigger, reg-ularized, categorical: High-capacity value functions are efficient multi-task learners. arXiv preprint arXiv:2505.23150 , 2025. [29] Bram Grooten, Patrick MacAlpine, Kaushik Subramanian, Peter Stone, and Peter R Wurman. Out-of-distribution generalization with a sparc: Racing 100 unseen vehicles with a single policy. In Proceedings of the AAAI Conference on Artificial Intelligence , 2026. 
+
+11 [30] Lingfeng Sun, Haichao Zhang, Wei Xu, and Masayoshi Tomizuka. Paco: Parameter-compositional multi-task reinforcement learning. Advances in Neural Information Processing Systems , 35:21495–21507, 2022. [31] Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep networks. In International conference on machine learning , pages 1126–1135. PMLR, 2017. [32] Kate Rakelly, Aurick Zhou, Chelsea Finn, Sergey Levine, and Deirdre Quillen. Efficient off-policy meta-reinforcement learning via probabilistic context variables. In International conference on machine learning , pages 5331–5340. PMLR, 2019. [33] Benjamin Eysenbach, Abhishek Gupta, Julian Ibarz, and Sergey Levine. Diversity is all you need: Learning skills without a reward function. In International Conference on Learning Representations , 2019. [34] Mandi Zhao, Pieter Abbeel, and Stephen James. On the effectiveness of fine-tuning versus meta-reinforcement learning. Advances in neural information processing systems , 35:26519–26531, 2022. [35] Ashvin Nair, Murtaza Dalal, Abhishek Gupta, and Sergey Levine. Awac: Accelerating online reinforcement learning with offline datasets. In International Conference on Learning Representations , 2021. [36] Philip J Ball, Laura Smith, Ilya Kostrikov, and Sergey Levine. Efficient online reinforcement learning with offline data. In International Conference on Machine Learning , pages 1577–1594. PMLR, 2023. [37] Mitsuhiko Nakamoto, Simon Zhai, Anikait Singh, Max Sobol Mark, Yi Ma, Chelsea Finn, Aviral Kumar, and Sergey Levine. Cal-ql: Calibrated offline rl pre-training for efficient online fine-tuning. Advances in Neural Information Processing Systems , 36:62244–62269, 2023. [38] Thomas Schmied, Markus Hofmarcher, Fabian Paischer, Razvan Pascanu, and Sepp Hochreiter. Learning to modulate pre-trained models in rl. Advances in Neural Information Processing Systems , 36:38231–38265, 2023. [39] Lihong Li, Wei Chu, John Langford, and Robert E Schapire. A contextual-bandit approach to personalized news article recommendation. In Proceedings of the 19th international conference on World wide web ,pages 661–670, 2010. [40] Wei Chu, Lihong Li, Lev Reyzin, and Robert Schapire. Contextual bandits with linear payoff functions. In Proceedings of the fourteenth international conference on artificial intelligence and statistics , pages 208–214. JMLR Workshop and Conference Proceedings, 2011. [41] Yeong-Dae Kwon, Jinho Choo, Byoungjip Kim, Iljoo Yoon, Youngjune Gwon, and Seungjai Min. POMO: Policy optimization with multiple optima for reinforcement learning. In NeurIPS , volume 33, pages 21188–21198, 2020. [42] Ronald J Williams. Simple statistical gradient-following algorithms for connectionist reinforcement learning. Machine learning , 8(3):229–256, 1992. [43] Thibaut Vidal. Hybrid genetic search for the cvrp: Open-source implementation and swap* neighborhood. 
+
+Computers & Operations Research , 140:105643, 2022. [44] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 , 2017. [45] Ahmed Hendawy, Jan Peters, and Carlo D’Eramo. Multi-task reinforcement learning with mixture of orthogonal experts. In The Twelfth International Conference on Learning Representations , 2024. [46] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al. Dapo: An open-source llm reinforcement learning system at scale. 
+
+Advances in Neural Information Processing Systems , 38:113222–113244, 2026. [47] Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset. In NeurIPS Datasets and Benchmarks Track , 2021. [48] Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations , 2024. [49] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 , 2021. 
+
+12 [50] Zihan Wang et al. Codecontests+: High-quality test case generation for competitive programming. arXiv preprint arXiv:2506.05817 , 2025. [51] Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, Yuhuai Wu, Behnam Neyshabur, Guy Gur-Ari, and Vedant Misra. Solving quantitative reasoning problems with language models. In Advances in Neural Information Processing Systems , 2022. [52] Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles Sutton. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 , 2021. [53] Terry Yue Zhuo et al. BigCodeBench: Benchmarking code generation with diverse function calls and complex instructions. arXiv preprint arXiv:2406.15877 , 2024. [54] Qwen Team. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [55] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Yu Wu, and Daya Guo. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. [56] Samir Khuller, Anna Moss, and Joseph Seffi Naor. The budgeted maximum coverage problem. Information processing letters , 70(1):39–45, 1999. [57] Prabhakant Sinha and Andris A Zoltners. The multiple-choice knapsack problem. Operations Research ,27(3):503–515, 1979. [58] Adam N Elmachtoub and Paul Grigas. Smart "predict, then optimize". Management Science , 68(1):9–26, 2022. [59] Jayanta Mandi, James Kotary, Senne Berden, Maxime Mulamba, Victor Bucarey, Tias Guns, and Ferdi-nando Fioretto. Decision-focused learning: Foundations, state of the art, benchmark and future opportuni-ties. Journal of Artificial Intelligence Research , 80:1623–1701, 2024. [60] Carlos E Garcia, David M Prett, and Manfred Morari. Model predictive control: Theory and practice–a survey. Automatica , 25(3):335–348, 1989. [61] Antonin Raffin, Ashley Hill, Adam Gleave, Anssi Kanervisto, Maximilian Ernestus, and Noah Dormann. Stable-baselines3: Reliable reinforcement learning implementations. Journal of Machine Learning Research , 22(268):1–8, 2021. [62] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Systems , pages 1279–1297, 2025. [63] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention, 2023. [64] Wouter Kool, Herke van Hoof, and Max Welling. Attention, learn to solve routing problems! In ICLR ,2018. [65] Alexis Limozin, Eduard Durech, Torsten Hoefler, Imanol Schlag, and Valentina Pyatkin. Sft-then-rl outperforms mixed-policy methods for llm reasoning. arXiv preprint arXiv:2604.23747 , 2026. 
+
+13 Appendix 
+
+A Discussion 
+
+Relationship to Existing Literature. We provide a brief discussion to better contextualize the studied problem and the proposed framework. 1) At the formulation level, Eqs. (3)-(7) constitute a multiple-choice budgeted MCP [56]. Specifically, the K + 1 allocation levels of each policy form a group of candidate sets: selecting level k consumes k budget units and induces a corresponding coverage set. The objective is to select exactly one level for each policy so as to maximize the cardinality of the union of the selected coverage sets, subject to the total budget constraint. This structure resembles the multiple-choice knapsack problem (KP) [57], as both problems involve selecting one item from each group under a shared budget. The key distinction is that KP assumes additive item values, whereas our coverage objective is non-additive: overlapping coverage sets create dependencies among policies. If the policies’ coverage sets were disjoint, or, more generally, their contributions were additive, the formulation would reduce to a multiple-choice KP. 2) At the learning-optimization interface, TSFT follows the predict-then-optimize paradigm [58]: it first predicts task-wise performance using parametric models, converts these predictions into estimated coverage sets, and then optimizes the resulting surrogate problem. In contrast to decision-focused learning [59], our performance models are trained with prediction-level losses rather than an end-to-end objective based on allocation quality or coverage regret. This distinction is particularly relevant for the thresholded coverage objective: prediction errors near the performance threshold ϵ, or on tasks that distinguish between competing allocations, can have a much larger impact than errors elsewhere. Decision-focused learning may therefore improve objective alignment, although differentiating through the discrete thresholding operation and the ILP remains challenging. 3) At the framework level, TSFT resembles the feedback structure of model predictive control (MPC) [60]: it estimates a surrogate model, optimizes an allocation, executes only a limited step, observes the resulting performance, and replans. In this view, the allocation vector plays the role of the planning state, while budget assignments serve as controls. Unlike conventional MPC, which typically controls a dynamical system with continuous states and actions, TSFT addresses a discrete allocation problem over policies and tasks. Accordingly, feedback is primarily used to correct uncertainty in the learned fine-tuning response, rather than to compensate for disturbances in physical dynamics. 
+
+Assumption. 1) Quality of the pretrained policy: TSFT assumes a pretrained policy that provides a meaningful foundation for adaptation. This assumption is consistent with the intended practical setting, where fine-tuning is used to adapt an already capable pretrained model, such as a foundation model in many domains. If the pretrained policy lacks capabilities relevant to the target contexts, adaptation becomes closer to learning each target task from scratch and may require substantially more data and computation than the fixed fine-tuning budget allows. Such scenarios therefore fall outside the intended scope of TSFT. Importantly, however, this assumption does not require the pretrained policy to exhibit uniformly strong performance across all target contexts. As shown in Table 2, TSFT can substantially expand limited target-context coverage (e.g., from 6.8% to 26.4% on CVRP), provided that the pretrained policy offers a sufficiently meaningful basis for adaptation. 2) 
+
+Efficient evaluation: TSFT periodically evaluates policies across the context space to collect the data required for fitting the performance prediction models. Consequently, the framework assumes that these evaluations are sufficiently efficient so that they do not introduce prohibitive computational overhead during online optimization. This limitation can be mitigated by using cheaper evaluation strategies for model fitting, as demonstrated in Appendix E.5. More advanced methods, such as approximating the evaluation results through selective evaluation, constitute an interesting direction for future research. 3) Structure of the context space: By definition, a CMDP comprises a family of related, context-specific MDPs parameterized by a context vector drawn from a context space. We primarily consider well-structured context spaces, following conventions established in prior CRL work [6, 16, 19]. In contrast to these studies, we also consider a discrete context space in the LLM domain, where nine heterogeneous reasoning and coding benchmarks serve as contexts. In 14 this setting, relationships among contexts are less explicit and less smoothly varying, allowing us to evaluate TSFT beyond conventional, strongly structured context spaces. When the context space lacks clear structure, methods that learn where to train through source-task grouping (e.g., based on task embeddings, or gradient-based task-affinity grouping methods) could complement our scope on how much to train and provide an orthogonal and important extension to TSFT in the future work. 
+
+B Methodology Detail 
+
+B.1 MDP Interpretation 
+
+In this section, we present an alternative MDP interpretation of the studied problem. Under this view, the problem can be formulated as a model-based MDP and solved optimally via dynamic programming (DP). Although this approach can be incorporated into TSFT, it is less computationally efficient than the ILP-based formulation used in our main method, as demonstrated in Appendix E.4. 
+
+B.1.1 MDP Formulation 
+
+We frame the budget allocation in Eq. (1) as a sequential decision-making process over the fine-tuning dynamics. Given a pretrained policy, a policy class, an RL training algorithm, a set of source task distributions {XS1 , . . . , X SN }, and a total budget K, the goal is to decide how much budget should be assigned to each policy. Each decision step allocates one fixed budget unit to one policy, e.g., by running the given RL algorithm for a fixed number of samples or epochs on the corresponding source task set. Given the total budget K, the allocation naturally induces a finite horizon of K decision steps. Although the final objective depends only on the resulting allocation vector rather than the action order, this sequential formulation provides a convenient way to search over feasible allocations under the budget constraint. Formally, we formulate this allocation process as a model-based MDP, specifically an undiscounted finite-horizon MDP with horizon K and discount factor γ = 1 .
+
+State Space: A state st ∈ S at step t is defined by the allocation vector across policies, st =(kt
+
+> 1
+
+, k t
+
+> 2
+
+, ..., k tN ), where ktn denotes the cumulative number of budget units allocated to policy n up to step t. Note that the state space is discrete , and the initial state corresponds to a zero allocation vector. 
+
+Action Space: An action at ∈ [1 , 2, ..., N, ∅] specifies which policy receives an additional budget unit at step t. Choosing ∅ corresponds to termination (i.e., early stopping), capturing cases where allocating further budget does not improve the final objective. 
+
+Transition Dynamics and Model: The state transition P is deterministic with respect to the allocation state. Specifically, selecting policy n at step t updates the allocation state by assigning one additional budget unit to that policy. For example, if the first policy is selected, the state transitions from 
+
+st = ( kt
+
+> 1
+
+, k t
+
+> 2
+
+, ..., k tN ) to st+1 = ( kt 
+
+> 1
+
++ 1 , k t
+
+> 2
+
+, ..., k tN ). The size of the budget unit determines the decision and transition granularity. This deterministic transition is defined over the abstract allocation state, not over the underlying stochastic training process. In practice, the parameter trajectory and realized performance of each policy after receiving additional training budget can be stochastic due to random initialization, data sampling, environment interaction, and the RL optimization procedure. We therefore use a model-based MDP: the allocation transition is deterministic, while the effect of training on task performance and coverage is estimated by a learned performance model. Concretely, since the global coverage is not known a priori, we model the evolution of each policy’s task-wise performance and thereby implicitly estimate its coverage set. For each policy-task pair 
+
+(n, x ), we fit a parametric performance model of the form: 
+
+F(y) = L ± Be −dy , (10) where L, B, and d are learnable parameters, and y denotes the consumed training budget. The sign of 
+
+B controls the direction of the performance shift, capturing both improvement and degradation during fine-tuning. We fit Fxn (y) via non-linear least squares (NLLS), which predicts the performance of policy n on task x after consuming a given amount of budget y. Empirically, this fitting process can be performed in parallel over thousands of tasks within seconds. 
+
+Reward Function: The reward rt is defined as the marginal improvement in global coverage. Given that specialized policies may exhibit overlapping coverage across the context space, we define the 15 global coverage at state st as the measure of the union of individual coverage sets: 
+
+G(st) = 
+
+> N
+
+[
+
+> n=1
+
+C(θktn 
+
+> XSn
+
+) . (11) The reward at step t is then the marginal gain resulting from action at: rt = r(st, a t) = G(st+1 ) −
+
+G(st). This formulation ensures that the reward is coupled across policies, naturally penalizing redundant optimization and incentivizing the expansion of the collective coverage boundary. 
+
+B.1.2 MDP Solving 
+
+The true optimal solution (i.e., Oracle) could, in principle, be obtained by training each policy to completion (using the full budget K) and solving Eq. (1) exactly via DP in a model-free MDP. However, in practice, J(θkn 
+
+> XSn
+
+, x ) is unknown during the planning phase. We therefore replace it with our model prediction Fxn (·), yielding a surrogate objective that we optimize within our framework. For clarity, we denote the resulting model-induced surrogate coverage objective by bG. That is, bG(·)
+
+is computed by replacing the unknown performance with the model prediction. Based on the above model-based MDP formulation, we develop a discrete DP solver to derive its optimal allocation policy. To optimize the final objective, the solver applies value iteration on the surrogate objective, searching for the allocation trajectory that maximizes the global coverage upon exhaustion of the total budget K. Let V ∗(st) represent the optimal state value, defined as the maximum achievable global coverage from state st with remaining budget bt. Our DP solver recursively computes this value following the Bellman optimality principle: 
+
+V ∗(st) = max 
+
+bG(st), max 
+
+> at
+
+V ∗(st+1 )
+
+
+
+, (12) where st+1 is the deterministic next state induced by taking action at in state st. We omit a discount factor (i.e., γ = 1 ), as the objective is to maximize the final global coverage over a finite horizon. The optimal policy is obtained via backward induction over the state space. An implementation code snippet is provided in Appendix B.1.3. Our DP solver achieves global optimality and permutation invariance, as detailed in Remark 1. Note that this optimality is defined w.r.t. the model-based MDP under the surrogate objective, and does not necessarily carry over to the original objective in Eq. (1). 
+
+Remark 1 (DP Property) . 1) Global Optimality: The DP solver guarantees global optimality strictly for the full budget K. Intermediate allocations along the optimal trajectory do not necessarily constitute optimal solutions for smaller budget constraints. 2) Permutation Invariance: The final global coverage depends exclusively on the allocation vector K. The specific sequence of actions taken to reach this distribution is commutative and irrelevant to the final objective. 
+
+The computational complexity of the DP solver is dominated by the size of the reachable state space 
+
+|S|. Due to the combinatorial structure of the state representation and the total budget constraint K,the number of reachable states is mathematically upper bounded by the number of weak compositions of at most K units into N policies, i.e., |S| ≤  K+NN
+
+. For fixed N , this bound scales as O(KN ).
+
+Remark 2 (Computational Complexity) . The time and space complexities of the DP solver scale exponentially with the number of policies N , and polynomially with the total budget K.DP RH-DP Start K  
+
+> Optimize over full horizon K
+> Start
+> hehKhee
+> ……
+
+Figure 3: Illustration of RH-DP. This curse of dimensionality motivates the exploration of more efficient strategies for solving the MDP. Inspired by the receding-horizon principle in model predictive control, we introduce 
+
+receding-horizon DP (RH-DP), an h-step lookahead strategy that trades global optimality for improved tractability. RH-DP is char-acterized by a planning horizon h and an execution horizon e.Specifically, instead of solving the full-horizon DP over the entire remaining budget, RH-DP solves an h-step limited-horizon DP, exe-cutes the first e ≤ h allocation decisions, and then replans from the updated state. By bounding the complexity of each local planning phase to O(hN ), this approach reduces the overall computational burden while preserving adaptive replanning over the full budget. 16 B.1.3 Dynamic Programming 
+
+We provide a code snippet illustrating our DP implementation below.                                                                   
+
+> #An example of DP implementation
+> @lru_cache ( maxsize = None ) def dp_value_iter ( self , state , steps_remain ) : current_reward =self . get_coverage ( state ) if steps_remain = = 0 : return current_reward , [ ] possible_actions =[ ] for id , sin enumerate ( state ) : if s<self . max_epochs : new_state =list ( state ) new_state [ id ] + = 1val , path =self . dp_value_iter ( tuple ( new_state ) , steps_remain - 1 ) possible_actions . append (( val , id , path ) )
+> #Optimization : Choose action with max future value
+> best_future_val , best_action , best_path =max ( possible_actions , key = lambda x : x [ 0 ] ) if best_future_val >current_reward : return best_future_val , [ best_action ] +best_path else :
+> #No Action : early - stop as further training yields NO improvement
+> return current_reward , [ ]
+
+B.2 Alternative Formulation 
+
+In addition to Eqs. (3)-(7), we present two alternative ILP formulations and a constraint-programming (CP) formulation. The original formulation uses K + 1 binary variables zn,k to encode the allocation level of each policy. A natural way to potentially reduce the formulation size is to instead use a single integer variable for each policy. However, without additional structure (e.g., monotonicity), the coverage condition in Constraint (6) cannot be expressed linearly in these integer variables without introducing auxiliary variables. We first consider the case in which coverage is monotone with respect to the allocated budget: C(θkXSn ) ⊆ C (θk+1  
+
+> XSn
+
+), ∀n, k ∈ { 0, . . . , K − 1}. Under this assumption, we define the minimum budget required for policy n to cover task x as: 
+
+Tn,x = min 
+
+n
+
+k ∈ { 0, . . . , K } : x ∈ C (θkXSn )
+
+o
+
+, (13) where Tn,x = + ∞ if policy n cannot cover x within the available budget. In the model-based setting, 
+
+C and Tn,x are replaced by their surrogate counterparts induced by F xn . Under monotone coverage, this leads to the following two ILP formulations. 
+
+Threshold Formulation. We directly optimize the allocation variables kn ∈ { 0, . . . , K } and introduce cn,x ∈ { 0, 1} to indicate whether policy n covers task x:
+
+max 
+
+> K,c,q
+
+X
+
+> x∈X
+
+qx, (14) 
+
+s.t.
+
+> N
+
+X
+
+> n=1
+
+kn ≤ K, (15) 
+
+Tn,x cn,x ≤ kn ≤ (Tn,x − 1) + ( K − Tn,x + 1) cn,x , ∀(n, x ) : Tn,x < +∞, (16) 
+
+qx ≤ X
+
+> n:Tn,x <+∞
+
+cn,x , ∀x ∈ X , (17) 
+
+kn ∈ { 0, . . . , K }, cn,x , q x ∈ { 0, 1}. (18) The two-sided constraint enforces cn,x = 1 if and only if kn ≥ Tn,x . This formulation replaces the N (K + 1) binary variables zn,k with N integer variables. However, it introduces up to N |X | 
+
+policy-task variables and is exact only when coverage is monotone. 17 Incremental Budget Formulation. Let dn,k = 1 indicate that policy n receives at least k budget units, for k ∈ { 1, . . . , K }, and define dn, 0 = 1 . The allocation is then kn = PKk=1 dn,k , yielding: 
+
+max 
+
+> d,q
+
+X
+
+> x∈X
+
+qx, (19) 
+
+s.t.
+
+> N
+
+X
+
+> n=1
+> K
+
+X
+
+> k=1
+
+dn,k ≤ K, (20) 
+
+dn,k ≥ dn,k +1 , ∀n, k ∈ { 1, . . . , K − 1}, (21) 
+
+qx ≤ X
+
+> n:Tn,x <+∞
+
+dn,T n,x , ∀x ∈ X , (22) 
+
+dn,k , q x ∈ { 0, 1}. (23) This cumulative encoding eliminates the policy-task variables cn,x and naturally represents training as accumulated budget. Its main drawbacks are the N K binary variables and ordering constraints it introduces, as well as the same monotonicity requirement imposed by the threshold-based formulation. 
+
+Constraint Programming. In addition to ILP, we formulate the problem using the E LEMENT 
+
+constraint supported by OR-Tools CP-SAT. For every policy n, allocation level k, and task x, define the constant axn,k = I
+
+
+
+x ∈ C (θkXSn )
+
+
+
+. We introduce an integer variable kn ∈ { 0, . . . , K } for the budget allocated to policy n, and a binary variable cn,x indicating whether policy n covers task x
+
+under its selected allocation. The formulation is as follows: 
+
+max 
+
+> K,c,q
+
+X
+
+> x∈X
+
+qx, (24) 
+
+s.t.
+
+> N
+
+X
+
+> n=1
+
+kn ≤ K, (25) 
+
+cn,x = Element  kn; axn, 0, . . . , a xn,K 
+
+ , ∀n ∈ { 1, . . . , N }, x ∈ X , (26) 
+
+qx ≤
+
+> N
+
+X
+
+> n=1
+
+cn,x , ∀x ∈ X , (27) 
+
+kn ∈ { 0, . . . , K }, cn,x , q x ∈ { 0, 1}. (28) The E LEMENT constraint sets cn,x to the kn-th entry of the coverage table (axn, 0, . . . , a xn,K ). Unlike the threshold-based formulations, this formulation supports arbitrary non-monotone coverage sets. Compared with the original ILP, it replaces the N (K + 1) binary allocation variables with N integer variables, but introduces N |X | binary coverage variables and element constraints. It may therefore be advantageous when K is large relative to |X | , but can become expensive for large context spaces, and its computational efficiency depends on CP-SAT’s constraint propagation. Overall, the threshold formulation can reduce the dependence on K when the context space is small or the policy-task coverage relation is sparse, while the incremental formulation can yield sparser coverage constraints under monotonicity. In practice, however, monotone coverage is difficult to guarantee. Consequently, the original ILP and the CP formulation are more general. Among them, the original ILP offers a direct representation that benefits from mature mixed-integer optimization techniques and, in our empirical evaluation, exhibits greater computational efficiency. 
+
+B.3 Alternative Model 
+
+In addition to the parametric model, we further explore alternative modeling approaches. 
+
+Gaussian Process (GP). For each policy-task pair, we employ a GP model to implicitly represent a distribution over performance functions, providing a non-parametric alternative to the explicit exponential model. Specifically, for each policy-task pair (n, x ), given the observed performance trajectory Zxn = {(yi, r i)}mi=1 , where yi denotes the training step and ri denotes the observed performance, we assume ri = f xn (yi) + ϵi, ϵ i ∼ N (0 , σ 2 
+
+> ϵ
+
+). We place a GP prior over the latent function f xn (·) ∼ GP  0, k θ (·, ·), where kθ is the covariance kernel. Given Zxn , the GP yields a 18 posterior predictive distribution at any future training step y:
+
+p f xn (y) | Z xn
+
+ = N  μxn(y), σ xn(y)2. (29) We use the posterior mean μxn(y) as the predicted performance for policy n on task x at step y,thereby implicitly predicting the evolution of the corresponding coverage set. 
+
+Parametric Function with GP (PFGP). Although the parametric approach provides a smooth and interpretable estimate of the performance trajectory, fine-tuning, particularly in RL settings, often exhibits noise and instability. To account for this effect, we further combine the parametric model with a GP-based residual model. Specifically, the parametric function is used to model the base performance trend, while a GP is trained on the residuals to capture stochastic performance variations. For each policy-task pair (n, x ), given the observed trajectory Zxn = {(yi, r i)}mi=1 , we first fit the parametric model Fxn (y) and compute the residuals δi = ri − F xn (yi). We then fit a GP to the residual data {(yi, δ i)}mi=1 , which gives a posterior mean μxδ,n (y) for the residual at any future training step y. The final prediction is obtained by adding this residual correction to the parametric trend: bFxn (y) = Fxn (y) + μxδ,n (y). In this way, PFGP preserves the smooth extrapolation structure of the parametric model, while using the GP residual component to capture local deviations and stochastic fluctuations around the fitted trend. 
+
+Other Parametric Forms. We additionally consider a power-law model, F(y) = L ± B(y + 1) −d
+
+with d > 0; a logarithmic model, F(y) = L ± B log(1 + y); and polynomial models of degree d,
+
+F(y) = Pdj=0 cj yj , for d ∈ { 2, 3, 4} (quadratic, cubic, and quartic). We also evaluate a piecewise-linear model consisting of two independently fitted linear segments, with the breakpoint selected using the Bayesian information criterion (BIC). The power-law and logarithmic models impose smooth monotonic trends, whereas the polynomial and piecewise-linear models offer greater flexibility for modeling non-monotonic trajectories. A comprehensive discussion is provided in Appendix E.2. 19 C Theoretical Analysis 
+
+We provide a theoretical analysis of the allocation optimality gap introduced by our TSFT framework. Recall that the objective is to maximize the global coverage under a total budget K:
+
+G(K) = 
+
+> N
+
+[
+
+> n=1
+
+C
+
+
+
+θkn
+
+> XSn
+
+
+
+, (30) where K = ( k1, . . . , k N ) denotes the allocation vector and kn is the budget allocated to the n-th policy. Since the true task performance trajectory J(θ, x ) is unknown during planning, TSFT relies on a predictive model Fxn to construct a surrogate global coverage objective, denoted by bG(K).Let K0 denote the allocation after the warmup stage. For example, when the warmup budget W is uniformly allocated across N policies and W is divisible by N , we have K0 = ( W/N, . . . , W/N ).The post-warmup feasible allocation set is defined as 
+
+ΩW = K ∈ ZN 
+
+> ≥0
+
+: K ⪰ K 0, ∥K∥ 1 ≤ K , (31) where K ⪰ K 0 denotes element-wise inequality. Both TSFT and Oracle-Warmup are constrained to optimize over this same post-warmup feasible allocation set. 
+
+Assumption 1 (Bounded Surrogate Coverage Error) . There exists a constant δm ≥ 0 such that the surrogate coverage objective uniformly approximates the true coverage objective over the post-warmup feasible allocation set: 
+
+sup 
+
+> K∈ ΩW
+
+G(K) − bG(K) ≤ δm. (32) 
+
+Assumption 2 (Surrogate Planning Accuracy) . Let bG be the fixed surrogate objective used to evaluate allocations over ΩW , and let KTSFT ∈ ΩW be the allocation returned by TSFT. We assume that the executed allocation is ηalg -optimal with respect to the surrogate objective: 
+
+bG(KTSFT ) ≥ max 
+
+> K∈ ΩW
+
+bG(K) − ηalg . (33) 
+
+Theorem 2 (Performance Bound under Surrogate Model Error) . Let K∗ 
+
+> OW
+
+∈ arg max K∈ ΩW G(K)
+
+be the Oracle-Warmup allocation, and let KTSFT be the allocation returned by TSFT. Under Assump-tions 1 and 2, we have 
+
+G(K∗
+
+> OW
+
+) − G(KTSFT ) ≤ 2δm + ηalg . (34) 
+
+For a one-shot exact full-horizon planner that optimizes the same fixed surrogate objective and executes the resulting allocation exactly, ηalg = 0 , and the post-warmup gap is bounded by 2δm.Proof. By adding and subtracting the surrogate objective, we obtain 
+
+G(K∗
+
+> OW
+
+) − G(KTSFT ) = 
+
+h
+
+G(K∗
+
+> OW
+
+) − bG(K∗
+
+> OW
+
+)
+
+i
+
++
+
+h bG(K∗
+
+> OW
+
+) − bG(KTSFT )
+
+i
+
++
+
+h bG(KTSFT ) − G(KTSFT )
+
+i
+
+. (35) By Assumption 1, the first and third terms are each upper bounded by δm. Moreover, by Assumption 2, 
+
+bG(K∗
+
+> OW
+
+) − bG(KTSFT ) ≤ max 
+
+> K∈ ΩW
+
+bG(K) − bG(KTSFT ) ≤ ηalg . (36) Combining the three inequalities gives 
+
+G(K∗
+
+> OW
+
+) − G(KTSFT ) ≤ 2δm + ηalg . (37) 
+
+Remark on Coverage Error Assumption. Assumption 1 is stated directly at the level of the coverage objective. This is because G is a thresholded objective: small prediction errors in task performance can change the coverage indicator for tasks whose true performance lies close to the coverage threshold. Therefore, δm should be interpreted as the induced coverage-level error of the 20 surrogate model. In practice, online model re-estimation can reduce this error as more evaluation data are collected, although a monotonic decrease of δm is not guaranteed without additional assumptions. Next, we decompose the gap between TSFT and the full Oracle. Assume ∥K 0∥1 ≤ K, so that 
+
+ΩW ⊆ Ω0. Let the full feasible allocation set be 
+
+Ω0 = K ∈ ZN 
+
+> ≥0
+
+: ∥K∥ 1 ≤ K . (38) The Oracle optimizes over Ω0, whereas Oracle-Warmup and TSFT optimize over the restricted post-warmup feasible set ΩW ⊆ Ω0. Let K∗ ∈ arg max K∈ Ω0 G(K) be the Oracle allocation. 
+
+Theorem 3 (Oracle Gap Decomposition) . Define the warmup error as 
+
+Ewarmup = G(K∗) − G(K∗
+
+> OW
+
+). (39) 
+
+Then the total optimality gap of TSFT with respect to the full Oracle satisfies 
+
+G(K∗) − G(KTSFT ) ≤ E warmup + 2 δm + ηalg . (40) 
+
+Proof. By adding and subtracting the performance of Oracle-Warmup, we obtain the exact decompo-sition 
+
+G(K∗) − G(KTSFT ) = [ G(K∗) − G(K∗
+
+> OW
+
+)] 
+
+| {z }
+
+> warmup error
+
++ [ G(K∗
+
+> OW
+
+) − G(KTSFT )] 
+
+| {z }
+
+> post-warmup planning error
+
+. (41) The first term is Ewarmup by definition. The second term is bounded by Theorem 2. Therefore, 
+
+G(K∗) − G(KTSFT ) ≤ E warmup + 2 δm + ηalg . (42) 
+
+Interpretation. Theorem 3 decomposes the total gap to the full Oracle into two sources. The first term, Ewarmup , captures the loss induced by committing the initial warmup budget before model-based planning begins. Note that this term can be zero if the post-warmup state lies on an optimal trajectory (i.e., K0 ⪯ K ∗). We further ablate its effect on global coverage when it introduces non-zero error (see Fig. 9 for the warmup sensitivity analysis). The second term, bounded by 2δm + ηalg , captures the post-warmup loss caused by surrogate model error and algorithmic approximation. Thus, TSFT approaches Oracle-Warmup when the surrogate coverage error is small and the planning procedure is accurate. It approaches the full Oracle when, in addition, the warmup allocation does not substantially restrict the optimal final allocation. 
+
+Effect of Surrogate Error. Surrogate prediction error does not necessarily induce allocation error. If the surrogate objective preserves the ranking of high-quality feasible allocations, TSFT can still recover a strong post-warmup allocation even when bG̸ = G. Conversely, small prediction errors can affect the selected allocation when multiple feasible allocations have similar true coverage or when many tasks lie close to the threshold ϵ.21 D Experiment Detail 
+
+We conduct experiments on a machine equipped with NVIDIA GeForce RTX 4090 GPUs and an AMD Ryzen Threadripper PRO 7975WX CPU for combinatorial optimization, on a machine with NVIDIA V100 GPUs and an Intel Xeon E5-2670 CPU for continuous control, and on a cluster with 16 NVIDIA H200 GPUs for LLM fine-tuning. 
+
+D.1 Baseline 
+
+Here, we detail the baseline implementations of Adaptive and LinUCB. 1) Adaptive: We maintain a weight wn for each policy n, initialized uniformly. At each decision-making step, the weights are converted into allocation probabilities using a temperature-scaled softmax, and the execution budget 
+
+E is allocated across policies by sampling from the resulting multinomial distribution. After training, we evaluate the updated checkpoints and update each weight based on the coverage improvement per allocated budget unit. In this way, Adaptive prioritizes policies that have recently expanded their coverage set more efficiently. We set the temperature to 0.05 in all experiments. 2) LinUCB: We formulate the budget allocation as a contextual multi-armed bandit problem [39, 40], where each policy corresponds to an arm. For each policy n, we maintain a ridge-regression estimator with a design matrix An and a response vector bn. At each decision-making step, LinUCB constructs a 5-dimensional context vector zn for each policy, which includes a bias term, normalized training progress, its squared value, the current coverage ratio, and recent coverage momentum. The estimated parameter for policy n is given by ˆδn = A−1 
+
+> n
+
+bn. LinUCB then computes the upper-confidence score 
+
+sn = ˆδ⊤ 
+
+> n
+
+zn + α
+
+q
+
+z⊤ 
+
+> n
+
+A−1 
+
+> n
+
+zn, (43) where α = 1 .0 controls the exploration strength. The policy n∗ with the largest score is selected and allocated one budget unit. After training, we evaluate the updated checkpoint and compute the reward as the monotonic coverage improvement over the historical best coverage of the selected policy, normalized by the allocated budget. This reward design avoids penalizing temporary performance drops during fine-tuning. Finally, the statistics An∗ and bn∗ of the selected policy n∗ are updated using the observed context and reward. 
+
+D.2 Policy Training Combinatorial Optimization. We adopt POMO [41] as the policy network, a strong attention-based neural solver for routing problems. We largely follow the training setup in [41]. Specifically, we use the Adam optimizer with a learning rate of 1 × 10 −4, a weight decay of 1 × 10 −6, and a batch size of 64 . The policy is pretrained for 5,000 epochs over the entire context space, with each epoch containing 10 ,000 training instances. Both the problem size and the POMO size are set to 100 .
+
+Continuous Control. For CartPole and Ant experiments, we used PPO [44] implemented by Stable Baseline3 [61] and used the default hyperparameters, including a learning rate of 3 × 10 −4,
+
+n_steps = 2048 , batch size 64 , discount factor 0.99 , GAE parameter 0.95 , clipping parameter 0.2,entropy coefficient 0, and a value function loss coefficient 0.5. The policy and value networks share an MLP backbone whose hidden sizes are environment-specific: [64 , 64] for CartPole 3D and [256 , 256] 
+
+for Ant 2D (the latter to accommodate Ant’s 111 -dimensional observation). The pretraining run targets 5M environment steps over the CartPole grid and 1M over the Ant grid. Fine-tuning on each source region uses the same algorithm and hyperparameters across all N regions; only the source task subset and the budget allocation K vary across runs. For Meta-World experiments, we used MOORE [45] as the base multi-task RL algorithm. We kept all MOORE hyperparameters identical to those used in the original implementation. We evaluate on the Meta-World MT50 benchmark, which contains 50 manipulation tasks. The model is first pretrained for 50 M environment steps on all 50 tasks, and then fine-tuned using a total budget of 50 M environment steps. During fine-tuning, the same algorithm and hyperparameter configuration are used across all task groups; only the task grouping and the budget allocation K vary across runs. 
+
+LLM Fine-Tuning. We perform reinforcement fine-tuning on Qwen3-4B-Base using GRPO [55], implemented in VeRL [62] with a vLLM-based rollout backend [63]. All four specialized policies (DAPO-17K, MATH, GSM8K, CodeContests+) share an identical training configuration, only the training corpus changes across runs. The full hyperparameter list is given in Table 4. After every 22 GRPO update, the current checkpoint is evaluated on each benchmark in the context space (capped at 100 problems per benchmark to keep online evaluation tractable). Table 4: GRPO hyperparameters used for LLM fine-tuning. 
+
+Hyperparameter Value 
+
+Parameter precision BF16 (mixed precision) Group size (rollouts per prompt) 8KL loss coefficient 0 (KL loss disabled) KL penalty in reward Disabled Advantage normalization by group std Disabled Entropy coefficient 0Optimizer AdamW Learning rate 2×10 −6
+
+Train batch size 128 PPO mini-batch size 64 PPO micro-batch size per GPU 16 Max prompt length 2,048 tokens Max response length 8,192 tokens 
+
+D.3 Context Space 
+
+Here, we detail the data generation, as well as the settings of the context space and source task sets. 0.0 0.2 0.4 0.6 0.8 1.0 0.0 0.2 0.4 0.6 0.8 1.0                          
+
+> CVRP100 with = 0.01 0.0 0.2 0.4 0.6 0.8 1.0 0.0 0.2 0.4 0.6 0.8 1.0
+> CVRP100 with = 0.07 0.0 0.2 0.4 0.6 0.8 1.0 0.0 0.2 0.4 0.6 0.8 1.0
+> CVRP100 with = 0.13 0.0 0.2 0.4 0.6 0.8 1.0 0.0 0.2 0.4 0.6 0.8 1.0
+> CVRP100 with = 0.19 0.0 0.2 0.4 0.6 0.8 1.0 0.0 0.2 0.4 0.6 0.8 1.0
+> CVRP100 with = 0.25
+
+Figure 4: Examples of node distributions obtained by varying the covariance σ of a GMM. 
+
+Combinatorial Optimization. For CVRP, we follow the common settings in the literature [41, 64]. The demand of each customer node is randomly sampled from a discrete uniform distribution over 
+
+{1, 2, . . . , 9}. Before being fed into the network, each demand is normalized by the vehicle capacity. The context space is defined by two dimensions: vehicle capacity and node distribution. The vehicle capacity ranges from 10 to 400 with a step size of 10. We control the node distribution through the covariance of a Gaussian mixture model (GMM). Specifically, node locations are generated from a GMM with three clusters, where the cluster centers are sampled uniformly from [0 .2, 0.8] 2. Each cluster uses a diagonal covariance matrix Σ = diag( σ2, σ 2), and we vary σ to control the spatial dispersion of customer nodes along the two dimensions. Nodes sampled outside the unit square [0 , 1] 2
+
+are rejected and resampled. A visualization example is provided in Fig. 4. We construct five source task sets, each containing 49 tasks centered around a reference task (see Fig. 5). The reference tasks for XS1 , X S2 , X S3 , X S4 , X S5 are (0 .07 , 100) , (0 .07 , 300) , (0 .13 , 200) , (0 .19 , 100) , and (0 .19 , 300) ,respectively. We use {XS1 , X S3 , X S5 } and {XS1 , X S2 , X S4 , X S5 } as the source task sets for the 
+
+N = 3 and N = 4 cases in Table 2, respectively. For CVRPTW, we extend CVRP by introducing time-window constraints. Specifically, each customer node vi is associated with a time window [fi, g i] and a service time mi. A vehicle must start serving customer vi within the interval [fi, g i]. If the vehicle arrives earlier than fi, it must wait until 
+
+fi before service can begin. All vehicles must return to the depot v0 no later than g0. We set the depot time window to [f0, g 0] = [0 , 4] and assign zero service time to the depot. The time window for each customer node vi is then generated as follows: 1) sample the time-window center 
+
+γi ∼ U (f0 +d0i, g 0 −di0 −mi), where d0i = di0 denotes the distance, or equivalently the travel time, between v0 and vi; 2) sample the time-window half-width wi uniformly at random from [mi/2, g 0/3] ;and 3) set the customer time window as [fi, g i] = [max( f0, γ i − wi), min( g0, γ i + wi)] . The context space is defined along two dimensions: vehicle capacity and time window (TW) tightness. Vehicle 23 capacity ranges from 10 to 400 with a step size of 10. We control time window tightness by varying the service time mi. Specifically, mi is varied from 0.04 to 1.00 with a step size of 0.04. Larger service times implicitly correspond to tighter time windows. Similar to CVRP, we construct five source task sets, each containing 49 tasks centered around a reference task (see Fig. 5). The reference tasks for XS1 , X S2 , X S3 , X S4 , X S5 are (0 .28 , 100) , (0 .28 , 300) , (0 .52 , 200) , (0 .76 , 100) , and (0 .76 , 300) ,respectively. We use {XS1 , X S3 , X S5 } and {XS1 , X S2 , X S4 , X S5 } as the source task sets for the 
+
+N = 3 and N = 4 cases in Table 2, respectively. 
+
+Continuous Control. For CartPole, we construct a 3-dimensional context space along (pole length, cart mass, pole mass). Each axis is discretized into 10 values evenly spaced over [0 .1, 10] × the CARL defaults (ℓ0, m c, 0, m p, 0) = (0 .5, 1.0, 0.1) , giving the explicit grids {0.05 , 0.6, 1.15 , 1.7, . . . , 5.0}
+
+for pole length, {0.1, 1.2, 2.3, . . . , 10 .0} for cart mass, and {0.01 , 0.12 , 0.23 , . . . , 1.0} for pole mass. Source task sets correspond to N = 5 axis-aligned 33 = 27 -context regions: four extremal corners and a geometric center. These regions are mutually disjoint and together cover 5 × 27 = 135 of the 
+
+1,000 context grid points; the remaining 865 contexts serve as held-out targets that the fine-tuned policies must generalize to. For Ant, we construct a 2-dimensional context space along (gravity, friction). The two axes are discretized into 25 values for gravity ( {1.96 , 2.69 , . . . , 19 .6} m/s 2, i.e. [0 .2, 2.0] × g0) and 40 values for friction ( {0.2, 0.246 , . . . , 2.0}, i.e. [0 .2, 2.0] × μ0), giving a 25 ×40 = 1 ,000 -context grid. Source task sets correspond to N = 5 axis-aligned 5×4 = 20 -context rectangles: four corners and a center. These five regions span 100 of the 1,000 grid points; the remaining 900 contexts are held-out targets. The square and source regions are visualized in Fig. 5. Meta-World MT50 contains 50 robotic manipulation tasks, each corresponding to a distinct task context. In MOORE, each task is initially represented by a one-hot encoding. We instead use the (K)-dimensional task-specific expert weights from the pretrained policy as the task context, since they provide a learned continuous representation of how MOORE combines experts for each task. We project the K-dimensional expert weights of the 50 tasks into a 2D space using PCA, and annotate each point with its task description, as shown in Fig. 5. 
+
+LLM Fine-Tuning. We conduct experiments on a discrete context space comprising nine benchmarks across math reasoning, code generation, and general reasoning: DAPO-17K, MATH-500, GSM8K, CodeContests+, AIME 2024, AIME 2025, Minerva Math, MBPP, and BigCodeBench. We use benchmark-specific performance thresholds ϵ, set to [0.75, 0.10, 0.10, 0.27, 0.36, 0.30, 0.70, 0.20, 0.90] for these benchmarks, respectively. 0.01 0.07 0.13 0.19 0.25             
+
+> Distribution
+> 050 100 150 200 250 300 350 400
+> Capacity
+> CVRP 0.04 0.28 0.52 0.76 1.00
+> TW Tightness
+> 050 100 150 200 250 300 350 400
+> Capacity
+> CVRPTW 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+> pole_length (m)
+> 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 1.8 2.0
+> masscart (kg)
+> 0.02 0.04 0.06 0.08 0.10 0.12 0.14 0.16 0.18 0.20
+> masspole (kg) 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+> gravity (m/s 2)
+> 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00
+> friction
+
+Figure 5: Visualization of the context spaces and corresponding source task sets for CVRP, CVRPTW, CartPole, Ant, and Meta-World, respectively. The task embeddings in Meta-World are the K-dimensional expert weights associated with each task from the pretrained model. We use PCA to reduce them to two dimensions for visualization. 24 E Additional Result 
+
+E.1 Full Result 
+
+We conduct experiments with 5 seeds for CartPole, and 3 seeds for Ant, with the full results reported in Tables 5 and 6. For combinatorial optimization and LLM fine-tuning, we follow the common convention of reporting results from a single seed [41, 46, 64, 65], due to their relatively stable performance or high computational cost. For Meta-World, we use a single seed in the main experiments and additionally evaluate robustness by running 5 random seeds on a smaller setting with N = 5 and K = 25 . We summarize the results in Fig. 6, where error bars denote the standard deviation across seeds. We observe that MTL can be unstable when trained over a large context space, unless equipped with sufficient model capacity and state-of-the-art MTL algorithms. For example, in Ant, allocating additional budgets to MTL does not necessarily improve task coverage. In contrast, TSFT generally performs robustly across these diverse settings. Moreover, we note that the large discrepancy between 93.4% and 0.0% coverage across Ant trials is primarily an artifact of the hard coverage threshold ( ϵ = 6 .9). Specifically, the pretrained policies from the three seeds achieve mean returns of 6.917, 6.825, and 6.858, respectively. Therefore, 0% coverage does not indicate a failure to learn an effective policy, but rather that the policy narrowly misses the predefined threshold. Oracle Oracle-Warmup Pretrained MTL Random Uniform Adaptive LinUCB TSFT        
+
+> 60 65 70 75 80 85 90
+> Coverage Rate (%)
+> 89.2% 86.8% 66.6% 71.9% 75.4% 72.8% 75.1% 77.7% 82.2%
+> CartPole (3/50) Oracle Oracle-Warmup Pretrained MTL Random Uniform Adaptive LinUCB TSFT
+> 020 40 60 80 100
+> Coverage Rate (%)
+> 100.0% 100.0% 31.1% 31.1% 15.8% 25.7% 54.1% 64.3% 88.4%
+> Ant (3/50) Oracle Oracle-Warmup Pretrained MTL Random Uniform Adaptive LinUCB TSFT
+> 40 45 50 55 60 65 70 75
+> Coverage Rate (%)
+> 69.6% 67.2% 49.2% 60.8% 58.8% 58.0% 60.8% 60.8% 61.6%
+> Meta-World (5/25)
+
+Figure 6: Coverage rate comparison on continuous control. Bars report mean coverage, and error bars denote standard deviation. Table 5: Full Results for CartPole. 
+
+Trial 1 Trial 2 Trial 3 Trial 4 Trial 5 
+
+3/50 3/100 4/100 3/50 3/100 4/100 3/50 3/100 4/100 3/50 3/100 4/100 3/50 3/100 4/100 Oracle 86.5% 86.8% 90.0% 89.7% 91.2% 91.5% 89.9% 90.5% 90.6% 90.0% 90.0% 90.2% 89.7% 90.0% 90.1% Oracle-Warmup 82.1% 82.4% 89.7% 83.7% 85.5% 91.5% 89.9% 90.5% 90.6% 88.5% 89.0% 90.0% 89.7% 89.9% 90.0% Pretrained 53.5% 53.5% 53.5% 83.1% 83.1% 83.1% 68.2% 68.2% 68.2% 60.5% 60.5% 60.5% 67.6% 67.6% 67.6% MTL 63.7% 73.0% 73.0% 83.1% 83.1% 83.1% 84.6% 88.4% 88.4% 60.5% 60.5% 60.5% 67.6% 67.6% 67.6% Random 60.2% 65.7% 79.5% 78.4% 77.5% 90.2% 82.0% 87.6% 77.7% 75.6% 64.8% 76.9% 81.0% 79.4% 87.5% Uniform 55.9% 62.7% 80.4% 78.3% 63.9% 78.6% 86.4% 87.4% 89.6% 65.6% 40.0% 76.4% 77.9% 73.1% 88.9% 
+
+Adaptive 52.9% 59.8% 83.7% 78.4% 78.4% 89.0% 81.4% 83.5% 88.5% 77.8% 77.8% 86.6% 84.8% 84.8% 88.5% LinUCB 68.4% 70.3% 70.3% 88.8% 89.2% 89.2% 74.0% 81.6% 81.6% 74.2% 87.8% 87.8% 82.9% 84.2% 84.2% TSFT 74.3% 74.5% 86.2% 83.3% 83.3% 89.7% 82.2% 89.8% 85.3% 85.3% 85.3% 87.7% 85.7% 87.0% 88.9% 
+
+Table 6: Full Results for Ant and Meta-World. 
+
+Ant Trial 1 Ant Trial 2 Ant Trial 3 Meta-World 5/25 
+
+3/50 3/100 4/100 3/50 3/100 4/100 3/50 3/100 4/100 Trial 1 Trial 2 Trial 3 Trial 4 Trial 5 Oracle 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 68.0% 72.0% 70.0% 70.0% 68.0% Oracle-Warmup 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 62.0% 70.0% 68.0% 68.0% 68.0% Pretrained 93.4% 93.4% 93.4% 0.0% 0.0% 0.0% 0.0% 0.0% 0.0% 48.0% 48.0% 52.0% 56.0% 42.0% MTL 93.4% 93.4% 93.4% 0.0% 0.0% 0.0% 0.0% 0.0% 0.0% 62.0% 60.0% 64.0% 64.0% 54.0% Random 21.6% 33.1% 60.2% 0.0% 74.2% 73.4% 25.8% 20.3% 3.5% 54.0% 58.0% 60.0% 66.0% 56.0% Uniform 21.1% 28.0% 51.3% 20.2% 100.0% 84.2% 35.7% 30.9% 58.7% 50.0% 58.0% 60.0% 60.0% 62.0% 
+
+Adaptive 33.1% 86.9% 94.6% 89.6% 89.6% 100.0% 39.7% 87.4% 81.2% 54.0% 62.0% 60.0% 66.0% 62.0% 
+
+LinUCB 93.4% 96.7% 96.7% 61.8% 71.9% 68.7% 37.6% 96.0% 65.4% 58.0% 58.0% 62.0% 64.0% 62.0% 
+
+TSFT (DP) 77.5% 93.0% 98.5% 91.6% 100.0% 100.0% 96.0% 100.0% 100.0% 58.0% 68.0% 60.0% 64.0% 58.0% 
+
+25 E.2 A Comprehensive Study of Performance Model 
+
+TSFT employs an exponential model to predict performance, which implicitly assumes that fine-tuning trajectories are approximately monotonic. While RL fine-tuning is inherently stochastic and no surrogate model can perfectly predict the entire training trajectory, effective budget allocation in TSFT does not require highly accurate performance prediction. Instead, it is often sufficient to capture the coarse trend of the learning curve. This observation motivates our monotonicity assumption and the use of a simple parametric model that emphasizes the global trajectory rather than short-term fluctuations. Below, we provide empirical evidence and discussion supporting this design choice. Table 7: Approximate Monotonicity Rate. CVRP CVRPTW CartPole Ant 5 Points 30.2% 30.7% 28.2% 3.3% 10 Points 1.9% 0.8% 8.3% 0.0% First, the monotonic model remains effective even when the actual training trajectories are noisy and locally non-monotonic . Across evaluated do-mains, the observed RL learning curves exhibit substantial fluctuations. We quantify this phe-nomenon by uniformly sampling either 5 or 10 points from each training trajectory and measur-ing its monotonicity (Table 7). With 10 sampled points, nearly all trajectories exhibit local non-monotonic behavior. With only 5 sampled points, the measured monotonicity increases because coarse sampling filters out high-frequency noise. Despite these local deviations, TSFT consistently achieves strong improvements, indicating that a simple monotonic model is sufficient to capture the broader trend required for effective budget allocation. Second, monotonicity provides a simple and robust inductive bias that reduces overfitting under limited observations . We compare three monotonic models (Exponential, Power-Law, and Logarith-mic) with four non-monotonic models (Quadratic, Cubic, Quartic, and Piecewise) on the relatively monotonic CVRP domain and the more challenging, non-monotonic Ant domain. We evaluate each model in terms of fitting error on the observed data, prediction error on future training points, and the resulting coverage achieved by TSFT (Table 8). Overall, the monotonic models perform consistently well across both domains. While some non-monotonic models remain competitive on Ant, they perform noticeably worse on CVRP. Moreover, although the more flexible models often achieve lower in-distribution (ID) fitting error, they generally incur substantially larger out-of-distribution (OOD) prediction error, suggesting that they overfit the observed noise and produce unstable extrapolations. Table 8: Comparison of different parametric models. We report the TSFT coverage and the average in-distribution (ID) and out-of-distribution (OOD) mean squared errors (MSEs).                                                          
+
+> CVRP 3/100 Ant 3/50 Type Model Coverage Avg. ID MSE Avg. OOD MSE Type Model Coverage Avg. ID MSE Avg. OOD MSE
+> Monotonic Exponential 18.7% 0.027682 0.103628 Monotonic Exponential 88.4% 0.000694 0.001309 Power-Law 19.7% 0.065287 0.192049 Power-Law 88.4% 0.000702 0.001048 Logarithmic 19.0% 0.063002 0.179515 Logarithmic 90.7% 0.000760 0.001076 Non-monotonic Quadratic 8.1% 0.027072 0.565207 Non-monotonic Quadratic 85.2% 0.000625 0.012584 Cubic 7.1% 0.015860 0.585428 Cubic 89.7% 0.000628 1.969833 Quartic 7.4% 0.015324 11.138788 Quartic 81.1% 0.000475 11.286251 Piecewise 15.3% 0.015488 0.147162 Piecewise 70.5% 0.000514 0.010115
+
+Third, explicitly modeling high-frequency fluctuations provides limited practical benefit . Beyond purely parametric models, we also evaluate a hybrid parametric Gaussian process model (PFGP), in which the parametric component captures the global trend, while a non-parametric Gaussian process models residual fluctuations, such as sudden performance jumps. We conduct experiments on the 3/100 CVRP setting by fitting models to data collected from policies trained on the source task set 
+
+XS1 . As shown in Fig. 7, our parametric model consistently achieves higher recall than GP across future budget units, indicating that the simple exponential form provides more reliable extrapolation of fine-tuning trajectories. In contrast, the GP baseline exhibits unstable long-horizon predictions and large uncertainty when extrapolating beyond the observed budget range, which leads to more false negatives in the predicted coverage set. PFGP improves over GP by using the parametric function as a global trend and modeling only the residual variation, and its recall is often close to our parametric model. However, it does not provide a clear advantage over the parametric model, while incurring a significantly higher computational cost due to GP fitting. Therefore, we do not adopt PFGP in our main experiments. The bottom panels further confirm our observation: our model recovers a substantially larger portion of the ground-truth coverage set than GP, whereas PFGP achieves comparable recall without delivering a meaningful improvement. 26 10 20 30 40 50 
+
+Num. of Data 
+
+0.65 0.70 0.75 0.80 0.85 0.90      
+
+> Recall
+> Ours GP PFGP 020 40 60 80 100
+
+Budget Unit                     
+
+> 12345
+> Performance
+> Observed GT GP Prediction 95% CI Ours 020 40 60 80 100
+> Budget Unit
+> 1.5 2.0 2.5 3.0 3.5 4.0
+> Performance
+> Observed GT PFGP Ours 95% CI 0.00 0.05 0.10 0.15 0.20 0.25
+> Distribution
+> 050 100 150 200 250 300 350 400
+> Capacity
+> Coverage Set (Recall: 0.692)
+> Prediction Ground Truth 0.00 0.05 0.10 0.15 0.20 0.25
+> Distribution
+> 050 100 150 200 250 300 350 400
+> Capacity
+> Coverage Set (Recall: 0.513)
+> Prediction Ground Truth 0.00 0.05 0.10 0.15 0.20 0.25
+> Distribution
+> 050 100 150 200 250 300 350 400
+> Capacity
+> Coverage Set (Recall: 0.692)
+> Prediction Ground Truth
+
+Figure 7: Top left panel: Comparison of recall rates of coverage sets. Top right panels: Comparison of fitted models on a single task. Bottom panels: Predicted coverage sets from three modeling approaches (i.e., Ours, GP, and PFGP) after 50 additional budget units. Blue , red , and dark red 
+
+points denote false positives (FP), false negatives (FN), and true positives (TP), respectively. Based on the above evidence, TSFT adopts a simple parametric model to capture the global trend of fine-tuning. Nevertheless, we acknowledge that the exponential model is not universally applicable. When the underlying fine-tuning trajectory exhibits strongly non-monotonic global behavior, the model may produce suboptimal budget allocations. Promising directions for future work include uncertainty-aware exploration strategies and more expressive surrogate models (e.g., neural networks) with stronger extrapolation capabilities. 
+
+E.3 Sensitivity Analysis 
+
+We tune several key hyperparameters, including the performance threshold ϵ, the number of policies 
+
+N , the warmup budget W , and the execution budget E. The tuning procedure is based on a grid search over predefined ranges selected according to computational feasibility and empirical robustness. 1.15 1.20 1.25 1.30 1.35 1.40 
+
+Performance Threshold         
+
+> 50 100 150 200 250 300
+> Global Coverage
+> Oracle Oracle-Warmup MTL Adaptive LinUCB TSFT 0100 200 300 400 Budget Unit 100 150 200 250 300 350 Global Coverage
+> (230, 189)
+> MTL Threshold = 187 First reaches threshold 0100 200 300 400 Budget Unit 100 150 200 250 300 350 Global Coverage
+> (340, 277)
+> MTL Threshold = 264 First reaches threshold
+
+Figure 8: Left panel: Sensitivity test of performance threshold ϵ. Right panels: Sample efficiency comparison between TSFT and MTL on CVRP. We use the best TSFT results reported in Table 2 as thresholds, namely 187 and 264 for budgets of 100 and 150 units, respectively. 
+
+Performance Threshold. We conduct a sensitivity analysis on the performance threshold ϵ in the 3/100 CVRP setting, varying ϵ from 1.15% to 1.4% with increments of 0.05% . As shown in Fig. 8, the global coverage of all methods increases as ϵ becomes larger, since a looser threshold allows more tasks to be counted as covered. TSFT achieves competitive and stable performance over a wide range of ϵ, consistently outperforming standard baselines. 27 Number of Policies. We conduct a scalability test on the CVRP setting with a fixed budget of 
+
+K = 150 , while varying the number of policies from N ∈ { 3, 4, 5, 6, 7}. The results in Fig. 9 show that TSFT scales substantially better than the baseline methods as the number of policies increases. Most baselines exhibit a clear performance drop as N becomes larger, suggesting that they struggle to effectively allocate the fixed budget across an increasing number of policies. Although LinUCB is competitive when N is small, its performance deteriorates sharply for larger N . Overall, these results demonstrate that TSFT is more effective at managing the increased allocation complexity induced by a larger policy portfolio. At the same time, they also reveal a fundamental trade-off: when the total budget is fixed, an excessively large N eventually reduces performance because each policy receives a smaller specialization budget (i.e., budget dilution). Consequently, TSFT would be expected to achieve higher coverage if the per-policy specialization budget were held constant. 
+
+Warmup Budget. We conduct a sensitivity analysis on the warmup budget W in the 3/100 and 3/150 CVRP settings, varying the warmup budget per policy from 3 to 15. As shown in Fig. 9, TSFT generally achieves stronger performance with relatively small warmup budgets, whereas an excessively large warmup budget may reduce the budget available for subsequent adaptive specialization, potentially leading to degraded global coverage. Note that the warmup budget introduces suboptimality only when it allocates more budget units to some policy than required by the optimal allocation under the true objective. 3 4 5 6 7                    
+
+> Number of Policies N
+> 050 100 150 200 250
+> Global Coverage
+> Random Uniform Adaptive LinUCB TSFT 345678910 11 12 13 14 15
+> Warmup Budget
+> 140 160 180 200 220
+> Global Coverage
+> 3/100 TSFT 3/150 TSFT 510 15 20 25 30
+> Execution Budget
+> 170 180 190 200 210 220 230 240 250 260
+> Global Coverage
+> 3/100 TSFT 3/150 TSFT
+
+Figure 9: Left panel: Performance comparison under different number of policies. Middle panel: 
+
+Sensitivity test of warmup budget. Right panel: Sensitivity test of execution budget. 
+
+Execution Budget. We conduct a sensitivity analysis on the execution budget E in the 3/100 and 3/150 CVRP settings, varying the execution budget unit from 5 to 30. As shown in Fig. 9, TSFT remains relatively stable across different execution budget settings, indicating that the method is not overly sensitive once a reasonable execution budget is used. This also suggests that TSFT may further robustly benefit from adaptive budget allocation without requiring extensive tuning of E.Table 9: Sensitivity Test of Source Task Set. CVRP 3/100 Adaptive LinUCB TSFT (DP) 
+
+(XS1 , X S3 , X S5 ) 10.4% 12.6% 18.7% 
+
+(XS1 , X S2 , X S3 ) 7.1% 8.1% 11.4% 
+
+(XS2 , X S3 , X S4 ) 6.4% 6.1% 12.3% 
+
+(XS3 , X S4 , X S5 ) 9.0% 5.7% 16.9% 
+
+(XS1 , X S2 , X S5 ) 10.5% 11.7% 21.8% 
+
+(XS1 , X S4 , X S5 ) 7.4% 7.3% 18.4% 
+
+(XS2 , X S3 , X S5 ) 6.3% 9.4% 17.0% 
+
+(XS2 , X S4 , X S5 ) 6.9% 9.8% 20.1% Source Task Set. A substantial body of prior CRL research focuses on where to train (e.g., how to select representative source tasks). Our work addresses a complementary question of how much to fine-tune each given region. Nevertheless, We conduct additional experi-ments in the 3/100 CVRP setting using differ-ent source-task configurations to investigate TSFT’s sensitivity to the choice of source-task set. Specifically, we define the five candidate regions illustrated in Fig. 5 and evaluate dif-ferent selections of three regions. As shown in Table 9, TSFT remains effective across the tested configurations and consistently identifies high-quality budget allocations, demonstrating that our TSFT is largely robust to different choices of source tasks. 
+
+E.4 Computational Cost 
+
+We provide a detailed comparison of the computational costs of the ILP- and DP-based methods in Table 10. The exact DP solver scales poorly with the number of policies N, quickly becoming impractical as N increases. Although RH-DP substantially reduces both runtime and memory 28 consumption, it remains computationally prohibitive for large-scale planning over larger policy sets. In contrast, ILP solves the problem exactly while remaining computationally efficient. Unlike DP, which explicitly enumerates and caches nearly all reachable allocation states, ILP provides a compact formulation that enables the solver to exploit LP relaxations and branch-and-bound pruning to eliminate large portions of the search space. Note that the slight non-monotonicity in ILP runtime arises because branch-and-bound complexity depends on instance-specific structure and pruning effectiveness rather than solely on N and K. Consequently, ILP is often faster in practice, though both formulations remain exponential in the worst case. Table 10: Computational cost comparison of TSFT under different numbers of policies N and total budgets K. Each entry reports runtime and peak memory usage per decision-making step.                                                                         
+
+> Setting Method Runtime / Memory
+> Varying the number of policies Nwith fixed budget K= 100
+> K= 100 N= 2 N= 3 N= 4 N= 5 N= 6 N= 7
+> TSFT (DP) 0.04s / 2.5MB 2.1s / 47.8MB 47.0s / 771.8MB 642.3s / 9476.2MB ––TSFT (RH-DP) 0.02s / 1.0MB 0.4s / 8.4MB 3.3s / 65.2MB 25.2s / 406.4MB 136.8s / 2186.9MB 717.2s / 10418.9MB TSFT (ILP) 0.08s / 2.2MB 0.2s / 6.1MB 0.5s / 8.7MB 0.5s / 9.0MB 0.5s / 10.3MB 0.4s / 11.0MB
+> Varying the total budget Kwith fixed number of policies N= 3
+> N= 3 K= 50 K= 100 K= 150 K= 200 K= 250 K= 300
+> TSFT (DP) 0.11s / 2.8MB 2.1s / 47.8MB 11.1s / 228.3MB 34.3s / 673.1MB 78.7s / 1580.2MB 165.1s / 3197.5MB TSFT (RH-DP) 0.08s / 2.3MB 0.4s / 8.4MB 0.6s / 13.7MB 0.9s / 20.0MB 1.2s / 25.0MB 1.5s / 32.6MB TSFT (ILP) 0.09s / 2.2MB 0.2s / 6.1MB 0.2s / 11.4MB 0.5s / 11.4MB 0.2s / 11.4MB 0.2s / 11.4MB
+
+E.5 Cheap Evaluation 
+
+Table 11: Results for Cheap Evaluation. TSFT (DP) CVRP 3/100 CVRP 3/150 Original 18.7% 23.0% Reduced Evaluation (10x) 18.9% 22.3% TSFT periodically evaluates policies across the context space. In our experiments, the total evaluation time is on the order of hours, which is substantially smaller than the days required for policy training. Nevertheless, exhaustive evaluation may be impractical in domains with expensive evaluations. To mitigate this, we may reduce the online evaluation cost required for model fitting by using fewer validation samples or evaluating less frequently with a larger execution interval. As shown in Table 11, using one-tenth as many samples for online evaluation yields comparable coverage to the original setting. Final global coverage is still calculated using the full dataset. More advanced methods, such as approximating the evaluation results through selective evaluation, constitute an interesting direction for future research. 
+
+E.6 Visualization 
+
+We visualize the performance heatmap of each policy to illustrate task specialization. Specifically, we consider the final policies in the 5/150 CVRP setting, where specialization is guided by TSFT. Since TSFT allocates different budgets across policies, some remain at early stages of fine-tuning, whereas others (e.g., the last policy) progress to later stages. As shown in Fig. 10, each policy achieves low optimality gaps primarily around the region associated with its corresponding source task set, while its performance generally degrades when moving farther away from that region. This indicates that TSFT encourages different policies to specialize in distinct subregions of the context space rather than forcing a single policy to perform uniformly well across all tasks. More importantly, the specialized regions are complementary across policies, suggesting that the final policy portfolio can provide broader global coverage through task-wise policy selection. This effect is further illustrated in the bottom row of Fig. 10. Although the pretrained and MTL policies achieve reasonably good average performance across the context space, their global coverage remains limited because they lack sufficient specialization. 29 0.01 0.07 0.13 0.19 0.25                                          
+
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Source Task Set: XS1
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Source Task Set: XS2
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Source Task Set: XS3
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Source Task Set: XS4
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Source Task Set: XS5
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Pretrained
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> Pretrained
+> Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> MTL
+> 012345Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> MTL
+> Optimality Gap 0.01 0.07 0.13 0.19 0.25
+> Distribution
+> 50 100 150 200 250 300 350 400
+> Capacity
+> TSFT
+> Optimality Gap
+
+Figure 10: Top row: Performance heatmaps of policies selected by TSFT. Bottom row: Performance heatmaps and coverage sets (yellow regions) of the pretrained policy and the multi-task learning (MTL) policy under the same budget as TSFT, together with the final coverage set achieved by TSFT. 
+
+F Broader Impact 
+
+This work studies task specialization fine-tuning for contextual reinforcement learning. One positive societal impact is that it contributes directly to greener AI practices: by improving sample efficiency, such methods may reduce the computational and energy costs required to adapt RL agents across diverse task conditions. This can make learning-based decision systems more accessible to researchers and practitioners with limited resources. In application domains such as logistics, transportation, robotics, and resource management, improved contextual generalization may also support more robust and efficient automated decision-making in changing environments. However, negative societal impacts may arise if these methods are deployed in high-stakes settings without sufficient validation, since improved sample efficiency alone does not guarantee safety, fairness, or reliability across all contexts. In addition, more efficient adaptation could accelerate the deployment of RL systems in domains where automation may affect labor, privacy, or human oversight. Therefore, practical deployment should be accompanied by careful evaluation, domain-specific safeguards, and appropriate human supervision. 
+
+G License 
+
+The licenses and usage of the existing assets are listed in Table 12. Our source code and datasets will be publicly released under the MIT License upon publication. Table 12: Licenses and usage for existing assets. 
+
+Type Asset License Usage 
+
+Code POMO [41] MIT License Policy network (CVRP/CVRPTW) Stable Baselines3 [61] MIT License PPO algorithm (CartPole/Ant) MOORE [45] MIT License Meta-World multi-task RL VeRL Apache 2.0 LLM RFT framework Model Qwen3-4B-Base [54] Apache 2.0 LLM pretrained policy Datasets DAPO-17K [46] Apache 2.0 LLM training / evaluation MATH [47] MIT License LLM training / evaluation (MATH-500) GSM8K [49] MIT License LLM training / evaluation CodeContests+ [50] Apache 2.0 LLM training / evaluation Benchmark CARL [6] Apache 2.0 Continuous control CRL benchmark Meta-World [11] MIT License Multi-task robotic manipulation benchmark AIME 2024 Public LLM evaluation AIME 2025 Public LLM evaluation Minerva Math [51] MIT License LLM evaluation MBPP [52] CC-BY-4.0 LLM evaluation BigCodeBench [53] Apache 2.0 LLM evaluation 
+
+30
