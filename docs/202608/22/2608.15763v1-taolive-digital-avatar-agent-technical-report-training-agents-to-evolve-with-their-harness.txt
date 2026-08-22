@@ -1,0 +1,2508 @@
+TaoLive Digital Avatar Agent Technical Report:
+Training Agents to Evolve with Their Harness
+TaoLive AIGC LLM Team
+ABSTRACT
+AI-powered digital avatar streamers in live e-commerce must answer product questions, interact with viewers,
+and execute marketing strategies in real time, requiring low latency, frequent strategy updates, and accurate
+yet effective replies. To enable frequent updates, we build an evolvable Harness whose Skills, Hooks, prompts,
+and tools can be modified independently of model weights, allowing the system to iterate without retraining.
+However, not all models can benefit from Harness Evolution. Models with weak generalization—such as those
+trained via SFT on a single fixed Harness—overfit to the fixed configuration and cannot evolve with the Harness,
+while large models with strong generalization have latencies too high for real-time interaction. We propose
+Harness-Aware Training (HAT) to train a compact model that can evolve with the Harness. The core idea is to
+expose the model to diverse Harness configurations during training so that it learns to understand the current
+Harness rather than memorize a fixed version. HAT introduces Harness-State Augmentation (HSA), which
+applies task-preserving transformations to Skill identifiers, Skill content, tool schemas, prompt structure, and
+Hook functions, and organizes training into three stages: SFT with HSA (HSA-SFT), General Domain On-Policy
+Distillation (General OPD), and Agentic RL with HSA (HSA-RL). Across four complementary evaluation sets,
+the HAT-trained model reaches an average score of 94.8 on Live-Stream QA (base 80.3, strongest general LLM
+93.0) and 94.6 on Harness-Variant QA (base 75.4). Crucially, it maintains 83.5 on IFEval, avoiding the significant
+7.7-point drop typically observed after Fixed-Harness SFT. On a single NVIDIA H20 GPU (with optimization
+enabled), it achieves a P50 latency of 3.407 s and P95 of 8.114 s. These results demonstrate that HAT produces a
+compact agent that evolves with ongoing Harness changes under strict latency constraints.
+1 Introduction
+Digital avatars, also referred to as virtual humans are increasingly deployed across diverse interactive applications
+including conversational assistants, customer service, education, and marketing [Cui and Liu, 2023, Allal-Chérif
+et al., 2024, Yang et al., 2025]. Among these, live-streaming e-commerce represents a uniquely demanding scenario:
+AI-powered digital streamers must interact with viewers in real-time, answer product questions, and execute
+marketing strategies under strict latency constraints [Liu et al., 2025, Sun et al., 2025]. In our application, the digital
+avatar’s replies are spoken publicly to the entire broadcast room, requiring the underlying agent to simultaneously
+satisfy three conflicting requirements. First, ultra-low latency is essential, as long wait times severely degrade the
+live viewing experience. Second, the agent demands high adaptability; campaign rules, compliance requirements,
+and reply styles change frequently driven by the shifting preferences of operations teams and merchants. Third,
+replies must be both accurate and effective—maintaining factual groundedness without making unsupported
+claims (hallucinations), while successfully addressing viewer intent.
+While a standard ReAct-style loop [Yao et al., 2023] enables reasoning and tool usage, it does not facilitate agile
+strategy updates. In initial deployments, addressing new failure cases or modifying merchant-specific strategies
+often required altering central prompts or control code, followed by a full service deployment or even model
+retraining. This slow iteration cycle cannot keep pace with the high-frequency demands of live commerce. To
+1
+arXiv:2608.15763v1  [cs.CL]  16 Aug 2026
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+address this, we propose an evolvable Harness architecture composed of four independently updatable modules:
+Skills (reply rules and strategies), Hooks (intermediate step validation and retry logic), a System Prompt Pipeline
+(dynamic instruction assembly based on context), and a Tool Registry (commerce tool definitions). This architecture
+allows the execution environment to evolve while policy model weights remain fixed—a practice we term Harness
+Evolution, which is closely related to modular prompt and runtime optimization [Khattab et al., 2023, Hebbar
+et al., 2026, Zhang et al., 2026, Lin et al., 2026, Qu et al., 2026, Ning et al., 2025]. Our system adopts this approach
+through a developer-reviewed diagnose–edit–evaluate loop applied to these modules, enabling business behavior
+to be adjusted within hours rather than requiring a lengthy retraining cycle. (Section 2.3).
+Harness Evolution, however, changes the problem that the policy model must solve. Since every promoted
+Harness version replaces the configuration the model was initially deployed against, the model no longer acts
+inside a fixed execution environment but rather inside a continuous sequence of evolving environments: Skills are
+rewritten, Hooks are added, prompts are reassembled, and tool schemas are renamed, all while the weights stay
+unchanged. Robustness to Harness changes is therefore a property the policy model must possess rather than a
+convenience we obtain for free; ironically, the more effective the evolution loop becomes, the more frequently the
+model’s environment moves beneath it.
+Which model can inhabit such a moving environment? Strong zero-shot models are the natural candidates,
+as their general instruction-following lets them absorb a rewritten Skill or a renamed tool with no adaptation at
+all—but their latency rules them out, with median end-to-end latencies exceeding 11 seconds for DeepSeek-V4
+models in our tests, far beyond the real-time budget. The latency requirement thus forces a compact policy
+model (e.g., Qwen3.6-35B-A3B), which in turn must be domain-trained, because its zero-shot accuracy does not
+meet industrial standards. This is where the two mechanisms collide: Fixed-Harness SFT on the single Harness
+configuration available at training time yields surface-form overfitting—the model memorizes specific Skill
+names, tool names and prompt templates instead of reading the instructions actually placed in front of it—and
+that configuration is precisely what Harness Evolution is designed to replace. A model trained this way becomes
+stale exactly when the system evolves successfully. Our experiments make this cost concrete: Fixed-Harness SFT
+improved domain-specific metrics but degraded general instruction-following ability (measured by IFEval [Zhou
+et al., 2023]) by 7.7 points, the very capability needed to follow an unfamiliar Harness. Nor do existing alternatives
+resolve the tension: test-time adaptation [Liang et al., 2024, Chen et al., 2026a] violates strict latency budgets,
+while continual learning [Wang et al., 2024] re-pays a retraining cost for every Harness edit, which is unsustainable
+at our update frequency.
+We resolve this tension with Harness-Aware Training (HAT), which makes the Harness state an explicit part of
+the training distribution rather than a fixed background assumption. Instead of fitting the policy to trajectories
+collected under the single configuration ℎ𝑡that happens to be in production, we train over a distribution of Harness
+states, so that the model learns to condition on whatever Harness it is currently given and can evolve together with
+it. Concretely, we introduce Harness-State Augmentation (HSA) to apply task-preserving perturbations to Skill
+content, tool schemas, prompt structure, and interaction constraints, and instantiate it in two training stages. The
+complete pipeline comprises (1) SFT with HSA (HSA-SFT) using trajectories generated under varied Harness
+configurations; (2) General On-Policy Distillation (General OPD) [Agarwal et al., 2024] to recover general
+capabilities degraded during domain-specific SFT [Lu and Lab, 2025]; and (3) Agentic RL with HSA (HSA-RL)
+within a production-informed live-room simulator, allowing the model to learn from the consequences of its
+actions under shifting environmental conditions [Zhou et al., 2025, Jin et al., 2025].
+Extensive evaluations demonstrate the effectiveness of our approach. On our real-world Live-Stream QA
+benchmark, the selected 35B checkpoint achieves a 94.8 average score, surpassing both the untuned base model
+(80.3) and strong zero-shot models. Crucially, it maintains robustness to evaluated Harness changes and avoids the
+significant IFEval score loss observed after Fixed-Harness SFT.
+Our Harness-based judge is calibrated against human annotations to ensure reliability. In controlled deployment
+tests on a single NVIDIA-H20 GPU with MTP [DeepSeek-AI, 2024, Li et al., 2024, Chen et al., 2026b, Cheng
+et al., 2026], the complete agent meets strict latency requirements, achieving a P50 wall-clock latency of 3.407s
+and a P95 of 8.114s.
+Our contributions are:
+2
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+▶An evolvable Harness, and the training problem it creates. We decouple Skills, prompts, Hooks, and tools
+from the policy model, enabling agile updates to strategy and constraints without retraining; Harness Evolution
+alone significantly improves success rates on our development set. We then characterize its consequence: a
+successful evolution loop turns the policy model’s execution environment into a moving target that fixed-Harness
+training cannot accommodate (Section 2).
+▶Harness-Aware Training: putting the Harness into the training distribution. We introduce HSA and
+instantiate it in a three-stage HAT pipeline comprising HSA-SFT, General OPD, and HSA-RL. This design
+lets a latency-feasible compact model track Harness changes instead of memorizing one configuration while
+retaining general capabilities (Sections 3 and 5.4).
+▶Comprehensive benchmarks and reliable evaluation procedures. We construct four complementary
+evaluation sets covering real-world interactions, Harness variations, and synthetic robustness scenarios, totaling
+over 4,500 cases. We validate our Harness-based Agent-as-a-Judge against human labels to ensure reliable,
+scalable evaluation (Section 4).
+▶Practical insights for training agents that can evolve with their Harness. Our extensive experiments reveal
+critical findings, such as the larger observed impact of HSA during SFT than during RL, and the role of General
+OPD in recovering capabilities lost during domain adaptation (Section 5.3).
+2 Digital-Avatar Harness Agent Architecture
+The Harness Agent separates a slowly updated policy model from a rapidly evolving Harness state. This separation
+lets operators change business behavior without retraining, but it also creates the central learning problem of this
+paper: the policy must remain effective as the environment around it evolves. We first describe the application and
+runtime, then formalize the non-training process as Harness Evolution.
+2.1 Live-Streaming Digital-Avatar Scenario
+We study a digital-avatar host that answers product questions, handles open-ended conversation, and invokes
+external tools during live commerce. Public spoken responses are synthesized through TTS and avatar driving
+for the whole room. Each request combines the viewer message with anchor speech, product data, link IDs, and
+living-room status. The application demands low latency while business rules evolve weekly.
+2.2 The Harness Agent Runtime
+The Harness Agent runtime comprises four mechanisms. Skills are dynamically loaded behavioral modules for
+Q&A strategy, tool choosing, and reply style. The System Prompt Pipeline assembles instructions from product
+specifications, retrieved FAQ, living-room status, global boundary and active skill descriptions. Hooks validate
+inputs, parameters, and output formats, triggering correction or retry when needed. Tool orchestration connects the
+agent to external product, inventory, and commerce services. Because these modules are versioned independently
+of model weights, a new skill or tool can be deployed as a harness change rather than a training cycle. And our
+harness agent architecture is shown in Fig. 3.
+2.3 Harness Evolution without Weight Updates
+We use Harness Evolution to denote a controlled process that improves the agent by changing skills, prompts,
+hooks, or tools while holding the model fixed. It is human-in-loop rather than fully autonomous: AI performs
+failure clustering, diagnosis, and proposed edits; a developer confirms the plan, runs evaluation, and decides
+whether to promote, revise, or stop. The complete operational protocol appears in Appendix B.
+Harness Evolution loop
+Diagnose →Confirm →Edit Harness →Evaluate →Regression Check
+Figure 2 illustrates both the value and the limit of the harness evolution process. On the 482-case human-labeled
+3
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Online Serving
+Business Inputs
+Viewer comment
+live context
+Anchor speech
+context
+Product
+information /
+link ID
+Harness Agent Runtime
+Skills
+Prompt assembly
+Hooks
+Tool orchestration
+Harness-aware
+Policy Model
+selected policy candidate
+Harness modules
+Response /
+Action
+Public
+spoken
+response
+TTS
+Avatar
+generation
+driving
+Live Room
+all viewers
+Tool / API services
+external dependency
+Offline Updates
+Harness
+Evolution
+Policy checkpoint
+Harness-aware
+Model Training
+Figure 1. Application flow and the two independent update paths. Harness Evolution edits agent runtime modules while
+keeping model weights fixed; Harness-Aware Training (HAT) provides a well-performing, low-latency, and robust model.
+Both paths meet inside the same production runtime.
+ReAct
+Harness
+base
+Evo. 1
+Evo. 2
+Evo. 3
+Evo. 4
+Harness Evolution Stage
+80
+85
+90
+95
+Development score (%)
+80.33
+82.40
+92.13
+92.55
+91.51
+91.51
+84.58
+87.16
+84.16
+92.75
+90.89
+89.96
+SELECTED
+Accuracy
+Effectiveness
+Figure 2. Harness Evolution with a fixed DeepSeek-V4-flash on dev-set (𝑛= 482). The process is non-monotonic:
+Evolution 2 is the selected development checkpoint, while later long-tail edits introduce regressions.
+calibration set annotated by three annotators, moving from ReAct to the modular harness raises Effectiveness from
+84.58 to 87.16. Evolution 1 sharply improves Accuracy from 82.40 to 92.13 but reduces Effectiveness to 84.16.
+Evolution 2 reaches 92.55 Accuracy and 92.75 Effectiveness. Additional long-tail rules in Evolutions 3–4 regress
+one or both dimensions, so Evolution 2 is selected as the engineering early-stop checkpoint. Detailed module
+changes, category diagnostics, stopping logic, and evidence boundaries are reported in Appendix B.
+Why evolution changes the training problem
+Every promoted harness version creates a new state ℎ𝑡+1 while the model remains fixed. A model that memorizes
+ℎ𝑡therefore becomes stale precisely when the system evolves successfully.
+The evaluation Judge is also implemented as an editable harness agent as detailed in Appendix D.
+4
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+2.4 Task and Runtime Details
+This section expands the task interface and runtime inventory summarized in Section 2. Evaluation roles and
+scoring are specified separately in Appendix E.
+Task Interface
+The agent operates in live-streaming e-commerce, where a digital-avatar host responds to viewer comments
+under the production latency bound. Each request contains the viewer’s comment, the anchor’s nearby utterances,
+live-room and product context, applicable FAQ entries, and recent dialogue history. The output contains a
+natural-language reply—either public speech sent to TTS and avatar driving or a private text response—plus the
+structured tool-call trajectory used to produce it.
+In single-comment mode, the runtime handles one viewer message independently; in multi-comment mode, it
+aggregates related messages before responding. An available internal traffic summary groups the main viewer
+intents as shown in Table 1. The values are rounded, and the archived summary does not preserve the reporting
+window; they therefore describe workload composition rather than a population estimate.
+Runtime Interfaces
+The Harness exposes built-in interfaces for retrieval, commerce operations, and flow control. Additional marketing
+interfaces are discovered dynamically from an external service through the Model Context Protocol (MCP).
+Table 12 groups the release inventory by responsibility. The inventory is bound to manifest HA-ARL-20260614,
+together with the policy checkpoint and Harness version hash.
+Skill Routing
+Each Skill is a versioned Markdown module with YAML metadata and behavioral directives. The runtime requires
+at least one Reply Skill before a substantive final response; Strategy Skills are optional and can be composed when
+an interaction requires a specialized tool chain. Table 13 records the release inventory. Module names and versions
+are reconciled against the same manifest before promotion.
+Execution and Trajectory Record
+Figure 3 summarizes the implementation-level request path in a deliberately compact form. It separates the editable
+Harness modules from the repeated policy–tool loop and distinguishes resilience for an individual model call from
+recovery of the full trajectory. Product-specific tool names and Hook implementations are omitted because they
+vary across Harness versions.
+A request traverses the following runtime stages:
+1. Load and normalize context. Validate the request and assemble product, FAQ, room, and dialogue state.
+2. Assemble the prompt. Combine the base instruction, active product and room configuration, relevant retrieved
+context, and any loaded Skills.
+Table 1. Approximate intent mix in the available internal traffic summary.
+Scenario
+Proportion
+Product Q&A
+∼46%
+Casual chat and engagement
+∼19%
+Clarification follow-up
+∼16%
+After-sales handling
+∼7%
+Discount and promotion inquiry
+∼4%
+Presentation-order adjustment
+∼2%
+FAQ-based reply
+∼2%
+Silent refusal of irrelevant content
+< 1%
+5
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Editable Harness Modules
+Prompt rules
+task and business
+constraints
+Skill registry
+discovered and
+loaded on demand
+Hook lifecycle
+validate, gate, and retry
+Tools and retrieval
+registry and
+external services
+Request Lifecycle
+Input and
+context
+viewer + product
+FAQ + room
+dialogue state
+Prompt and Skill
+assembly
+compose instructions
+constraints + context
+Pre-LLM Hook
+Policy inference
+plan, call tools,
+or reply
+Pre- / Post-Tool Hooks
+Tool exchange
+action → services
+observation → next round
+Post-Round Hook
+Stop gate
+format, Skill, and
+turn-limit checks
+pass
+Response
+and trace
+reply + tool log
+latency + tokens
+retry / next round
+Tool / retrieval services
+external dependency
+Resilience
+Per-call fallback
+substitute a backup result on
+an inference timeout or error
+Trajectory-level recovery
+enforce the run deadline and retry policy;
+mark the degraded trajectory
+Figure 3. Simplified Harness Agent runtime control flow. Prompt rules and dynamically loaded Skills assemble the
+model context; lifecycle Hooks validate inference, tool use, and stopping. A failed stop gate starts another round, while a
+passed gate produces the final response and structured trajectory. Per-call fallback and trajectory-level recovery protect
+different failure scopes.
+3. Run the agent loop. Under a configurable round limit, the policy can load Skills, issue one or more tool calls,
+incorporate their results, and propose a final reply.
+4. Apply Hook checks. Lifecycle checks cover input validity, tool parameters, Skill-loading requirements, response
+format, known factuality risks, and retry control. The complete deployed Hook manifest remains version-bound
+rather than hard-coded in this description.
+5. Extract and dispatch the reply. Remove internal reasoning fields, retain the structured trajectory, and route
+the public or private response to its downstream channel.
+Example trajectory record
+input.danmaku = “How much is product #3?”
+context.current_link_id = 1
+call[1] = get_product_info_by_link_id(link_id=3)
+result[1] = {name: “Sunscreen SPF50”, price: 89}
+call[2] = load_skill(skill=“item_qa”)
+reply = “Link #3 is Sunscreen SPF50, currently priced at 89 yuan.”
+3 Harness-Aware Training (HAT)
+3.1 Problem Formulation
+We model a single agent interaction as 𝜋𝜃(𝑎| 𝑥, ℎ), where 𝑥denotes the user input together with its business context
+(e.g., live-streaming room state, current product listing), and ℎ∈H is the Harness state—the full configuration
+that governs agent behavior at inference time. Concretely,
+ℎ= (S, T, P, K),
+(1)
+where S is the set of active Skills (pluggable policy modules with reply rules and examples), T is the tool registry
+(schemas, parameter definitions, and descriptions), P is the system prompt assembled by the dynamic pipeline,
+and K is the set of Hooks (checkpoint logic for validation, retry, and format enforcement).
+In production, ℎevolves continuously: operations teams add Skills weekly, tool interfaces are updated as
+6
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+(a) Harness-State Augmentation (HSA) and shared initialization
+Original Harness
+state
+Harness-state perturbations
+Skills · reply rules · Tool definitions
+system prompt · message processing
+Quality screening
+target-consistency check
+Judge / filtering
+Filtered augmented
+Harness state
+HSA-SFT data: original + filtered HSA states
+Base
+HSA-SFT
+General OPD
+TRAINING RESULT
+HSA-SFT + General OPD
+shared initialization
+Base teacher
+(b) Agentic optimization variants
+Shared initialization for every variant: HSA-SFT + General OPD
+Agentic-stage environment
+Direct Agentic RL policy
+Transferred policy
+Original Harness
+HSA environment
+HSA-SFT +
+General OPD
+Agentic RL
+Agentic RL
+original Harness
+HSA-SFT +
+General OPD
+Agentic OPD
+Agentic OPD
+mechanism probe
+paired RL teacher
+HSA-SFT +
+General OPD
+Agentic RL
+HSA-RL
+selected candidate
+HSA-SFT +
+General OPD
+Agentic OPD
+Agentic OPD
+with HSA
+mechanism probe
+paired RL teacher
+initialization / data / training flow
+teacher policy
+Figure 4. Overview of HAT. (a) HSA constructs diversified Harness states; HSA-SFT followed by General OPD produces
+the shared initialization. (b) Controlled comparison of Agentic RL and Agentic OPD under the original Harness and
+HSA environments. Every variant starts from the HSA-SFT + General OPD result, and each OPD variant receives its
+paired same-environment RL teacher. The selected Agentic RL policy under HSA is HSA-RL.
+upstream services change, and prompts are revised in response to emerging bad cases. A model trained at time 𝑡
+observes ℎ𝑡during training but faces ℎ𝑡+1, ℎ𝑡+2, . . . after deployment.
+Our training objective is twofold: (1) improve policy effectiveness when deployment draws a new harness
+ℎ′ ∼Edeploy from a specified change envelope that is broader than any single training snapshot; and (2) retain
+general-purpose capabilities such as instruction following after domain-specific fine-tuning.
+3.2 Harness-State Augmentation (HSA)
+Our working hypothesis is surface-form overfitting: when training data contains a single, fixed harness, the objective
+permits shortcuts such as matching skill names by string similarity, selecting tools from memorized schema text,
+or following instructions only in a familiar template. The core hypothesis is that changing the surface form of the
+harness makes it harder for the model to rely on fixed names or templates as shortcuts. If a skill is renamed, its
+description rewritten, and distractors injected, functional information about the skill becomes more useful for
+routing than memorizing a single identifier.
+We perturb the harness along five dimensions, each targeting a distinct aspect of surface-form dependence:
+1. Skill identifier We expand the skill set with synthetic plausible skills and noise skills, randomly mask subsets
+of existing skills, rename skills, and rewrite skill descriptions by a strong language model. These changes
+reduce the usefulness of a fixed skill identifier.
+2. Skill content. Within each skill, we paraphrase individual rules, randomly mask a subset, and reorder them.
+This variation is intended to reduce reliance on rule position and exact wording.
+3. Tool definitions. We rename tools, rewrite descriptions. This transformation makes name matching less reliable
+while preserving the tool’s function.
+4. System prompt. We reorder top-level instruction blocks and items within blocks, and perturb numeric
+constraints (e.g., response length limits, maximum interaction rounds) within operationally valid ranges.
+5. Hook. We design controlled variants of retry behavior, message structure, and hook-triggered modifications to
+simulate the changes that the model may encounter after hooks are updated in production.
+7
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+3.3 Simulated On-Policy Environment
+HSA addresses environment coverage but operates on offline demonstration data: the model learns from teacher-
+generated trajectories that always follow the optimal path. In real deployment, however, the agent must handle
+situations that never appear in demonstrations—a tool call returns an unexpected error, a Hook intercepts and
+forces a retry, or the agent selects a wrong Skill and must recover mid-conversation. Offline data provide no
+learning signal from the model’s own failed trajectories and recovery attempts, because they contain only teacher
+trajectories.
+Moreover, the Harness Agent operates as a multi-step system: within a single user request, the model may
+perform Skill selection, tool invocation, result interpretation, and response generation across multiple reasoning
+rounds, with Hooks potentially triggering retries at each stage. Learning to navigate this dynamic interaction loop
+requires the model to actually experience it during training—observing the consequences of its own actions rather
+than imitating a teacher’s.
+Environment Design. We construct a production-informed live-streaming simulator that implements the control-
+flow elements needed for training: skills, tool executors, hooks, and bounded multi-round interaction. The simulator
+consists of four components:
+(1) Streaming input simulation. The environment generates realistic user inputs by sampling from a pool of
+live-streaming scenarios: product inquiries, casual chat, purchasing intent, after-sales questions, and mixed-intent
+bullet comments. Each input is contextualized with a simulated room state including current product listings,
+historical conversation turns, and viewer action signals (e.g., adding to cart, joining the room).
+(2) Harness Agent scheduling. The simulator implements the full Harness Agent control flow. Given the
+model’s output at each reasoning step, the environment executes Skill routing logic (determining which Skills are
+loaded based on the model’s selection), triggers Hooks at the appropriate checkpoints (input validation, parameter
+checking, response format verification, Skill-loading enforcement), and manages the multi-round interaction loop
+with a configurable maximum round limit.
+(3) Tool execution simulation. When the model invokes a tool, the simulator executes the call against sandboxed
+service replicas that return product details, pricing information, and inventory status from production catalog
+snapshots. The simulator also injects controlled failures—timeout errors, malformed responses, and permission
+denials—at calibrated rates to expose the model to error-recovery scenarios.
+(4) Augmented Harness configuration. The simulated environment operates under augmented Harness states
+produced by the method described in §3.2. This aligns the offline and on-policy stages to the same declared change
+envelope.
+Agentic RL Training. Within the simulated environment, we optimize the policy based on Group Relative Policy
+Optimization (GRPO) [Shao et al., 2024]. For each prompt, 𝐺complete trajectory rollouts (group size) are sampled
+and split into tool segments and reply segments. The reward signal is computed from four dimensions:
+▶Accuracy: whether the final response contains factually correct information, judged during RL by a DeepSeek-
+V4-flash Reward Judge;
+▶Effectiveness: whetherthe response adequately addresses the user’s intentwithappropriate detailandactionability;
+▶Tool Rationality: whether the tool invocation chain is logically sound and efficiently structured (no redundant
+calls, correct parameter usage);
+▶Skill Selection: whether the model correctly identifies the user’s intent and the current context to load the
+appropriate Skills.
+As an auxiliary regularizer, we discourage unnecessarily long chain-of-thought (CoT) spans. For state group
+𝑔, let 𝐿𝑔
+𝑖be the sum of tokens in the CoT spans extracted from trajectory 𝑖. Tool-call and final-reply states are
+measured separately, so one state does not consume the other’s length allowance. We define
+𝑟CoT(𝐿) =
+
+
+0,
+𝐿≤𝐿low,
+𝐿−𝐿low
+𝐿high −𝐿low
+,
+𝐿low < 𝐿< 𝐿high,
+1,
+𝐿≥𝐿high,
+(2)
+8
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Here 𝐿low and 𝐿high are tunable no-penalty and saturation thresholds, respectively, with 𝐿low < 𝐿high; we set them
+to 100 and 200 tokens in the reported experiments. Thus the raw contribution ranges from 0 to −0.1 per state. This
+component is intended to reduce avoidable reasoning length.
+The tool and reply segments are treated as separate groups (𝑔∈G = {tool, reply}) for advantage computation.
+Since each group carries multiple reward dimensions, we adopt Group reward Decomposed Policy Optimization
+(GDPO) [Liu et al., 2026] to estimate advantages: for each task reward dimension 𝑑within state group 𝑔, a
+group-normalized advantage ˆ𝐴(𝑑)
+𝑖
+= (𝑟(𝑑)
+𝑖
+−𝜇(𝑑)
+𝑔)/𝜎(𝑑)
+𝑔
+is computed. The CoT score is normalized as its own
+dimension, ˆ𝐴(CoT,𝑔)
+𝑖
+= (𝑞(𝐿𝑔
+𝑖) −𝜇(CoT)
+𝑔
+)/𝜎(CoT)
+𝑔
+, and its negative weight is applied after this per-dimension
+normalization:
+ˆ𝐴𝑔
+𝑖=
+∑︁
+𝑑∈D𝑔
+ˆ𝐴(𝑑)
+𝑖
+−𝜆ˆ𝐴(CoT,𝑔)
+𝑖
+,
+ˆ𝐴𝑔,★
+𝑖
+=
+ˆ𝐴𝑔
+𝑖−𝜇𝑔
+𝜎𝑔
+.
+(3)
+Here 𝜇and 𝜎denote the corresponding within-group means and standard deviations, and all four task dimensions
+retain unit weight. For importance sampling, we adopt the sequence-level scheme of GSPO [Zheng et al., 2025],
+giving the clipped policy gradient objective:
+L = −
+1
+|G|𝐺
+∑︁
+𝑔
+∑︁
+𝑖
+min
+
+𝜌𝑖(𝜃) ˆ𝐴𝑔,★
+𝑖
+, clip(𝜌𝑖(𝜃), 1±𝜀) ˆ𝐴𝑔,★
+𝑖
+
+,
+𝜌𝑖(𝜃) =
+ 𝜋𝜃(𝑦𝑖| 𝑥)
+𝜋𝜃old(𝑦𝑖| 𝑥)
+ 1
+|𝑦𝑖|
+,
+= exp
+ 
+1
+|𝑦𝑖|
+|𝑦𝑖|
+∑︁
+𝑡=1
+log 𝜋𝜃(𝑦𝑖,𝑡| 𝑥, 𝑦𝑖,<𝑡)
+𝜋𝜃old(𝑦𝑖,𝑡| 𝑥, 𝑦𝑖,<𝑡)
+!
+.
+(4)
+Here 𝜋𝜃and 𝜋𝜃old are the current and reference policies; 𝑦𝑖is the generated sequence of length |𝑦𝑖|; 𝑦𝑖,𝑡is the
+𝑡-th token and 𝑦𝑖,<𝑡its prefix; 𝑥is the input context; and 𝜀is the PPO clip range [Schulman et al., 2017]. The
+sequence-level ratio 𝜌𝑖(𝜃) replaces token-level importance sampling to stabilize training under the sparse expert
+routing of the MoE architecture.
+When an individual trajectory has zero advantage after GDPO normalization, it provides no gradient signal
+while diluting the effective batch. Such zero-gradient samples are discarded before optimization [Yu et al., 2025].
+Algorithm 1 in Appendix C gives the complete procedure.
+3.4 Training Pipeline
+The complete training pipeline consists of three stages, each addressing a distinct capability gap:
+Stage 1: SFT with Harness-State Augmentation (HSA-SFT). HSA-SFT constructs supervised fine-tuning
+samples from real live-room interactions. Each original sample contains the viewer query, live-room context, and
+product context, and is paired with a corresponding Harness which includes the available skills, tool definitions,
+system prompt, and Hook configuration. To reduce the model’s dependence on the surface form of a single harness,
+we first apply HSA to the Harness base state in Figure 2 before generating supervised trajectories. This produces
+both the original Harness and multiple augmented Harness variants. HSA changes skill names and descriptions,
+skill-rule order, tool descriptions, system-prompt structure, and the surface form of Hook messages and retry
+behavior.
+The teacher model then generates candidate trajectories under both the original harness and the augmented
+harness variants, so the supervised signals cover multiple simulated environments. These candidate trajectories are
+filtered according to Accuracy and Effectiveness. As a result, supervised learning exposes the student to the same
+task semantics under different harness realizations, encouraging it to use the functional meaning of the current
+Harness rather than fixed names or template matches.
+Hooks in production may inform the model about formatting errors, parameter errors, or invalid outputs, and
+ask it to revise. We want the model to correct itself when receiving a hook reminder, but we do not want it to learn
+9
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+a default strategy of producing an erroneous output first and relying on retries. Therefore, for most trajectories that
+contain hook-triggered retries, we remove the intermediate failed outputs and hook interactions and keep only the
+final correct behavior. We retain a small fraction of complete retry trajectories so that the model still learns how to
+interpret hook reminders and recover after a failure.
+Stage 2: General Domain On-Policy Distillation (General OPD). Motivated by prior practice showing that
+On-Policy Distillation can improve general instruction-following ability [Lu and Lab, 2025], we add a General
+OPD stage after HSA-SFT. We use the pre-HSA-SFT base model as the teacher and perform on-policy distillation
+on the Tulu3 [Lambert et al., 2025] general instruction dataset. The student samples responses on-policy for
+Tulu inputs and is trained by minimizing the KL divergence between the student distribution and the base-model
+distribution:
+LOPD = 𝐸𝑥∼Dgen
+
+𝐷KL(𝑝𝜃(· | 𝑥) ∥𝑝base(· | 𝑥))
+
+.
+(5)
+Stage 3: Agentic RL with Harness-State Augmentation (HSA-RL). From the checkpoint trained by HSA-SFT
+and General OPD, we further optimize the policy in the simulated on-policy environment. This environment
+uses the production-informed simulator defined in Section 3.3, including live-streaming scenarios, multi-round
+interaction, skill loading, tool execution, and Hooks. In HSA-RL, HSA is applied before sequence generation:
+before each rollout, we first decide whether the current sample uses the original Harness or an augmented Harness,
+and the model then generates a complete interaction trajectory under that Harness. In this way, part of the rollouts
+are exposed to the original production configuration, while the rest are exposed to domain-preserving augmented
+Harness states, maintaining adaptation to the original environment while expanding coverage of Harness changes.
+For optimization, we use the Agentic RL objective described in Section 3.3, with the complete training procedure
+provided in Appendix C.
+4 Evaluation Design
+This section describes the evaluation sources, the scoring metrics for each source, and the deployment replay
+protocol used to measure actual latency and serving performance.
+4.1 Evaluation Sets and Sources
+We organize the evaluation around the requirements in the live-streaming application. For offline evaluation,
+Live-Stream QA and Harness-Variant QA are both built from real live-room interactions and cover the main industry
+scenarios in our application domain, with the available internal intent mix summarized in Appendix Table 1.
+Live-Stream QA tests industrial reply quality, while Harness-Variant QA tests generalization and robustness to
+changing Harness contexts. We also use a separate real live-room calibration cohort to align the Harness-based
+Agent-as-a-Judge with human labels. To test broader tool and prompt robustness, we construct synthetic Tool
+Robustness and Prompt Robustness subsets by expanding real-industrial scenario seeds with LLM generation and
+consistency validation, as shown in Appendix E.3. We also evaluate general instruction-following ability on the
+public IFEval benchmark [Zhou et al., 2023]. To test actual deployment latency and serving performance, we use a
+fixed complete-Agent deployment replay. Table 2 summarizes the size, source, and role of each evaluation source.
+4.2 Metrics and Scoring
+For Live-Stream QA and Harness-Variant QA, we evaluate each response with Accuracy and Effectiveness using
+the Harness-based Agent-as-a-Judge, following the LLM-as-a-Judge paradigm [Zheng et al., 2024]. Appendix E.1.
+Accuracy is a binary metric that penalizes factual errors, unsupported product claims, false promises, and
+capability overreach. Effectiveness measures whether the response addresses the viewer’s intent and provides
+useful information, with scores of 0, 0.5, or 1. We report AVG as the per-sample arithmetic mean of Accuracy and
+Effectiveness, computed before rounding.
+For Tool Robustness and Prompt Robustness, we use task-specific rubric metrics. Tool Robustness uses ADR,
+RC, and TC: ADR measures whether the response addresses the core viewer query, RC measures whether the
+response uses the required information returned by tools, and TC measures whether the expected tool is called.
+10
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 2. Evaluation sets and sources. The sets cover real live-stream reply quality, in-family Harness variation, synthetic
+tool and prompt robustness, general instruction following, and actual deployment latency.
+Set
+Size
+Source
+Evidentiary role
+T1
+978
+Real live-room
+Primary industrial quality (live-stream reply).
+T2
+978
+Real live-room, aug. Harness
+In-family robustness to new Harness contexts.
+T3
+2023
+Synthetic avatar scenarios
+In-domain transfer under broader tools/prompts.
+T4
+541
+Public IFEval
+General instruction following (official evaluator).
+Cjudge
+482
+Real live-room, human-labeled
+Judge calibration, not a policy test set. Also dev-set for harness evolving.
+Dperf
+110
+Deployment replay
+End-to-end deployment latency.
+Prompt Robustness uses ADR, LLM, and TCO: ADR keeps the same core-query definition, LLM evaluates
+whether the response satisfies the active instruction constraints, and TCO checks whether tool calls follow the
+required order.
+For IFEval, we use its official evaluator and report prompt-level and instruction-level accuracy (abbreviated as
+IFE-P and IFE-I hereafter). IFE-P measures whether the model satisfies the full prompt-level instruction set, while
+IFE-I measures whether individual instructions are followed.
+For deployment replay, we report wall-clock latency P50 and P95, TTFT, decoding throughput, execution
+success, and 15-second attainment. Wall-clock latency is the time from receiving the input query to obtaining
+the final Agent answer. TTFT is the time to the first token. Execution success indicates completion of the Agent
+request, not answer quality. The 15-second attainment denominator includes all measured requests.
+4.3 Deployment Inference Protocol
+We use 110 cases, mark 10 as warm-up, and compute metrics over the remaining 100 requests. Every request
+executes the complete Agent with the same Harness commit, real MCP services, at most four agent loops, and a
+5-second tool timeout. Generation uses temperature 1.0 and top-𝑝0.95. Qwen3.6-35B-A3B and our task-trained
+checkpoint run in BF16 on one H20 with TP=PP=1. Their NextN MTP modules supply draft tokens, which the
+serving engine processes through the same EAGLE-style speculative generation and verification path with three
+speculative steps and four draft tokens; Appendix F.1 gives the complete engine configuration.
+5 Experiments
+5.1 Experimental Setup
+The training experiments are conducted on Qwen3.6-35B-A3B. The training data are collected from real
+live-streaming scenarios, with 10K examples for SFT and 4K interaction tasks for RL. During evaluation, Qwen3.6-
+35B-A3B and our trained checkpoints are deployed on one H20, while the Top models are accessed through Bailian
+API routes. We evaluate the checkpoints on the offline sets and deployment replay defined in Section 4. For T1–T3,
+all model comparisons use the same Harness; for T4, all models are evaluated with the same official IFEval code.
+11
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+5.2 Main Results
+Table 3. Main results across offline evaluation sets. T1 measures real live-stream reply quality, T2 measures robustness to Harness-
+Variant QA, T3 measures Tool and Prompt Robustness on synthetic avatar scenarios, and T4 measures general instruction following
+with IFEval. Acc, Eff, and AVG denote Accuracy, Effectiveness, and their per-sample average; ADR, RC, TC, LLM, and TCO are the
+rubric metrics defined in Section 4.2. Fixed-Harness SFT denotes conventional distilled supervised fine-tuning without HSA, while
+HAT (Ours) denotes the model obtained by the full HSA-SFT + General OPD + HSA-RL pipeline.
+Panel A · Live-Stream QA quality and general instruction following
+Method
+T1 Live-Stream QA
+T2 Harness-Variant QA
+T4 General
+Acc
+Eff
+AVG
+Acc
+Eff
+AVG
+IFE-P
+IFE-I
+Top models
+DeepSeek-V4-pro
+93.7
+88.7
+91.2
+92.1
+89.1
+90.6
+88.2
+92.0
+GLM-5.2
+93.0
+93.0
+93.0
+93.6
+93.4
+93.5
+89.6
+92.7
+DeepSeek-V4-flash
+90.7
+92.0
+91.4
+91.3
+90.6
+91.0
+90.0
+93.1
+Qwen3.7-max
+93.8
+91.2
+92.5
+93.2
+92.5
+92.8
+90.4
+93.6
+Qwen3.6-plus
+91.7
+85.6
+88.7
+93.3
+89.3
+91.3
+87.2
+91.2
+Qwen3.6-35B-A3B
+Base
+86.5
+74.1
+80.3
+88.7
+62.1
+75.4
+81.5
+87.7
+Naive SFT
+90.0
+88.9
+89.5
+86.9
+89.5
+88.2
+73.8↓7.7
+82.4↓5.3
+Ours
+95.8
+93.8
+94.8
+94.5
+94.7
+94.6
+83.5↑2.0
+88.7↑1.0
+Panel B · Broad AI-generated live-stream avatar scenarios
+Method
+T3 Tool Robustness
+T3 Prompt Robustness
+ADR
+RC
+TC
+AVG
+ADR
+LLM
+TCO
+AVG
+Top models
+DeepSeek-V4-pro
+98.7
+74.2
+92.4
+84.5
+98.2
+80.8
+80.9
+83.4
+GLM-5.2
+96.9
+74.6
+96.7
+86.7
+98.8
+84.8
+74.7
+84.0
+DeepSeek-V4-flash
+98.2
+72.3
+95.1
+85.5
+98.2
+78.5
+74.4
+83.4
+Qwen3.7-max
+98.0
+63.0
+96.2
+81.6
+95.3
+85.2
+65.0
+81.1
+Qwen3.6-plus
+98.9
+61.5
+94.4
+80.0
+95.9
+79.0
+54.4
+74.7
+Qwen3.6-35B-A3B
+Base (zero-shot)
+91.9
+51.5
+83.3
+69.5
+89.4
+73.3
+62.8
+72.8
+Naive SFT
+92.3
+66.6
+94.5
+82.0
+92.9
+65.5
+60.6
+68.2
+Ours
+99.1
+70.1
+94.7
+84.0
+99.4
+78.0
+65.3
+77.6
+Results at a glance
+▶Fixed-Harness SFT shortcut. Fixed-Harness SFT improves the in-family task scores but lowers Prompt
+Robustness (−4.6) and IFEval (−7.7/−5.3), suggesting that training on one harness version can encourage
+shortcut learning and reduce robustness and generalization.
+▶Full-pipeline model. HAT reaches 94.8 on T1, exceeding the strongest Top-model score of 93.0 on the same
+business dataset, while avoiding the robustness and generalization drops observed after Fixed-Harness SFT.
+5.3 Ablation Studies
+Training Pipeline Ablation
+Table 4 reports cumulative training through each pathway’s shared initialization, followed by alternative Agentic
+RL branches under the original Harness and HSA environments.
+Controlled On-Policy Optimization Comparison
+We further examine the effect of OPD in our live-streaming Harness. Starting from the checkpoint before Agentic
+RL, we use the corresponding Agentic-RL checkpoint as the teacher and distill its behavior through OPD under
+the same original Harness or HSA environment.
+Table 5 shows that OPD transfers part of the Agentic-RL teacher’s behavior, but its point estimates remain
+12
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 4. Training-pipeline ablation. Each row adds one stage to the previous checkpoint; ↑/↓denotes a descriptive
+score change from the row above and does not include retraining variance.
+Configuration
+T1
+T2
+Tool
+Prompt
+IFE-P
+IFE-I
+Non-augmented pathway (single-run trajectory)
+Base
+80.3
+75.4
+69.5
+72.8
+81.5
+87.7
++SFT
+89.5↑9.2
+88.2↑12.8
+82.0↑12.5
+68.2↓4.6
+73.8↓7.7
+82.4↓5.3
++General OPD
+89.5
+89.1↑0.9
+84.3↑2.3
+72.6↑4.4
+82.3↑8.5
+87.9↑5.5
++RL
+95.1↑5.6
+94.4↑5.3
+83.7↓0.6
+66.7↓5.9
+82.7↑0.4
+87.8↓0.1
+Augmented pathway (single-run trajectory)
++Aug-SFT
+90.0↑9.7
+90.2↑14.8
+85.2↑15.7
+77.3↑4.5
+81.7↑0.2
+87.4↓0.3
++General OPD
+90.9↑0.9
+90.9↑0.7
+85.6↑0.4
+77.1↓0.2
+81.9↑0.2
+88.0↑0.6
++RL
+94.1↑3.2
+93.7↑2.8
+84.3↓1.3
+78.7↑1.6
+83.0↑1.1
+88.2↑0.2
++AUG Env (Ours)
+94.8↑0.7
+94.6↑0.9
+84.0↓0.3
+77.6↓1.1
+83.5↑0.5
+88.7↑0.5
+Key insights
+Fixed-Harness SFT pattern: Fixed-Harness SFT improves business-task scores, but its lower Prompt Robustness
+and IFEval scores are consistent with a loss of generalization after SFT. This may arise from catastrophic
+forgetting [Luo et al., 2025], shortcut learning [Geirhos et al., 2020], or memorization of tool-use patterns rather
+than robust interpretation of the current Harness context [Zeng et al., 2025].
+General OPD and HSA-SFT: General OPD recovers part of the general instruction-following ability that drops
+after Fixed-Harness SFT; HSA-SFT also avoids the large IFEval drop observed on the non-augmented path.
+Combining the two keeps the model competitive on business quality while maintaining better generalization.
+RL initialization matters: Agentic RL obtains a better final operating point when it starts from the HSA-SFT +
+General OPD checkpoint than when it starts from the Fixed-Harness SFT + General OPD checkpoint, suggesting
+that RL benefits from a base model with stronger Harness generalization.
+HSA-RL matters: HSA-RL improves over Agentic RL in the original Harness environment, suggesting that the
+RL stage should also expose the policy to changing Harness contexts.
+below the paired RL checkpoint. In the original Harness environment, OPD is lower than RL by 0.1 points on T1,
+0.2 on IFE-P, and 4.8 on Prompt Robustness; in the HSA environment, the corresponding gaps are 0.9, 1.8, and 2.1
+points.
+HSA Stage Isolation
+Table 6 isolates the effect of HSA at the SFT and RL stages using final checkpoint metrics from runs without
+General OPD. In this run, the IFE-P difference associated with HSA-SFT is +9.4, compared with +1.0 for
+HSA-RL, suggesting that the main HSA gain comes from the SFT stage. Figure 5 complements this table with
+reward-trajectory diagnostics across the four SFT/RL configurations, showing how the corresponding Accuracy,
+Effectiveness, Skill Selection, and Tool Rationality rewards evolve during optimization.
+5.4 Controlled Deployment Inference
+Table 7 reports client-observed performance in the application’s low-concurrency operating range. Every row uses
+the same fixed 100-case sample and complete Agent workflow; the API rows traverse vendor-managed serving
+routes, while all H20 rows use one local GPU.
+At concurrency 1 and 2, the selected MTP configuration reaches P95 latencies of 8.114 and 9.047 s, and
+13
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 5. Single-run comparison of Agentic optimization variants. All configurations share the same Aug-SFT + General
+OPD initialization; ★marks the deployment choice rather than statistical superiority.
+Method
+Environment
+T1
+IFE-P
+PR-AVG
+Agentic RL
+Original
+94.1
+83.0
+78.7
+Agentic RL
+Augmented
+94.8★
+83.5★
+77.6
+Agentic OPD
+Original
+94.0
+82.8
+73.9
+Agentic OPD
+Augmented
+93.9
+81.7
+75.5
+Paired contrasts
+Δ(RL−OPD)
+Original
++0.1
++0.2
++4.8
+Δ(RL−OPD)
+Augmented
++0.9
++1.8
++2.1
+Δ(Aug−Orig)
+RL
++0.7
++0.5
+−1.1
+Δ(Aug−Orig)
+OPD
+−0.1
+−1.1
++1.6
+Reading. The RL checkpoints have higher IFEval and Prompt-Robustness point estimates than their paired OPD checkpoints, while
+business-score gaps remain below one point. The selected HSA-RL checkpoint is an engineering operating-point choice; these
+single-run contrasts are not method-level effects.
+Table 6. Single-run isolation of data augmentation at SFT and RL stages. The reported differences are descriptive and
+do not include retraining variance.
+SFT Stage
+RL Stage
+T1 AVG
+IFE-P
+ΔIFE
+Standard
+Standard RL
+95.1
+71.3
+–
+Standard
+Augmented RL
+94.9
+72.3
++1.0
+Augmented
+Standard RL
+95.4
+80.7
++9.4
+Augmented
+Augmented RL
+93.3
+81.3
++10.0
+Augmented SFT: +9.4 IFE-P; augmented RL: +1.0.
+all measured requests satisfy the 15-second bound. On the same checkpoint and H20, MTP raises decoding
+throughput from 160.30 to 271.40 tokens/s at concurrency 1 (1.69×) and from 129.22 to 196.15 at concurrency 2
+(1.52×). Cross-checkpoint Base–HAT Decode values are not intrinsic speed comparisons: each policy induces
+different Agent trajectories and completion-length distributions, and the arithmetic mean of per-call ratios is
+especially sensitive to very short generations. We therefore use the within-checkpoint Off–On contrast as the
+primary acceleration evidence. Under MTP On, HAT also has higher draft acceptance, so its remaining cross-
+checkpoint gap is not attributed to length alone. The offline quality values elsewhere in this section use MTP
+Off. A same-checkpoint, same-Judge check on T1 records 96.22 Accuracy and 94.22 Effectiveness with MTP On,
+compared with 95.8 and 93.8 with MTP Off; thus, no aggregate quality degradation is observed in this run. The
+API routes have P95 values above 21 s at concurrency 1, but their hardware, batching, and service load are not
+observable; we use them only as end-to-end operational references. Appendix F.1 reports the CoT-length and
+draft-head diagnostics, quality check, workload shape, stress-test behavior, and SGLang diagnostics.
+5.5 Held-Out Evaluation of Harness Edits
+We construct an additional held-out evaluation set for Harness edits by sampling 1,500 cases from real online
+live-streaming traffic, with 500 development cases and 1,000 held-out test cases. The raw logs contain viewer
+comments, dialogue history, live-room context, product information, tool-use traces, and model responses. We use
+an automatic quality check to count bad cases where the model output is not sufficiently natural or colloquial for a
+live-streaming host.
+The development split is used only for Harness diagnosis and editing. We analyze the bad cases on the 500-case
+development set and revise editable Harness components, primarily the system prompt and Skills, while keeping
+14
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 7. Controlled low-concurrency deployment replay. Latencies are seconds; Decode is the arithmetic mean of
+client-observed completion tokens/s over model calls. It is length-sensitive and is not an intrinsic cross-checkpoint kernel-
+speed measure. TTFT is the first call’s client-observed P95 and includes network and queueing. Each row contains 100
+measured Agent requests after 10 warm-up cases. API rows are operational references, not same-hardware model
+comparisons.
+Configuration
+MTP
+𝐶
+Wall P50
+Wall P95
+TTFT P95
+Decode
+≤15s
+Success
+Vendor API routes
+DeepSeek-V4-flash
+–
+1
+11.210
+21.191
+2.067
+103.44
+71%
+99%
+DeepSeek-V4-flash
+–
+2
+11.976
+26.278
+1.291
+97.01
+71%
+98%
+DeepSeek-V4-pro
+–
+1
+14.312
+28.882
+1.312
+53.53
+61%
+99%
+DeepSeek-V4-pro
+–
+2
+13.752
+23.393
+1.248
+55.04
+60%
+99%
+Qwen3.6-35B-A3B · one H20
+Base
+Off
+1
+4.101
+10.172
+0.508
+195.42
+100%
+100%
+Base
+Off
+2
+4.560
+11.504
+0.623
+138.81
+97%
+100%
+Base
+On
+1
+3.648
+9.805
+0.502
+215.95
+99%
+100%
+Base
+On
+2
+4.806
+10.251
+0.698
+165.74
+97%
+100%
+Task-trained checkpoint (Ours) · one H20
+Ours
+Off
+1
+4.176
+8.98
+0.499
+160.30
+100%
+100%
+Ours
+Off
+2
+4.936
+10.074
+0.692
+129.22
+100%
+100%
+Ours
+On
+1
+3.407
+8.114
+0.553
+271.40
+100%
+100%
+Ours
+On
+2
+4.479
+9.047
+0.754
+196.15
+100%
+100%
+Table 8. Harness-Aware Benchmark held-out test results before and after Harness edits.
+Counts are total detected errors; error reduction is computed relative to the before-edit count.
+Model
+Before
+After
+Error reduction
+Naive SFT
+149
+122
+18.1%
+Ours
+238
+115
+51.7%
+the model weights fixed. The resulting Harness edits are fixed and applied unchanged to both the Fixed-Harness
+SFT checkpoint and the HAT checkpoint. The test split is held out from this editing loop and is used to compare
+each model before and after applying the same Harness edits.
+Table 8 reports the held-out test results. Counts are total detected errors, so lower is better. The Harness edits
+reduce the total error count for both the Fixed-Harness SFT checkpoint and the HAT checkpoint, with the largest
+absolute reduction observed for HAT.
+15
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 9. Human blind-test preference distribution on 100 paired real live-streaming requests.
+Preference
+Count
+Share
+Harness better
+35
+35.0%
+Tie
+64
+64.0%
+ReAct better
+1
+1.0%
+Table 10. Attribution of the 35 Harness-preferred examples. Categories are assigned from
+annotator rationales after the blind decision.
+Attribution category
+Count
+Share
+More accurate input understanding
+12
+34.3%
+More reliable output
+8
+22.9%
+More appropriate scenario behavior
+8
+22.9%
+Higher response quality
+5
+14.3%
+More appropriate tool use
+2
+5.7%
+5.6 Human Blind-Test Protocol and Results
+We conduct a human blind test to compare the modular Harness runtime with a ReAct-style baseline on real
+live-streaming requests. We draw a stratified 100-request blind-test set with a fixed random seed so that its scenario
+composition follows the full pool.
+For each request, both systems run independently on the same input. The record preserves the user input,
+dialogue history, complete reasoning and tool-use trace, and final response from both systems. During annotation,
+the two responses are randomly assigned to Model A and Model B, and the annotator is not shown the system
+identity. The annotator chooses one of three labels: Harness better, ReAct better, or tie. Non-tie decisions require a
+short reason. After annotation, all 100 examples are reviewed for data consistency and labeling consistency.
+Table 9 reports the preference distribution. Among the 36 examples with a clear preference, Harness wins 35,
+corresponding to a 97.2% non-tie win rate. A two-sided binomial test against equal preference gives 𝑝< 0.001. The
+only ReAct-preferred example is an ambiguous short comment, where Harness matches an irrelevant FAQ-style
+response while ReAct gives a safer transitional reply. We therefore treat this case as an isolated fallback-policy
+failure rather than a recurring disadvantage.
+Table 10 summarizes the attribution ofHarness wins. The largestsources ofimprovementare inputunderstanding,
+output reliability, and scenario-appropriate behavior, which together account for 80.0% of the Harness-preferred
+cases. These categories include correctly separating live-room events from viewer questions, avoiding unsupported
+claims or false promises, handling low-information comments without forced product promotion, and using
+available tool evidence more appropriately. The blind-test result is consistent with the automatic Judge evaluation
+and provides an additional human preference check on real live-streaming requests.
+5.7 Agentic Optimization Diagnostics
+Figure 5 provides a diagnostic view of the four HSA configurations. The trajectories suggest that HSA-SFT
+primarily improves the reply-quality dimensions, while HSA-RL raises the agentic-behavior dimensions, especially
+Skill Selection and Tool Rationality. Overall, combining HSA-SFT and HSA-RL gives the most balanced late-stage
+profile across all four rewards.
+16
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+0
+100
+200
+300
+400
+500
+Recorded checkpoint index
+80
+85
+90
+95
+Recorded score (%)
+(a) Accuracy
+0
+100
+200
+300
+400
+500
+Recorded checkpoint index
+80
+85
+90
+95
+Recorded score (%)
+(b) Effectiveness
+0
+100
+200
+300
+400
+500
+Recorded checkpoint index
+78
+80
+82
+84
+86
+88
+90
+92
+94
+Recorded score (%)
+(c) Skill Selection
+0
+100
+200
+300
+400
+500
+Recorded checkpoint index
+70
+75
+80
+85
+90
+Recorded score (%)
+(d) Tool Rationality
+Aug SFT + Aug RL
+Aug SFT + NoAug RL
+NoAug SFT + Aug RL
+NoAug SFT + NoAug RL
+Figure 5. Checkpoint trajectories across four training configurations formed by crossing HSA at the SFT and RL stages,
+evaluated on Accuracy, Effectiveness, Skill Selection, and Tool Rationality. In these trajectories, HSA-SFT is associated
+with higher reply-quality rewards, while HSA-RL is associated with stronger agentic-behavior rewards, especially Skill
+Selection and Tool Rationality; combining HSA-SFT and HSA-RL gives the most balanced late-stage reward profile.
+6 Deployment and Production Lessons
+A production live-streaming policy must simultaneously keep end-to-end P95 below 15 seconds, retain open-ended
+instruction following after domain training, and accommodate weekly changes to Skills, tools, and prompts.
+The selected HAT checkpoint meets the latency requirement in the controlled low-concurrency replay, while
+the reported Fixed-Harness SFT checkpoint loses general-set and prompt-robustness points. HAT and Harness
+Evolution are therefore operated as two independently versioned paths.
+6.1 Evolution-Aware Release Process
+Policy checkpoints change through HAT, whereas Skills, prompts, Hooks, and tools change through Harness
+Evolution (Section 2.3). A release manifest binds the policy checkpoint, Harness commit, tool schemas, fallback
+thresholds, and evaluation-set versions. Every proposed change runs the business regression suite and the general-
+capability gate before traffic promotion. Public-channel changes receive stricter review because one spoken
+response reaches the whole room. The non-monotonic trajectory in Figure 2 motivates an explicit early-stop rule:
+when long-tail fixes begin creating cross-category regressions, operators retain the last passing version rather than
+accumulating more rules.
+Three production gates
+Promote a version only when it passes the 15-second latency bound, the business regression suite, and the
+general-capability gate. Policy and Harness versions have independent switches, allowing a regression to be
+17
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+attributed and reversed without rolling back both layers.
+6.2 Failure Containment and Recovery
+The runtime uses defense in depth rather than relying on the policy alone. Parameter Hooks reject malformed tool
+calls before execution; tool-result Hooks convert service errors into typed observations; the Skill-loading and
+output-format Hooks force a bounded retry; and the loop terminates after four model rounds. A first-call timeout
+of 3 s, later-call timeout of 2 s, and 10 s trajectory budget trigger the compact fallback route. If recovery still fails,
+the system returns a conservative response or suppresses the public reply instead of inventing product facts.
+Three recurrent high-severity errors shaped release checks: unsupported store or product claims, false claims
+that a human is driving the avatar, and tool calls that repeatedly fail or omit required parameters. Product, price,
+inventory, and promotion statements must be grounded in the corresponding tool result. An unsupported-claim
+Hook blocks unverifiable attributes, guarantees, discounts, and delivery promises; identity rules require disclosure
+that the host is an AI avatar. Guardrail hits, retries, fallbacks, and suppressed replies are logged with the model and
+Harness versions for incident review.
+6.3 Low-Concurrency Serving Policy
+The serving configuration uses the selected task-trained policy on one H20 with MTP enabled. The application
+is provisioned for one or two simultaneous requests per replica rather than high-throughput batch inference. A
+separate SGLang operational trace is consistent with this workload shape: sampled decode log intervals have mean
+2.03 and median 1 running request, with a P95 of 7 and no queued requests in the captured window. These are
+log-sample-weighted scheduler observations, not a request-weighted production concurrency distribution.
+The controlled replay therefore treats concurrency 1–2 as the decision-relevant range. In that range, MTP gives
+the selected checkpoint 1.69×/1.52× higher client-observed decoding throughput while maintaining 8.114/9.047 s
+P95 and 100% 15-second attainment. The concurrency 4–8 runs are stress tests: the selected checkpoint’s decoding
+benefit falls to 1.27×/1.19×, and MTP no longer improves P95. This boundary motivates provisioning additional
+replicas rather than treating MTP as a universal high-concurrency throughput optimization.
+6.4 Preliminary Online A/B Test on Taobao Live
+We deployed the Harness-based system in Taobao Live’s production digital-avatar business and conducted an
+ongoing user-level online A/B test against the existing ReAct system. Unlike the controlled replay above, this
+experiment measures real production traffic. Users are assigned through stable user-level bucketing. At the
+seven-day snapshot, the ReAct control contained 678,598 bucketed users and the Harness treatment contained
+75,754, corresponding to approximately 89.96% and 10.04% of the experiment population. The arms compare
+complete production system versions.
+We define GMV per user as multiday cumulative confirmed-receipt GMV in RMB divided by the number of
+bucketed users, and orders per user as completed orders divided by the same denominator. Table 11 reports only
+relative changes against the ReAct control because the unequal bucket sizes make raw totals unsuitable for direct
+comparison.
+Table 11. Preliminary seven-day online A/B point estimates in Taobao Live’s production
+digital-avatar business. Metrics are relative changes of the Harness system against the ReAct
+control.
+Metric
+Harness vs. ReAct
+Cumulative confirmed-receipt GMV per bucketed user
++5.54%
+Completed orders per bucketed user
++0.80%
+Note: This online A/B test is still ongoing in Taobao Live’s production digital-avatar business. Values are unadjusted
+point estimates from the first seven days and are provided for reference only; confidence intervals and significance
+tests are not available for this preliminary snapshot.
+18
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+At this seven-day production snapshot, the complete Harness system shows observed preliminary uplifts of
+5.54% in confirmed-receipt GMV per bucketed user and 0.80% in completed orders per bucketed user relative to
+ReAct. These aggregate point estimates characterize the current full-system comparison and may change as the
+experiment continues.
+7 Related Work
+Agent architectures and Harness Evolution. ReAct [Yao et al., 2023] interleaves reasoning and action in a
+single prompt; Toolformer [Schick et al., 2024] teaches models to invoke external tools; Reflexion [Shinn et al.,
+2023] adds within-episode self-correction. TPTU-v2 [Kong et al., 2024] improves task planning and tool use in an
+industrial agent system, while DSPy [Khattab et al., 2023] compiles declarative modules into optimized prompts.
+RIVA [Abuzakuk et al., 2026] addresses configuration-drift detection in infrastructure through cross-validating
+agents; our problem is complementary because the configuration being changed is the agent’s own execution
+environment. Harness Evolution makes that editable runtime—Skills, prompt assembly, Hooks, and tools—an
+explicit release process and a training-distribution object.
+Prompt, schema, and agent-evaluation robustness. LLM behavior can vary under semantically equivalent
+prompt templates [Zhuo et al., 2024], and tool selection is sensitive to edits in natural-language tool descrip-
+tions [Faghih et al., 2025]. SMART [Qian et al., 2025b] further shows that agents must learn when not to invoke a
+tool. These findings motivate varying prompt and tool interfaces rather than evaluating a single frozen surface form.
+Stateful benchmarks such as 𝜏-bench [Yao et al., 2024] and ToolSandbox [Lu et al., 2025] evaluate multi-turn
+interaction and intermediate state; ECom-Bench [Wang et al., 2025] adds dynamic user simulation for e-commerce
+customer support. Our T3 instead targets broad live-stream avatar interactions and complements the controlled
+Harness variants in T2.
+Agent post-training. SFT-based agent training constructs trajectory data for instruction following and tool
+use [Zeng et al., 2024, Chen et al., 2023, 2024]; rejection-sampling and self-taught variants filter successful roll-
+outs [Zelikman et al., 2022, Yuan et al., 2023]. RL methods optimize policies through environment interaction [Putta
+et al., 2024, Xi et al., 2024]; ToolRL [Qian et al., 2025a] studies structured reward design for tool selection and
+application, while GRPO [Shao et al., 2024] provides the group-relative objective used here. These agent RL
+approaches build on the reinforcement learning from human feedback (RLHF) paradigm [Ouyang et al., 2022] that
+first demonstrated effective policy optimization for instruction-following language models. RandomWorld [Sullivan
+et al., 2025] procedurally generates interactive tools and compositional tasks. Our environment keeps the real
+business ontology and randomizes the editable Harness around it. On-policy distillation [Agarwal et al., 2024]
+anchors general behavior after domain SFT. Unlike work whose primary novelty is a reward, credit-assignment rule,
+or optimizer, our contribution lies in formulating the execution environment as a changing training-distribution
+object and evaluating a controlled combination of established mechanisms in production.
+Training under distribution shift. Domain adaptation aligns source and target distributions [Wang et al., 2022],
+continual learning handles sequential tasks without forgetting [Wang et al., 2024], and test-time adaptation adjusts
+models at inference [Liang et al., 2024]. Recent agent-specific test-time adaptation learns environment format
+and dynamics through deployment-time interaction [Chen et al., 2026a]; it is a complementary option when
+changing weights or probing the environment online is acceptable. Harness-State Augmentation (HSA) is a
+domain-randomization instantiation [Tobin et al., 2017]: it trains across controlled variation so later conditions
+within the declared change envelope are more likely to lie within learned support. The adaptation here is to
+symbolic, executable, and coupled agent configuration: a valid change may require consistent edits across Skills,
+prompts, tools, Hooks, and message logic. T2 evaluates in-family changes, while T3 evaluates broader in-domain
+scenario transfer; neither constitutes unseen-family validation.
+19
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+8 Conclusion
+We presented Harness-Aware Training (HAT), a systems-and-training methodology for the tension between
+versioned Harness change and policy stability in live-streaming digital-avatar agents. It treats Harness-state
+variation as a training-distribution design problem within an explicitly defined change envelope.
+Our work makes four contributions. First, Harness Evolution versions runtime changes separately from policy
+updates through modular Skills, Hooks, prompts, and tools, and exposes the training problem created by a moving
+execution environment. Second, HAT treats Harness-state variation as part of the training distribution through HSA
+and a three-stage pipeline with HSA-SFT, General OPD, and HSA-RL. Third, scoped offline sets, a human-aligned
+evaluation panel, and a controlled complete-Agent deployment replay separate checkpoint quality evidence from
+serving-route behavior. Fourth, the ablations provide practical training insights: General OPD mainly recovers
+instruction-following ability after Fixed-Harness SFT, while HSA is most effective when introduced during SFT.
+In our study, the HAT-trained compact model reaches 94.8 Live-Stream QA AVG and does not exhibit the
+general-set drop observed after Fixed-Harness SFT. On one H20 with MTP enabled, the controlled replay reaches
+8.114 s P95 at concurrency 1 and 9.047 s at concurrency 2, with 100% 15-second attainment; MTP increases
+client-observed decoding throughput by 1.69×/1.52× over the same checkpoint without MTP. Overall, these results
+show that HAT can produce a latency-feasible compact agent while preserving the adaptability needed for evolving
+production Harnesses.
+Author Contributions
+Project Leader: Yuhan Sun
+Core Contributors: Wenhao Lin, Yongdong Luo, Yibo Hu, Junfeng Ma, Meiguang Jin
+Contributors: Weihang Pan, Jiaxin Zhao, Zulong Chen
+Acknowledgments
+We thank the Alibaba ROLL Team for their invaluable support on training infrastructure. We are grateful to
+Dr. Weihang Pan from Zhejiang University and Zulong Chen from Alibaba Group for their highly valuable
+contributions and assistance.
+References
+Sami Abuzakuk, Lucas Crijns, Anne-Marie Kermarrec, Rafael Pires, and Martijn de Vos. RIVA: Leveraging LLM
+agents for reliable configuration drift detection. In Proceedings of the Sixth European Workshop on Machine
+Learning and Systems, 2026. doi: 10.1145/3805621.3807644.
+Rishabh Agarwal, Nino Vieillard, Piotr Stanber, Marc’Aurelio Ranzato, and Matthieu Geist. On-policy distillation
+of language models: Learning from self-generated mistakes.
+In International Conference on Learning
+Representations (ICLR), 2024.
+Oihab Allal-Chérif, Virginia Simón-Moya, and Ana Cristina Conejero Ballester. Intelligent influencer marketing:
+How AI-powered virtual influencers outperform human influencers. Technological Forecasting and Social
+Change, 200, 2024.
+Arthur Chen, Zuxin Liu, Jianguo Zhang, Akshara Prabhakar, Zhiwei Liu, Shelby Heinecke, Silvio Savarese, Victor
+Zhong, and Caiming Xiong. Test-time adaptation for LLM agents via environment interaction. In International
+Conference on Learning Representations, 2026a. URL https://openreview.net/forum?id=OH4PE0TDo0.
+Baian Chen, Chang Shu, Ehsan Shareghi, Nigel Collier, Karthik Narasimhan, and Shunyu Yao. Fireact: Toward
+language agent fine-tuning. arXiv preprint arXiv:2310.05915, 2023.
+20
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Jian Chen, Yesheng Liang, and Zhijian Liu. DFlash: Block diffusion for flash speculative decoding. In Proceedings
+of the 43rd International Conference on Machine Learning (ICML), 2026b.
+Zehui Chen, Kuikun Du, Wenqiang Chen, Enze Liu, Terry Yue Zhuo, Jian Lu, and Jie Wang. Agent-flan: Designing
+data and methods of effective agent tuning for large language models. arXiv preprint arXiv:2403.12881, 2024.
+Xin Cheng, Xingkai Yu, Chenze Shao, Jiashi Li, Yunfan Xiong, Yi Qian, et al. DSpark: Confidence-scheduled
+speculative decoding with semi-autoregressive generation. arXiv preprint arXiv:2607.05147, 2026.
+Liang Cui and Jing Liu. Virtual human: A comprehensive survey on academic and applications. IEEE Access, 11:
+123830–123845, 2023.
+DeepSeek-AI. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437, 2024.
+Kazem Faghih, Wenxiao Wang, Yize Cheng, Siddhant Bharti, Gaurang Sriramanan, Sriram Balasubramanian,
+Parsa Hosseini, and Soheil Feizi. Tool preferences in agentic LLMs are unreliable. In Proceedings of the
+2025 Conference on Empirical Methods in Natural Language Processing, pages 20954–20969, 2025. doi:
+10.18653/v1/2025.emnlp-main.1060.
+Robert Geirhos, Jörn-Henrik Jacobsen, Claudio Michaelis, Richard Zemel, Wieland Brendel, Matthias Bethge, and
+Felix A Wichmann. Shortcut learning in deep neural networks. Nature Machine Intelligence, 2(11):665–673,
+2020.
+Aditya Hebbar et al. Sia: Self improving ai. arXiv preprint arXiv:2605.27276, 2026.
+Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han.
+Search-r1: Training llms to reason and leverage search engines with reinforcement learning. arXiv preprint
+arXiv:2503.09516, 2025.
+Omar Khattab, Arnav Singhvi, Paridhi Maheshwari, Zhiyuan Zhang, Keshav Santhanam, Sri Vardhamanan, Saiful
+Haq, Ashutosh Sharma, Thomas T. Joshi, Hanna Mober, et al. Dspy: Compiling declarative language model
+calls into self-improving pipelines. arXiv preprint arXiv:2310.03714, 2023.
+Yilun Kong, Jingqing Ruan, Yihong Chen, Bin Zhang, Tianpeng Bao, Shiwei Shi, Guo Qing Du, Xiaoru Hu,
+Hangyu Mao, Ziyue Li, Xingyu Zeng, Rui Zhao, and Xueqian Wang. TPTU-v2: Boosting task planning and
+tool usage of large language model-based agents in real-world industry systems. In Proceedings of the 2024
+Conference on Empirical Methods in Natural Language Processing: Industry Track, pages 371–385, 2024. doi:
+10.18653/v1/2024.emnlp-industry.27.
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester
+James V. Miranda, Alisa Liu, Nouha Dziri, Shane Lyu, Yuling Gu, Saumya Malik, Victoria Graf, Jena D. Hwang,
+Jiangjiang Yang, Ronan Le Bras, Oyvind Tafjord, Chris Wilhelm, Luca Soldaini, Noah A. Smith, Yizhong
+Wang, Pradeep Dasigi, and Hannaneh Hajishirzi. Tulu 3: Pushing frontiers in open language model post-training.
+arXiv preprint arXiv:2411.15124, 2025.
+Yuhui Li, Fangyun Wei, Chao Zhang, and Hongyang Zhang. EAGLE: Speculative sampling requires rethinking
+feature uncertainty. In Proceedings of the 41st International Conference on Machine Learning (ICML), 2024.
+Jian Liang, Ran He, and Tieniu Tan. A comprehensive survey on test-time adaptation under distribution shifts.
+International Journal of Computer Vision, 2024.
+Zijie Lin et al. Agentic harness engineering. arXiv preprint arXiv:2604.25850, 2026.
+21
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Shih-Yang Liu, Xin Dong, Ximing Lu, Shizhe Diao, Peter Belcak, Mingjie Liu, Min-Hung Chen, Hongxu
+Yin, Yu-Chiang Frank Wang, Kwang-Ting Cheng, Yejin Choi, Jan Kautz, and Pavlo Molchanov. GDPO:
+Group reward-decoupled normalization policy optimization for multi-reward RL optimization. arXiv preprint
+arXiv:2601.05242, 2026.
+Yifan Liu, Lin Wang, Shuo Yang, and Yining Wang. AI-powered digital streamers for online retail: Empirical
+evidence and design strategies through experiments. Information Systems Research, 36(4), 2025.
+Jiarui Lu, Thomas Holleis, Yizhe Zhang, Bernhard Aumayer, Feng Nan, Felix Bai, Shuang Ma, Shen Ma, Mengyu
+Li, Guoli Yin, Zirui Wang, and Ruoming Pang. Toolsandbox: A stateful, conversational, interactive evaluation
+benchmark for llm tool use capabilities. In Findings of the Association for Computational Linguistics: NAACL
+2025, 2025.
+Kevin Lu and Thinking Machines Lab. On-policy distillation. Thinking Machines Lab: Connectionism, 2025. doi:
+10.64434/tml.20251026. https://thinkingmachines.ai/blog/on-policy-distillation.
+Yun Luo, Zhen Yang, Fandong Meng, Yafu Li, Jie Zhou, and Yue Zhang. An empirical study of catastrophic
+forgetting in large language models during continual fine-tuning. IEEE Transactions on Audio, Speech and
+Language Processing, 2025.
+Xuying Ning, Katherine Tieu, Dongqi Fu, et al. Code as agent harness: Toward executable, verifiable, and stateful
+agent systems. arXiv preprint, 2025.
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini
+Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback.
+In Advances in Neural Information Processing Systems (NeurIPS), 2022.
+Pranav Putta, Edmund Mills, Naman Garg, Sumeet Motwani, Chelsea Finn, Divyansh Garg, and Rafael Rafailov.
+Agentq: Advanced reasoning and learning for autonomous ai agents. arXiv preprint arXiv:2408.07199, 2024.
+Cheng Qian, Emre Can Acikgoz, Qi He, Hongru Wang, Xiusi Chen, Dilek Hakkani-Tur, Gokhan Tur, and Heng Ji.
+ToolRL: Reward is all tool learning needs. In Advances in Neural Information Processing Systems, volume 38,
+2025a.
+Cheng Qian, Emre Can Acikgoz, Hongru Wang, Xiusi Chen, Avirup Sil, Dilek Hakkani-Tur, Gokhan Tur, and Heng
+Ji. SMART: Self-aware agent for tool overuse mitigation. In Findings of the Association for Computational
+Linguistics: ACL 2025, pages 4604–4621, 2025b. doi: 10.18653/v1/2025.findings-acl.239.
+Wanying Qu, Qinghua Mao, Yu Li, et al. She: Trajectory-driven safety harness evolution for llm agents. arXiv
+preprint arXiv:2608.xxxxx, 2026.
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer,
+Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. In
+Advances in Neural Information Processing Systems (NeurIPS), 2024.
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy optimization
+algorithms. arXiv preprint arXiv:1707.06347, 2017.
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang,
+Y. K. Li, Y. Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300, 2024.
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. Reflexion: Language
+agents with verbal reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS),
+2023.
+22
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Michael Sullivan, Mareike Hartmann, and Alexander Koller. Procedural environment generation for tool-use
+agents. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, pages
+18544–18562, 2025. doi: 10.18653/v1/2025.emnlp-main.936.
+Yuhan Sun, Zixuan Huang, Wenhao Cui, Sicheng Xiong, Yuxuan Guo, Mingshuo Jin, and Jiaxin Ma. Livethinking:
+Enabling real-time efficient reasoning for AI-powered livestreaming via reinforcement learning. arXiv preprint
+arXiv:2510.07685, 2025.
+Josh Tobin, Rachel Fong, Alex Ray, Jonas Schneider, Wojciech Zaremba, and Pieter Abbeel. Domain randomization
+for transferring deep neural networks from simulation to the real world. arXiv preprint arXiv:1703.06907, 2017.
+Haoxin Wang, Xianhan Peng, Xucheng Huang, Yizhe Huang, Ming Gong, Chenghan Yang, Yang Liu, and Ling
+Jiang. ECom-Bench: Can LLM agent resolve real-world e-commerce customer support issues? In Proceedings
+of the 2025 Conference on Empirical Methods in Natural Language Processing: Industry Track, pages 276–284,
+2025. doi: 10.18653/v1/2025.emnlp-industry.19.
+Jindong Wang, Cuiling Lan, Chang Liu, Yidong Ouyang, Tao Qin, Wang Lu, Yiqiang Chen, Wenjun Zeng, and
+Philip S. Yu. Generalizing to unseen domains: A survey on domain generalization. IEEE Transactions on
+Knowledge and Data Engineering, 2022.
+Liyuan Wang, Xingxing Zhang, Hang Su, and Jun Zhu. A comprehensive survey of continual learning: Theory,
+method and application. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2024.
+Zhiheng Xi, Yiwen Zheng, Xingjian Tian, Wei Chen, Tao Gui, Qi Zhang, and Xuanjing Huang. Agentgym:
+Evolving large language model-based agents across diverse environments. arXiv preprint arXiv:2406.04151,
+2024.
+Fang-Chun Yang, Paola Acevedo, Shiqing Guo, Myounghoon Choi, and Christos Mousas. Embodied conversational
+agents in extended reality: A systematic review. IEEE Access, 2025.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing
+reasoning and acting in language models. In International Conference on Learning Representations (ICLR),
+2023.
+Shunyu Yao, Noah Shinn, and Karthik Narasimhan. 𝜏-bench: A benchmark for tool-agent-user interaction in
+real-world domains. arXiv preprint arXiv:2406.12045, 2024.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong
+Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan
+Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan
+Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu,
+and Mingxuan Wang. DAPO: An open-source LLM reinforcement learning system at scale. arXiv preprint
+arXiv:2503.14476, 2025.
+Zheng Yuan, Hongyi Yuan, Chengpeng Li, Guanting Dong, Keming Lu, Chuanqi Tan, Chang Zhou, and Jingren
+Zhou. Scaling relationship on learning mathematical reasoning with large language models. arXiv preprint
+arXiv:2308.01825, 2023.
+Eric Zelikman, Yuhuai Wu, Jesse Mu, and Noah D. Goodman. Star: Bootstrapping reasoning with reasoning. In
+Advances in Neural Information Processing Systems (NeurIPS), 2022.
+Aohan Zeng, Mingdao Liu, Rui Lu, Bowen Wang, Xiao Liu, Yuxiao Dong, and Jie Tang. Agenttuning: Enabling
+generalized agent abilities for llms. arXiv preprint arXiv:2310.12823, 2024.
+23
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Yirong Zeng, Xiao Ding, Yutai Hou, Yuxian Wang, Li Du, Juyi Dai, Qiuyang Ding, Duyu Tang, Dandan Tu,
+Weiwen Liu, et al. Tool zero: Training tool-augmented llms via pure rl from scratch. In EMNLP (Findings),
+pages 9135–9147, 2025.
+Zhenyu Zhang et al. Self-harness. arXiv preprint arXiv:2606.09498, 2026.
+Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu,
+Rui Men, An Yang, Jingren Zhou, and Junyang Lin. Group sequence policy optimization. arXiv preprint
+arXiv:2507.18071, 2025. URL https://arxiv.org/abs/2507.18071.
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan
+Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. Judging llm-as-a-judge with
+mt-bench and chatbot arena. In Advances in Neural Information Processing Systems (NeurIPS), 2024.
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou.
+Instruction-following evaluation for large language models. arXiv preprint arXiv:2311.07911, 2023.
+Yuhang Zhou et al. Gigpo: Group-in-group policy optimization for llm agent training. In Advances in Neural
+Information Processing Systems (NeurIPS), 2025.
+Jingming Zhuo, Songyang Zhang, Xinyu Fang, Haodong Duan, Dahua Lin, and Kai Chen. ProSA: Assessing and
+understanding the prompt sensitivity of LLMs. In Findings of the Association for Computational Linguistics:
+EMNLP 2024, pages 1950–1976, 2024. doi: 10.18653/v1/2024.findings-emnlp.108.
+A Runtime Interface and Skill Inventories
+Table 12. Working inventory of built-in and MCP-discovered runtime interfaces.
+Responsibility
+Interfaces
+Role
+Product retrieval
+search_product_by_keyword, get_current_product_info,
+get_product_info_by_link_id,
+get_product_extra_info_by_link_id_and_keywords,
+search_preset_faq
+Find the active or referenced product and
+retrieve catalog, detail-page,
+knowledge-base, or FAQ evidence.
+Pricing and promo-
+tion
+get_price_info_by_link_id, get_promotion_info
+Retrieve SKU-level prices, entitlements,
+coupons, and room-level promotions.
+Action and flow
+control
+change_explain_order, load_skill, get_current_time,
+refuse_to_reply
+Change presentation order, load
+behavioral instructions, resolve
+time-sensitive rules, or silently discard
+meaningless input.
+MCP lookup
+query_promotion, query_buyer_resource,
+query_fund_asset, query_coupon_detail
+Retrieve campaign conditions and
+buyer-side resources from the external
+marketing service.
+MCP calculation
+calculate_optimal_promotion, calculate_promotion
+Compute eligible promotional
+combinations and resulting prices.
+24
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 13. Working Skill inventory and routing responsibilities.
+Reply Skill
+Response responsibility
+Strategy Skill
+Tool-chain responsibility
+item_qa
+Product attributes, specifications,
+comparison, price, and
+recommendation.
+tool_strategy_bene
+fit
+Entitlement, price, and promotion
+retrieval.
+chillchat
+Non-product conversation and
+engagement.
+tool_strategy_comp
+are
+Multi-product comparison and
+retrieval.
+aftersale
+Returns, exchanges, complaints, and
+other after-sales requests.
+tool_strategy_multi
+Aggregation and orchestration for
+multiple comments.
+clarification
+Follow-up questions when available
+context is insufficient.
+tool_strategy_swit
+ch
+Presentation-order adjustment.
+faq_reply
+Responses grounded in configured
+FAQ entries.
+general_discount
+Room-level promotion retrieval and
+response composition.
+refusal
+Declines for inappropriate or
+unsupported requests.
+change_order
+Confirmation of presentation-order
+changes.
+thanks
+Responses to gratitude and positive
+feedback.
+greet
+Welcome messages for viewers
+entering the room.
+B Harness Evolution Protocol and Diagnostics
+B.1 Evolution Loop
+Each Harness Evolution stage holds model fixed and changes only editable runtime modules. The evolution loop
+contains five steps:
+1. AI diagnosis. Analyze the latest evaluation result, cluster the top failure causes, attach representative bad cases,
+and propose root causes.
+2. Human confirmation. A developer reviews the proposed skill, prompt, hook, or tool changes, then accepts,
+modifies, or rejects the plan.
+3. AI-assisted editing. Apply the confirmed changes to skill definitions, prompt assembly, Hooks, and tool logic
+while preserving a versioned configuration snapshot.
+4. Human-triggered evaluation. Run inference and scoring on the dev-set.
+5. Regression check and planning. Compare paired category changes, inspect new regressions, and let a human
+choose promotion, rollback, another evolution stage, or stopping.
+The stopping rule is operational: stop when the remaining errors are sparse long-tail cases and local rule additions
+are more likely to cause cross-category regression than systematic improvement.
+B.2 What Changed across Evolution Stages
+The process report attributes the largest Accuracy gains to negative-feedback chat (+60.7 points), after-sales and
+returns (+53.3), and purchase/payment cases (+33.3). The largest Effectiveness gains occur for emotion expression
+(+27.3), membership or gift benefits (+18.8), and positive-feedback or already-purchased cases (+14.3). These
+category values are engineering diagnostics rather than pre-specified inferential analyses.
+After Evolution 2, the report records 36 remaining Accuracy failures across 16 categories and 35 Effectiveness
+failures without a dominant systematic cluster. Evolutions 3–4 show why “more rules” is not equivalent to better
+evolution: targeted long-tail fixes create interactions across Skills, Hooks, and global instructions. This observation
+motivates configuration diversity during training and regression-aware early stopping during production evolution.
+25
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 14. Fixed-policy Harness Evolution record. Values come from six direct evaluation summaries on the same
+482-item dev-set. “Selected” is an engineering early-stop decision.
+Stage
+Harness changes
+Acc.
+Eff.
+Engineering diagnosis
+ReAct
+Conventional reasoning–action loop without the modular
+Harness.
+80.33
+84.58
+System baseline.
+Harness base
+Initial manually maintained Skills and modular runtime.
+82.40
+87.16
+Establishes the editable Harness.
+Evolution 1
+Add refusal tool and stop-loop Hook; rewrite refusal, chat,
+and after-sales Skills; add four global constraints.
+92.13
+84.16
+Accuracy rises sharply; internal
+diagnosis attributes Effectiveness
+loss to over-triggered refusal.
+Evolution 2
+Add seven whitelist exclusions before refusal; map
+explanation triggers and require the relevant tool call.
+92.55
+92.75
+Selected; restores Effectiveness
+while retaining Accuracy.
+Evolution 3
+Add attribution, factuality, parameter-completeness, tool-use,
+and system-message rules; expand refusal exclusions.
+91.51
+90.89
+Long-tail rules interact and regress
+both metrics.
+Evolution 4
+Relax length, tool-trigger, parameter, transaction-intent, and
+attribution restrictions.
+91.51
+89.96
+Partial rollback does not recover
+Effectiveness.
+C HSA-RL Training Details
+Algorithm 1 gives the complete HSA-RL training procedure that combines HSA with GDPO multi-dimensional
+advantage estimation, the auxiliary CoT-length dimension, GSPO sequence-level importance sampling, and
+zero-advantage sample filtering. Notation follows Section 3: 𝐺is the group size; S = {tool, reply}; Dtool =
+{Tool Rationality, Skill Selection}; Dreply = {Accuracy, Effectiveness}; 𝜆= 0.1 is the post-normalization CoT
+weight; and 𝜀is the PPO clip range.
+Figure 6 records the corresponding single-run training diagnostics. The first-to-last 100-step window means
+move from 290.6 to 171.2 extracted tokens for tool-call CoT and from 93.6 to 37.0 for final-reply CoT. The logged
+mean penalty score 𝑞(𝐿) moves from 0.466 to 0.272, equivalent to a raw reward contribution of −0.0466 to
+−0.0272 before GDPO normalization. The strongest reduction occurs early, followed by a noisy plateau. These
+curves show shorter reasoning traces in this run.
+D Judge as a Harness Evolution Case
+The Final Evaluation Judge is a Harness-based panel that aggregates DeepSeek-V4-pro, GLM-5.2, and Qwen3.7-
+max by majority vote. Its Skills, prompts, and tool-verification procedures are evolved through disagreement
+analysis against human labels. Figure 7 shows the trajectory on 482 human-labeled interactions: Accuracy
+agreement moves from 81.54% at Evolution 1 to 90.46% at Evolution 6, while Effectiveness moves from a
+63.70% uncalibrated baseline to an 83.40% peak. The selected multi-model voting configuration reaches 82.2%
+Effectiveness agreement. Disagreement clusters include missed multi-comment intents, unsupported capability
+claims, incorrect product linkage, and inconsistent grading of partial answers; revisions target these recurring
+classes rather than individual model outputs.
+E Evaluation and Reproducibility Details
+E.1 Judge Roles and Independence
+Five roles must not be conflated: the DeepSeek-V4-pro SFT teacher generates supervised candidates; the rejection-
+sampling Judge filters them; the DeepSeek-V4-flash Reward Judge scores HSA-RL trajectories; the Final Evaluation
+Judge produces offline scores by majority vote over DeepSeek-V4-pro, GLM-5.2, and Qwen3.7-max; and human
+labels provide the calibration reference.
+The Reward and Final Evaluation Judges have zero model overlap: DeepSeek-V4-flash is not a member of the
+final three-model panel. DeepSeek-V4-pro is both SFT teacher and one final voter, but a two-of-three majority
+prevents that vote from deciding any item alone. GLM-5.2 and Qwen3.7-max supply two non-teacher votes, and
+26
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+0
+50
+100
+150
+200
+250
+300
+350
+400
+450
+Mean extracted CoT tokens
+No penalty
+Linear penalty
+Full penalty
+(a) Extracted CoT length by state
+Tool-call CoT
+Final-reply CoT
+0
+100
+200
+300
+400
+Recorded training step
+0.00
+0.25
+0.50
+0.75
+1.00
+Mean penalty score q(L)
+(b) Logged CoT-penalty score
+25-step trailing mean
+0.000
+−0.025
+−0.050
+−0.075
+−0.100
+Reward contribution −0.1q(L)
+Figure 6. Single-run CoT-length diagnostics for the selected HSA-RL trajectory. Faint lines show recorded step values
+and bold lines show 25-step trailing means. Panel (a) separates tool-call and final-reply CoT lengths and marks the
+no-penalty (𝐿≤100), linear (100 < 𝐿< 200), and saturated (𝐿≥200) regions. Panel (b) shows the logged score
+𝑞(𝐿) ∈[0, 1] and the equivalent raw reward contribution −0.1𝑞(𝐿). The figure is a training diagnostic, not a causal
+ablation of latency or quality.
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10 11 12 13 14 15 16 17
+Judge Harness Evolution Stage
+70
+80
+90
+Consistency Rate (%)
+81.5%
+84.9%
+86.3%
+88.2%
+88.4%
+90.5%
+90.7%
+89.8%
+63.7%
+75.1%
+74.9%
+72.6%
+75.5%
+74.3%
+75.9%
+76.3%
+75.5%
+74.9%
+71.0%
+71.6%
+79.7%
+83.4%
+79.7%
+80.9%
+80.9%
+82.2%
+Accuracy
+Effectiveness
+Major Vote
+Figure 7. Judge alignment to a human-labeled calibration cohort (𝑛= 482). Accuracy and Effectiveness agreement
+improve through evidence-tool, rubric, and voting revisions; the cohort evaluates the scoring instrument rather than the
+policy.
+all three voters can call evidence tools when checking product facts. Human alignment is measured before the
+panel is used for model comparison.
+27
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Algorithm 1 Agentic RL with Harness-State Augmentation (HSA-RL)
+Require: Policy 𝜋𝜃; group size 𝐺; state groups S = {tool, reply}; reward dims Dtool and Dreply; CoT weight 𝜆; clip range 𝜀
+1: for each training iteration do
+2:
+Sample a mini-batch of queries and augmented Harness states (𝑥, ℎ)
+3:
+𝜋𝜃old ←𝜋𝜃; initialize Ltool ←0, Lreply ←0
+4:
+for each (𝑥, ℎ) in the mini-batch do
+5:
+for 𝑖= 1, . . . , 𝐺do
+6:
+Roll out trajectory 𝜏𝑖under 𝜋𝜃old (· | 𝑥, ℎ)
+7:
+Split 𝜏𝑖into tool segment 𝑦tool
+𝑖
+and reply segment 𝑦reply
+𝑖
+8:
+Create masks 𝑚tool
+𝑖
+and 𝑚reply
+𝑖
+over generated action tokens; mask prompts and observations
+9:
+Score {𝑟(𝑑)
+𝑖
+}𝑑∈Dtool from tool behavior and {𝑟(𝑑)
+𝑖
+}𝑑∈Dreply from final-reply quality
+10:
+Extract CoT lengths 𝐿tool
+𝑖
+and 𝐿reply
+𝑖
+and compute 𝑞𝑠
+𝑖←𝑞(𝐿𝑠
+𝑖) for 𝑠∈S
+11:
+end for
+12:
+for each state group 𝑠∈{tool, reply} do
+13:
+for each reward dimension 𝑑∈D𝑠do
+14:
+ˆ𝐴(𝑑)
+𝑖
+←(𝑟(𝑑)
+𝑖
+−𝜇(𝑑)
+𝑠
+)/𝜎(𝑑)
+𝑠
+for 𝑖= 1, . . . , 𝐺
+15:
+end for
+16:
+ˆ𝐴(CoT,𝑠)
+𝑖
+←(𝑞𝑠
+𝑖−𝜇(CoT)
+𝑠
+)/𝜎(CoT)
+𝑠
+17:
+ˆ𝐴𝑠
+𝑖←Í
+𝑑∈D𝑠ˆ𝐴(𝑑)
+𝑖
+−𝜆ˆ𝐴(CoT,𝑠)
+𝑖
+; normalize to ˆ𝐴𝑠,★
+𝑖
+18:
+for each sequence 𝑖= 1, . . . , 𝐺with ˆ𝐴𝑠,★
+𝑖
+≠0 do
+19:
+𝜌𝑠
+𝑖,𝑡(𝜃) ←
+𝜋𝜃(𝑦𝑠
+𝑖,𝑡| 𝑦𝑠
+𝑖,<𝑡, 𝑥, ℎ)
+𝜋𝜃old (𝑦𝑠
+𝑖,𝑡| 𝑦𝑠
+𝑖,<𝑡, 𝑥, ℎ)
+20:
+ℓ𝑠
+𝑖,𝑡←−min 𝜌𝑠
+𝑖,𝑡ˆ𝐴𝑠,★
+𝑖
+, clip(𝜌𝑠
+𝑖,𝑡, 1−𝜀, 1+𝜀) ˆ𝐴𝑠,★
+𝑖
+
+21:
+L𝑠←L𝑠+
+Í
+𝑡𝑚𝑠
+𝑖,𝑡ℓ𝑠
+𝑖,𝑡
+Í
+𝑡𝑚𝑠
+𝑖,𝑡
+22:
+end for
+23:
+end for
+24:
+end for
+25:
+Update 𝜃by minimizing the mean of Ltool and Lreply
+26: end for
+E.2 Offline Scoring and Implementation
+Accuracy is binary; Effectiveness uses 0, 0.5, and 1; AVG is the per-sample mean of the two computed before
+rounding. T3 reports Tool and Prompt robustness separately, and IFEval uses its official prompt- and instruction-level
+evaluators. The policy is Qwen3.6-35B-A3B. HSA-RL uses GRPO with Accuracy, Effectiveness, Tool Rationality,
+and Skill Selection rewards under Skill, tool, prompt, Hook, and message-processing perturbations. All offline
+model comparisons use identical set versions and the same Final Evaluation Judge.
+E.3 T3 Robustness Subset Construction
+T3 contains two synthetic robustness subsets generated from a real-business scenario seed library: Tool Robustness
+(𝑛= 1,532) and Prompt Robustness (𝑛= 491). The seed library is built from live-streaming e-commerce scenarios
+and records the product context, viewer intent, possible tool needs, and reply constraints for each scenario family.
+Construction pipeline. We use a shared seed-driven generation pipeline and instantiate it into two orthogonal
+branches. The seed pools are extracted from real live-streaming business data, including product context, FAQ-style
+knowledge, dialogue history, and historical tool-use traces. For each item, an LLM generator expands a sampled
+business seed into a natural viewer comment, live-room or product context, and the expected behaviors to be
+evaluated. The generated item is then converted into the Harness input format with the corresponding tool
+configuration, instruction configuration, simulated tool-return map, and evaluation rubrics. We apply rule-based
+and LLM-based consistency checks to ensure that the query, context, tool returns, instructions, and rubrics are
+mutually consistent. Items that fail validation are discarded and regenerated.
+The Tool Robustness subset focuses on tool selection under distractor tools, while the Prompt Robustness
+28
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+subset additionally constructs instruction-following prompts to test whether the model can satisfy valid prompt
+constraints. The corresponding metrics are Tool Called (TC), Response Contains (RC), and Addresses Core Query
+(ADR) for Tool Robustness, and Addresses Core Query (ADR), LLM Judge (LLM), and Tool Call Order (TCO) for
+Prompt Robustness. Each final item may contain multiple rubrics. AVG is the fraction of passed rubrics computed
+per item before aggregation. Overall, T3 tests model robustness to unseen in-domain tools and instructions in
+synthetic live-streaming scenarios.
+E.4 Independent Bootstrap Stability Check
+Table 15 reports an independent paired-bootstrap check on a separate fixed evaluation run with cached model
+outputs. The intervals are computed over evaluation items using 10,000 paired bootstrap resamples. Because this
+run regenerates model answers rather than reusing the exact outputs underlying the main tables, small differences
+from the main-table point estimates arise from generation stochasticity. These results are therefore used as a
+stability check for the qualitative contrasts rather than as replacements for the reported main results. 𝑃boot(Δ ≤0)
+denotes the fraction of bootstrap replicates whose contrast is non-positive.
+Table 15. Independent paired-bootstrap stability check. Differences are reported in percentage points; intervals are
+95% percentile bootstrap intervals over evaluation items.
+Contrast / dimension
+Δ [95% CI]
+𝑃boot(Δ ≤0)
+IFEval prompt-level accuracy
+Naive SFT −Base
+−6.47 [−10.72, −2.22]
+0.9992
+Ours −Base
++2.03 [−1.11, +5.18]
+0.1134
+Ours −Naive SFT
++8.50 [+4.44, +12.38]
+0.0000
+Prompt Robustness
+Ours −Naive SFT
++8.46 [+5.27, +11.66]
+< 0.0001
+Naive SFT −Base
+−3.22 [−6.59, +0.21]
+0.9661
+T1 Live-Stream QA: Ours −Base
+Accuracy
++6.95 [+4.60, +9.41]
+< 0.0001
+Effectiveness
++30.88 [+27.76, +33.90]
+< 0.0001
+AVG
++18.92 [+17.00, +20.81]
+< 0.0001
+F Deployment Inference and Operating Details
+F.1 Deployment Inference Benchmark
+Protocol and Workload Shape
+The deployment set contains 110 cases, with 10 warm-up cases excluded and 100 requests retained. The client runs
+on an office-network host Harness, real RAG and MCP services, a four-round Agent limit, and a 5-second tool
+timeout. Generation uses temperature 1.0, top-𝑝0.95, and a 16,384-token initial generation limit with configured
+step-up to 65,536. The reported local configurations use one H20, BF16, TP=PP=1, and no quantization. A
+separate FP8 trial did not yield a material additional serving gain under this workload, so the reported runs retain
+BF16. The model’s NextN MTP module is the draft head; the serving engine consumes its predictions through an
+EAGLE-style speculative generation and verification path. Thus, NextN identifies the model-side draft module and
+its weights, whereas EAGLE describes how those draft predictions are used during inference.
+Wall latency starts at client dispatch and ends when the Agent produces its final response. TTFT is measured to
+the first streamed chunk of the first model call; it includes client networking, request queueing, and server work, so
+it is not pure kernel prefill time. Per-call Decode TPS is completion tokens divided by call latency minus TTFT,
+and the table reports the arithmetic mean of these per-call ratios. This estimator is sensitive to completion length
+and timer granularity for very short calls; it is not an intrinsic cross-checkpoint kernel-speed measurement. We do
+29
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+not report client-derived Prefill TPS, TPOT, or inter-token latency, and we do not equate this per-call metric with
+SGLang’s interval-level aggregate generation throughput. Execution success means the Agent returned normally;
+it does not score response correctness. Table 18 records the workload presented to each C=1 route. Calls and
+tokens vary because each model chooses its own Agent trajectory. API usage supplies token counts for the remote
+routes; the self-hosted routes use the serving tokenizer. Token counts from different tokenizers are useful workload
+descriptors but are not identical measures of Chinese text length.
+The output distributions explain why cross-checkpoint mean Decode TPS should be read as workload-shaped.
+At C=1 with MTP disabled, the Base route generates 115 tokens per call on average (median 78; P95 327.8),
+whereas HAT generates 106 (median 92.5; P95 230.7). Base has a 9-token call whose recorded post-TTFT
+interval is 1 ms, producing a 9,000-token/s ratio; consequently its mean Decode TPS is 195.42 while its median is
+162.63. HAT has mean/median values of 160.30/159.71. We therefore attribute the raw Base–HAT mean gap
+chiefly to generated-length and trajectory distributions together with short-call timing granularity, not to intrinsic
+decoding speed. The within-checkpoint MTP Off–On comparisons remain the primary acceleration evidence.
+Under MTP On, the residual cross-checkpoint difference also coincides with the higher acceptance statistics
+reported in Table 20, so it is not attributed to length alone.
+MTP Draft-Head Adaptation
+We compare two standalone MTP-adaptation trajectories using sequences collected from HSA-RL policy rollouts.
+For the task-trained trajectory, the policy checkpoint starts from 𝑆0 = HSA-SFT + General OPD, while the NextN
+MTP parameters are transplanted from Qwen3.6-35B-A3B. For the base trajectory, the policy and its native,
+factory-co-trained NextN head start from the default Qwen3.6-35B-A3B checkpoint. In both cases, the policy
+produces rollout labels and the MTP update is performed separately: policy parameters are treated as fixed by the
+MTP objective, and only the draft-head parameters are optimized. Both configurations use the same EAGLE-style
+speculative execution path at inference, so the comparison concerns draft-weight provenance and adaptation, not
+different speculative algorithms.
+Let a rollout be 𝑦1:𝑇and let 𝐾be the number of future-token offsets. The MTP loss is the standard multi-token
+cross-entropy that predicts token 𝑡+ 1 + 𝑘from the prefix through 𝑡:
+LMTP(𝜙) = −1
+𝑍
+𝐾−1
+∑︁
+𝑘=0
+𝑇−1−𝑘
+∑︁
+𝑡=1
+log 𝑝(𝑘)
+𝜙(𝑦𝑡+1+𝑘| 𝑦≤𝑡) ,
+𝑍=
+𝐾−1
+∑︁
+𝑘=0
+(𝑇−1 −𝑘),
+(6)
+where 𝜙denotes the MTP parameters and 𝑘= 0 is next-token prediction. Thus RL supplies on-policy rollout
+sequences and labels, while the standalone MTP step uses only supervised multi-token CE; no reward or advantage
+enters Equation 6.
+Despite noisy per-step losses, the grafted-head trajectory moves from a higher early-loss region toward the
+late-training range of the native-head trajectory. This supports the practical conclusion that a task-trained policy
+can accept a base-model NextN head and adapt it through subsequent standalone training on policy-rollout labels.
+In an unplotted pilot, omitting the base MTP initialization produced a very high initial loss. We also observed that
+updating the main policy while leaving the MTP head untrained reduced draft acceptance to zero, consistent with
+the stale draft weights no longer predicting the updated policy. These are run-specific engineering observations
+rather than claims of universal or multi-seed convergence.
+MTP across Concurrency
+Table 17 separates the deployment operating range (C=1–2) from stress conditions (C=4–8). At C=1–2, MTP
+increases the selected checkpoint’s Decode TPS by 1.69×/1.52× while retaining 100% 15-second attainment. At
+C=4–8, the speedup falls to 1.27×/1.19× and P95 no longer improves. The base model shows the same qualitative
+30
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+0
+100
+200
+300
+400
+Training step
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+MTP loss
+Task-trained policy + grafted/post-trained NextN head
+Base model + native factory-trained NextN head
+Figure 8. Single-run standalone MTP-loss trajectories for a task-trained policy with a transplanted and subsequently
+post-trained NextN head, and for the base model with its native factory-trained head. Faint lines show step-level loss;
+bold lines show a 25-step trailing mean. The runs have different lengths and provide adaptation diagnostics only: they
+do not compare convergence speed, training stability, sample efficiency, or compute efficiency.
+Table 16. Same-checkpoint T1 quality check with MTP Off and On (𝑛= 978). Both rows use the same Final Evaluation
+Judge. AVG is the arithmetic mean of Accuracy and Effectiveness.
+Serving mode
+Accuracy
+Effectiveness
+AVG
+MTP Off
+95.8
+93.8
+94.8
+MTP On
+96.22
+94.22
+95.22
+saturation boundary with a smaller low-concurrency gain. We therefore treat MTP as a low-concurrency latency
+optimization, not as a universal capacity multiplier.
+31
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+Table 17. MTP trade-off across concurrency. Arrows show Off →On. Decode TPS is client-observed mean per call;
+Wall and TTFT are P95 seconds. C=1, 2, and 8 are single runs. C=4 values are means of three run-level statistics, not
+pooled percentiles.
+Checkpoint
+𝐶
+Decode TPS
+Speedup
+Wall P95 (s)
+TTFT P95 (s)
+≤15s
+Qwen3.6 Base
+1
+195.42→215.95
+1.11×
+10.172→9.805
+0.508→0.502
+100→99%
+2
+138.81→165.74
+1.19×
+11.504→10.251
+0.623→0.698
+97→97%
+4
+105.04→113.25
+1.08×
+13.408→16.266
+0.643→1.088
+97.3→92.3%
+8
+70.28→70.19
+1.00×
+17.848→26.136
+0.953→1.519
+90→79%
+Ours
+1
+160.30→271.40
+1.69×
+8.98→8.114
+0.499→0.553
+100→100%
+2
+129.22→196.15
+1.52×
+10.074→9.047
+0.692→0.754
+100→100%
+4
+99.65→126.64
+1.27×
+10.869→12.460
+0.692→1.349
+99.3→98.0%
+8
+59.01→70.22
+1.19×
+18.342→20.298
+0.900→2.574
+91→75%
+C=4 run ranges (Off; On). Qwen3.6 Base—Decode: 102.13–107.33; 111.11–116.49. Wall P95: 12.931–13.756; 14.957–18.054. TTFT P95:
+0.563–0.758; 0.942–1.226. Attainment: 96–98%; 89–95%. Ours—Decode: 97.40–102.55; 121.61–130.18. Wall P95: 10.269–11.606; 10.532–14.205.
+TTFT P95: 0.587–0.784; 1.305–1.413. Attainment: 99–100%; 96–100%.
+G Deployment Workload Shape
+Table 18. C=1 workload shape. Values are means over successful complete-Agent requests or their constituent model
+calls.
+Route / checkpoint
+MTP
+Calls/req
+Input/call
+Output/call
+DeepSeek-V4-flash API
+–
+4.04
+6,052
+146
+DeepSeek-V4-pro API
+–
+3.67
+5,537
+119
+Qwen3.6 Base
+Off
+3.23
+5,622
+115
+Qwen3.6 Base
+On
+3.08
+5,571
+109
+Ours
+Off
+3.04
+5,679
+106
+Ours
+On
+3.12
+5,786
+105
+H Supplementary Reproducibility and Deployment Details
+H.1 MTP Serving Configuration
+The MTP-On point estimates are not lower on either quality dimension, so this run shows no aggregate quality
+degradation from enabling the adapted draft head. Because sample-level paired outputs and repeated decoding
+runs are not available, Table 16 is not an equivalence test. Table 19 records the exact MTP serving configuration
+used for the reported measurements.
+Table 19. MTP serving configuration used for the reported quality check and deployment measurements.
+Setting
+Engine argument
+Value
+Speculative algorithm
+--speculative-algo
+NEXTN
+Speculative steps
+--speculative-num-steps
+3
+EAGLE top-𝑘
+--speculative-eagle-topk
+1
+Draft tokens
+--speculative-num-draft-tokens
+4
+Single-token acceptance threshold
+--speculative-accept-threshold-single
+0.5
+Accumulated acceptance threshold
+--speculative-accept-threshold-acc
+0.7
+32
+
+
+TaoLive Digital Avatar Agent
+Technical Report · August 2026
+H.2 SGLang MTP Diagnostics
+The MTP-On SGLang traces provide scheduler-level mechanism diagnostics, not request-level latency. Ta-
+ble 20 summarizes the captured Qwen3.6 Base window (2026-07-31 09:28–09:58) and HAT window (2026-
+07-30 02:35–07:23); the log timezone and platform SGLang release were not retained. The base trace’s
+Qwen3_5ForCausalLMMTP string is the platform’s internal implementation class for the checkpoint reported here
+as Qwen3.6-35B-A3B.
+Table 20. SGLang log-sample diagnostics for MTP-On serving. Triples are mean/P50/P95; Queue is P95/max.
+Checkpoint
+Running req
+Queue
+Accept len
+Accept rate
+Qwen3.6 Base
+2.03/1/8
+0/0
+2.94/2.92/3.58
+.735/.730/.890
+Ours
+2.03/1/7
+0/0
+3.12/3.12/3.62
+.780/.780/.910
+The HAT trace’s mean 2.03 and median 1 running request are consistent with the application’s low-concurrency
+provisioning, although the P95 of 7 shows occasional bursts. From Base to HAT, mean accept length moves
+from 2.94 to 3.12 and mean acceptance rate from 0.735 to 0.780; these diagnostics provide an additional
+mechanism-level explanation for the MTP-On cross-checkpoint TPS difference beyond output length. Acceptance
+measures speculative-token verification, not semantic answer quality. We omit SGLang input/gen throughput,
+cache occupancy, memory-usage proxies, and CUDA Graph rates because the captured windows and cache states
+are not aligned tightly enough for causal On/Off comparison.
+H.3 Deployment Measurement Contract
+Each benchmark run is bound to its run ID, policy checkpoint, Harness commit, sampled-case manifest, serving
+route, concurrency, generation settings, timeout rules, client region, and start/end time. H20 runs additionally
+record GPU count, TP/PP, dtype, MTP parameters, and known scheduler settings. Request-level records retain wall
+latency, first-call TTFT, every model call’s latency and usage, final execution status, and warm-up membership.
+A future production-traffic claim would additionally require a frozen service version, an explicit traffic window,
+request-weighted concurrency and queue distributions, exclusion rules, and raw telemetry.
+33

@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-21</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-22</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>12</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-21 20:58:07 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-22 19:45:05 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读12篇、速读11篇，共23篇论文，聚焦Agentic RL与长程智能体优化。</p>
-<p>最值得关注的两篇高分精读：一篇提出智能体RL中“信任不足需校准”的自蒸馏方法，另一篇用层级上下文隔离提升长程任务记忆管理。</p>
-<p>建议优先复现这两项方法，再结合速读中的意图追踪与低资源微调思路扩展实验。</p>
+<p>今日17篇论文入库，精读聚焦多智能体强化学习与数字人Agent训练。最值得关注的是Co-RL在多智能体中涌现无监督推理，以及TaoLive数字人Agent随环境进化的技术报告。建议普通读者优先浏览多智能体协作与安全强化学习方向，理解Agent如何自主推理与可靠决策。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">12 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Trust Is Not Enough: Influence Calibration for On-Policy Self-Distillation in Agentic RL">Trust Is Not Enough: Influence Calibration for On-Policy Self-Distillation in Agentic RL</span></li><li><span class="dpr-home-dashboard-paper-title" title="HyMem: Hierarchical Context Management for Long-Horizon Agents via Information Isolation">HyMem: Hierarchical Context Management for Long-Horizon Agents via Information Isolation</span></li><li><span class="dpr-home-dashboard-paper-title" title="TRCA: Transition-wise Rubric Credit Assignment for Long-horizon LLM Agents">TRCA: Transition-wise Rubric Credit Assignment for Long-horizon LLM Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TaoLive Digital Avatar Agent Technical Report: Training Agents to Evolve with Their Harness">TaoLive Digital Avatar Agent Technical Report: Training Agents to Evolve with Their Harness</span></li><li><span class="dpr-home-dashboard-paper-title" title="Co-RL: Unsupervised Reasoning Emerges from Diverse Cohort in Multi-agent RL">Co-RL: Unsupervised Reasoning Emerges from Diverse Cohort in Multi-agent RL</span></li><li><span class="dpr-home-dashboard-paper-title" title="Write, Execute, Refine: From Skill Followers to Skill Optimizers via Reinforcement Learning from Execution Feedback">Write, Execute, Refine: From Skill Followers to Skill Optimizers via Reinforcement Learning from Execution Feedback</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>12</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Intent-Driven Situation Tracking for User-Centric Multi-Turn Agents">Intent-Driven Situation Tracking for User-Centric Multi-Turn Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="DeAR: Decentralized Agentic Reasoning via Capability Grounding and Collaborative Thought Navigation">DeAR: Decentralized Agentic Reasoning via Capability Grounding and Collaborative Thought Navigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agentic ESOpt: Fine-Tuning Long-Horizon LLM Agents with Minimal GPU Requirements">Agentic ESOpt: Fine-Tuning Long-Horizon LLM Agents with Minimal GPU Requirements</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Eureka: Task-Conditioned Meta-Agent Orchestration for Scientific Discovery">Eureka: Task-Conditioned Meta-Agent Orchestration for Scientific Discovery</span></li><li><span class="dpr-home-dashboard-paper-title" title="Multi-Agent Off-Policy Deep Reinforcement Learning for Smart Campus Coverage">Multi-Agent Off-Policy Deep Reinforcement Learning for Smart Campus Coverage</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Probabilistic Shielding by Learning MDPs for Safe Reinforcement Learning">Adaptive Probabilistic Shielding by Learning MDPs for Safe Reinforcement Learning</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
