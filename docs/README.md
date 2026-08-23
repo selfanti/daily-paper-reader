@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-22</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-23</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-22 19:45:05 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-23 20:11:00 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日17篇论文入库，精读聚焦多智能体强化学习与数字人Agent训练。最值得关注的是Co-RL在多智能体中涌现无监督推理，以及TaoLive数字人Agent随环境进化的技术报告。建议普通读者优先浏览多智能体协作与安全强化学习方向，理解Agent如何自主推理与可靠决策。</p>
+<p>今日精读聚焦机器人模仿学习与AI自我改进脆弱性，另速读智能体评估、风险决策等4篇。</p>
+<p>最值得看：人类参与下的选择性模仿可提升在线机器人学习效率；自我改进智能体易受方差、任务顺序影响而“翻车”。</p>
+<p>建议读者优先关注这两篇精读，速读可挑“Agent Gym”了解人机反馈评估框架。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TaoLive Digital Avatar Agent Technical Report: Training Agents to Evolve with Their Harness">TaoLive Digital Avatar Agent Technical Report: Training Agents to Evolve with Their Harness</span></li><li><span class="dpr-home-dashboard-paper-title" title="Co-RL: Unsupervised Reasoning Emerges from Diverse Cohort in Multi-agent RL">Co-RL: Unsupervised Reasoning Emerges from Diverse Cohort in Multi-agent RL</span></li><li><span class="dpr-home-dashboard-paper-title" title="Write, Execute, Refine: From Skill Followers to Skill Optimizers via Reinforcement Learning from Execution Feedback">Write, Execute, Refine: From Skill Followers to Skill Optimizers via Reinforcement Learning from Execution Feedback</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Max-Q Selective Imitation for Human-in-the-Loop Online Robot Learning">Max-Q Selective Imitation for Human-in-the-Loop Online Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="On the Fragility of Self-Improving Agents: Variance, Task Order, and Underspecification">On the Fragility of Self-Improving Agents: Variance, Task Order, and Underspecification</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReCache: Efficient KV Cache Reuse and Compression for Tool-Augmented LLM Agents">ReCache: Efficient KV Cache Reuse and Compression for Tool-Augmented LLM Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">11 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Eureka: Task-Conditioned Meta-Agent Orchestration for Scientific Discovery">Eureka: Task-Conditioned Meta-Agent Orchestration for Scientific Discovery</span></li><li><span class="dpr-home-dashboard-paper-title" title="Multi-Agent Off-Policy Deep Reinforcement Learning for Smart Campus Coverage">Multi-Agent Off-Policy Deep Reinforcement Learning for Smart Campus Coverage</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Probabilistic Shielding by Learning MDPs for Safe Reinforcement Learning">Adaptive Probabilistic Shielding by Learning MDPs for Safe Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Agent Gym: A Framework for Continuous Evaluation and Evolution of LLM Agents Through Human-in-the-Loop Feedback">Agent Gym: A Framework for Continuous Evaluation and Evolution of LLM Agents Through Human-in-the-Loop Feedback</span></li><li><span class="dpr-home-dashboard-paper-title" title="Quantifying Risk Under Evolving Uncertainty: Belief-Dependent Robustness for Safe Sequential Decision Making">Quantifying Risk Under Evolving Uncertainty: Belief-Dependent Robustness for Safe Sequential Decision Making</span></li><li><span class="dpr-home-dashboard-paper-title" title="Task-CoEvolve: Efficient Harness Optimization via Adaptive Validation Task Selection">Task-CoEvolve: Efficient Harness Optimization via Adaptive Validation Task Selection</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>4</strong></span></div>
 </section>
 </div>
 
