@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-23 20:11:00 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-24 20:34:16 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦机器人模仿学习与AI自我改进脆弱性，另速读智能体评估、风险决策等4篇。</p>
-<p>最值得看：人类参与下的选择性模仿可提升在线机器人学习效率；自我改进智能体易受方差、任务顺序影响而“翻车”。</p>
-<p>建议读者优先关注这两篇精读，速读可挑“Agent Gym”了解人机反馈评估框架。</p>
+<p>今日阅读15篇论文，精读6篇，重点关注两篇9.0分的工作。最值得看的是长期任务智能体的加权记忆树，以及离线强化学习的策略解耦提取。建议优先精读这两篇高分论文，理解其核心方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Max-Q Selective Imitation for Human-in-the-Loop Online Robot Learning">Max-Q Selective Imitation for Human-in-the-Loop Online Robot Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="On the Fragility of Self-Improving Agents: Variance, Task Order, and Underspecification">On the Fragility of Self-Improving Agents: Variance, Task Order, and Underspecification</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReCache: Efficient KV Cache Reuse and Compression for Tool-Augmented LLM Agents">ReCache: Efficient KV Cache Reuse and Compression for Tool-Augmented LLM Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Weighted Memory Tree: Remembering What Matters for Long-Horizon LLM Agents">Weighted Memory Tree: Remembering What Matters for Long-Horizon LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Decoupling Policy Extraction for Offline Reinforcement Learning">Decoupling Policy Extraction for Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="ForeDreamer: A Self-Evolving Dual-Agent Memory Architecture for Future Event Prediction">ForeDreamer: A Self-Evolving Dual-Agent Memory Architecture for Future Event Prediction</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Agent Gym: A Framework for Continuous Evaluation and Evolution of LLM Agents Through Human-in-the-Loop Feedback">Agent Gym: A Framework for Continuous Evaluation and Evolution of LLM Agents Through Human-in-the-Loop Feedback</span></li><li><span class="dpr-home-dashboard-paper-title" title="Quantifying Risk Under Evolving Uncertainty: Belief-Dependent Robustness for Safe Sequential Decision Making">Quantifying Risk Under Evolving Uncertainty: Belief-Dependent Robustness for Safe Sequential Decision Making</span></li><li><span class="dpr-home-dashboard-paper-title" title="Task-CoEvolve: Efficient Harness Optimization via Adaptive Validation Task Selection">Task-CoEvolve: Efficient Harness Optimization via Adaptive Validation Task Selection</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraniKV: Asymmetric Granularity KV-Cache Paging for Multi-Agent Systems with Long Shared Prefix">GraniKV: Asymmetric Granularity KV-Cache Paging for Multi-Agent Systems with Long Shared Prefix</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Mixing of Policies from Searching and Policies from Learning">Adaptive Mixing of Policies from Searching and Policies from Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Why2Speak: Faithful Reasoning for Abstaining Action Policies">Why2Speak: Faithful Reasoning for Abstaining Action Policies</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>9</strong></span></div>
 </section>
 </div>
 
