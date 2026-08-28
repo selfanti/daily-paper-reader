@@ -176,6 +176,19 @@ const rangeDailySidebar = `
       * <a class="dpr-sidebar-item-link" href="#/201706/12/attention" data-sidebar-item="{&quot;title&quot;:&quot;Attention Paper&quot;}">Attention Paper</a>
 `;
 
+// 区间日报的结束日「没有」同日单日报，复刻线上真实形态：
+// 日历会把区间挂到锚定日 20260827，而该 key 不存在于 model.daily 的原始 key 集合中。
+const orphanRangeDailySidebar = `
+* Daily Papers
+  * 2026-08-28 <!--dpr-date:20260828-->
+    * 速读区
+      * <a class="dpr-sidebar-item-link" href="#/202608/28/fresh" data-sidebar-item="{&quot;title&quot;:&quot;Fresh Paper&quot;,&quot;tags&quot;:[{&quot;kind&quot;:&quot;query&quot;,&quot;label&quot;:&quot;eeg&quot;}]}">Fresh Paper</a>
+  * 2026-07-29 ~ 2026-08-27 <!--dpr-date:20260729-20260827-->
+    * 速读区
+      * <a class="dpr-sidebar-item-link" href="#/20260729-20260827/range-one" data-sidebar-item="{&quot;title&quot;:&quot;Range One&quot;,&quot;tags&quot;:[{&quot;kind&quot;:&quot;query&quot;,&quot;label&quot;:&quot;eeg&quot;}]}">Range One</a>
+      * <a class="dpr-sidebar-item-link" href="#/20260729-20260827/range-two" data-sidebar-item="{&quot;title&quot;:&quot;Range Two&quot;,&quot;tags&quot;:[{&quot;kind&quot;:&quot;query&quot;,&quot;label&quot;:&quot;speech&quot;}]}">Range Two</a>
+`;
+
 function testSidebarNavigationContract() {
   const sidebar = loadSidebarForTest('#/202606/24/paper-b?from=test');
   const tools = sidebar.__test;
@@ -450,6 +463,51 @@ function testDailyRangeReportsStayReachableFromCalendarEndDate() {
   assert.ok(html.includes('Range Data Paper'));
   assert.ok(html.includes('Range Robot Paper'));
   assert.ok(html.includes('data-axis-section="20260627-20260706:__all__"'));
+}
+
+// 回归：区间日报的锚定日（结束日）在当天没有同日单日报时，点击日历格必须能选中该区间。
+// 注意 rangeDailySidebar 的区间结束日 20260706 恰好另有一条单日报，会掩盖该缺陷，
+// 所以这里必须用「孤立锚定日」的 fixture，且保持单日组排在区间组之前（与线上生成顺序一致）。
+function testDailyRangeSelectableFromOrphanCalendarAnchorDay() {
+  const sidebar = loadSidebarForTest('#/202608/28/fresh');
+  const tools = sidebar.__test;
+  const model = tools.parseSidebar(orphanRangeDailySidebar);
+
+  assert.deepEqual(model.daily.map((day) => day.dateKey), [
+    '20260828',
+    '20260729-20260827',
+  ], '单日组必须排在区间组之前，否则该用例会假绿');
+
+  // 日历格按锚定日聚合，27 号格子应带出区间的两篇
+  const baseView = tools.buildDailyCalendarTagView(model, '', '__all__', {}, '202608');
+  const anchorDay = baseView.calendar.days.find((day) => day.dateKey === '20260827');
+  assert.equal(anchorDay.totalCount, 2, '27 号日历格应显示区间日报的篇数');
+  assert.equal(anchorDay.hasPapers, true);
+
+  // 点击 27 号格子传回的是锚定日 '20260827'，必须能还原到区间原始 key
+  const picked = tools.buildDailyDateView(model, '20260827', {}, '202608');
+  assert.equal(picked.activeKey, '20260729-20260827');
+  assert.deepEqual(picked.groups.map((group) => group.label), ['2026-07-29 ~ 2026-08-27']);
+  assert.deepEqual(picked.groups[0].papers.map((paper) => paper.title), ['Range One', 'Range Two']);
+
+  // 月份为空时走的是另一条兜底分支，同样不能落回最新单日
+  const pickedNoMonth = tools.buildDailyDateView(model, '20260827', {}, '');
+  assert.equal(pickedNoMonth.activeKey, '20260729-20260827');
+
+  // 完整视图：区间被选中，日历高亮落在锚定日上
+  const rangeView = tools.buildDailyCalendarTagView(model, '20260827', '__all__', {}, '202608');
+  assert.deepEqual(rangeView.groups.map((group) => [group.key, group.papers.length]), [
+    ['20260729-20260827:__all__', 2],
+  ]);
+  assert.equal(rangeView.calendar.days.find((day) => day.dateKey === '20260827').isActive, true);
+  assert.equal(rangeView.calendar.days.find((day) => day.dateKey === '20260828').isActive, false);
+
+  // 普通单日组不能因此回归
+  const freshView = tools.buildDailyCalendarTagView(model, '20260828', '__all__', {}, '202608');
+  assert.deepEqual(freshView.groups.map((group) => [group.key, group.papers.length]), [
+    ['20260828:__all__', 1],
+  ]);
+  assert.equal(freshView.calendar.days.find((day) => day.dateKey === '20260828').isActive, true);
 }
 
 function testDailyCalendarPlacementToggleKeepsControlRowFixedAboveLayers() {
@@ -1652,6 +1710,7 @@ testAxisTabsRenderUnreadCounts();
 testDailyCalendarViewUsesMonthGridAndActiveDateOnly();
 testDailyCalendarTagViewFiltersActiveDateByKeyword();
 testDailyRangeReportsStayReachableFromCalendarEndDate();
+testDailyRangeSelectableFromOrphanCalendarAnchorDay();
 testDailyCalendarPlacementToggleKeepsControlRowFixedAboveLayers();
 testConferenceAndDailyAxisTogglesRenderBesidePanelTitles();
 testDailyCalendarInPlaceRefreshUsesActiveDailyTag();
