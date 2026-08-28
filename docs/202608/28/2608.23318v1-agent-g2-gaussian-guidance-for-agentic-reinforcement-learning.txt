@@ -1,0 +1,779 @@
+Title: Agent-G^2: Gaussian Guidance for Agentic Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.23318v1
+
+Published Time: Tue, 25 Aug 2026 02:11:38 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# Agent-G 2: Gaussian Guidance for Agentic Reinforcement Learning 
+
+Zixuan Wang 1,2 * Yanrui Miao 1,3 * Zhengxi Lu 1 Teng Pan 1,2 
+
+Yiwen Qiu 1 Hongxing Li 1 Peng Qiu 2 Ruiqing Zhang 2 Yongliang Shen 1†1Zhejiang University 2Baidu Inc. 3Shandong University 
+
+{wang.zixuan, syl}@zju.edu.cn 
+
+§ Code  Project Page Models 
+
+Abstract 
+
+Hint-based reinforcement learning addresses reward sparsity in long-horizon agentic tasks by retaining a prefix of an expert trajectory before each rollout, letting the policy explore from a state closer to success. Its effectiveness hinges on the guidance depth: how much of the trajectory to keep. Existing methods treat this depth as a deterministic scalar. Scheduled approaches share one value across samples and ignore per-task heterogeneity; per-sample prob-ing estimates it separately at the cost of extra rollouts. We find that useful guidance occupies a band of depths whose informativeness profile is approximately Gaussian around the band cen-ter, rather than concentrating at a single optimal point. We propose Agent-G 2, a Gaussian guid-ance framework that draws the depth per task from a Gaussian whose center and spread are estimated online from rollouts already collected for policy optimization, requiring no probe roll-outs or learned depth predictor. The center combines a global baseline with per-cluster difficulty, and the spread tracks within-cluster variance. We evaluate Agent-G 2 on ALFWorld and WebShop on Qwen2.5-1.5B / 7B-Instruct. Agent-G 2 outperforms the strongest hint-based, hint-free, and Aux-RL baselines on ALFWorld by 2.3 / 3.9 / 7.4 points at under one-third the rollout cost of per-sample probing. 
+
+1 Introduction 
+
+LLM agents trained with reinforcement learning have made progress on long-horizon decision-making tasks (Shen et al., 2023; Zhang et al., 2026a), including web navigation (Yao et al., 2023a; Zhou et al., 2024a; Deng et al., 2023), em-bodied control (Ahn et al., 2022; Huang et al., 2022; Wang et al., 2025c), and scientific experimenta-tion (Boiko et al., 2023; Bran et al., 2023). A recur-ring obstacle is reward sparsity : tasks span dozens  
+
+> *
+
+Equal contribution.  
+
+> †
+
+Corresponding author. di               
+
+> training step
+> Step decay Cosine decay sample 1
+> (a) Schedule-based Method
+> t0
+> Shared d iacross samples
+> sample 2
+> t1t2
+> (b) Probe-based Method
+> Expert Trajectory
+> di*... ... ... Noisy, O(log n) extra rollouts
+> sample 1
+> sample 2
+> t0t1t2
+> (c) Agent-G 2
+> μt2
+> μt1
+> μt0
+> t0t1
+> t2
+> di
+> dPer-sample distribution, no extra rollouts
+> t0t1t2
+> sample 1
+> sample 2
+
+Figure 1: Hint-based RL paradigms across training steps t0, t 1, t 2. (a) Schedule-based: shared dt across samples. (b) Probe-based: O(log n) per-sample probes. 
+
+(c) Agent-G 2 (ours): di ∼ N (μt, σ 2 
+
+> t
+
+) per task, esti-mated online from existing rollouts. 
+
+of sequential decisions, yet only a binary signal is issued at termination, and on-policy exploration from the initial state rarely reaches a successful terminal state. Hint-based RL mitigates this ob-stacle by retaining a prefix of an expert trajectory before each rollout, so the policy explores from a state closer to success (Xi et al., 2024a; Zhang et al., 2025a; Su et al., 2025), directly addressing 
+
+advantage collapse in GRPO-style training (Zhang et al., 2025b; Wang et al., 2025b; Li et al., 2025). The effectiveness of hint-based RL depends crit-ically on the guidance depth : how much of the ex-pert trajectory to retain. Too little guidance leaves few successful rollouts; too much saturates the re-ward and eliminates the contrast needed for advan-tage estimation. Despite this sensitivity, existing methods uniformly treat depth as a deterministic scalar , differing only in how they select it (Fig-1arXiv:2608.23318v1 [cs.AI] 24 Aug 2026 ure 1). Schedule-based methods (Xi et al., 2024a; Guo et al., 2025; Huang et al., 2026) derive one depth from the training step or batch-level feed-back and share it across all samples, ignoring per-task heterogeneity. Per-sample methods (Su et al., 2025; Zhang et al., 2025b; Li et al., 2025; Zhang et al., 2025a) estimate a separate depth through binary search or enumeration, but pay O(log n) ex-tra rollouts per sample or N × the rollout budget. Moreover, these methods have been developed al-most exclusively on mathematical reasoning, where tasks share uniform structure; agentic tasks present a different challenge, as difficulty varies widely within a single batch (e.g., a two-step "Pick" vs. a twenty-step "Pick Two" in ALFWorld) (Tu et al., 2026; Lian et al., 2026b; Li et al., 2026; Chen et al., 2026). Our diagnostic in Section 2 quantifies both fail-ure modes: shared-depth schedulers place over 60% of assignments outside the informative band (Figure 2(a)), while per-sample probing reduces this mismatch only by spending extra rollouts that remain too noisy under a GRPO-matched budget (Figure 2(b)). Both families share a deeper assump-tion: that one optimal depth exists per task, and the goal is to pinpoint it. Our analysis in Section 2 reveals that this assumption is mismatched to the problem structure: informative depths form a band 
+
+around the optimal point, with a training-signal profile that is unimodal, approximately symmetric, and well fit by a Gaussian ( σ=0 .22 , R2=0 .92 ; Fig-ure 3(b)). The right guidance depth is not a point to be found, but a neighborhood to be covered. 
+
+This observation motivates Agent-G 2, a Gaus-sian guidance framework for hint-based RL on long-horizon agentic tasks. Agent-G 2 models guid-ance depth as a per-task Gaussian whose center and spread are estimated online through a global-local decomposition: a global baseline tracks the pol-icy’s overall progress, while per-cluster statistics adjust the center by task difficulty and widen the spread to match within-cluster variance. For each task, one depth is drawn from its cluster’s Gaussian and converted to a prefix length shared by all roll-outs. The same rollouts that update the policy also refresh the Gaussian parameters, achieving per-task depth variation at no extra rollout cost. We evaluate Agent-G 2 on ALFWorld and Web-Shop with Qwen2.5-1.5B-Instruct and Qwen2.5-7B-Instruct. On ALFWorld, Agent-G 2 reaches 
+
+95 .3% overall success at 1.5B and 98 .4% at 7B, improving over the strongest hint-based RL base-Fix-step Linear Step-dec Tar-acc           
+
+> (a) Long-horizon guidance
+> 025 50 75 100
+> Assignments (%)
+> Under In-range Over
+> 15 8823 23 15 23 62 62 77 69 15
+> 0.5× 1× 2× 5× 10× 20×
+> (b) Rollout cost
+> 020 40 60 80
+> Mismatch ratio (%)  24816 32 24816 32 Agent-G² (ours)
+> Binary search Enumeration
+
+Figure 2: Scalar-depth schedulers misallocate guid-ance. (a) Shared-depth schedulers keep fewer than half of assignments in-range; (b) per-sample probing lowers the mismatch ratio ρ only by spending extra rollouts. 
+
+line by 1.5 and 2.3 points and over the strongest hint-free RL baseline by 3.9 points at both scales. On WebShop, Agent-G 2 obtains a 92 .3 reward score at both scales, with 78 .9% and 84 .4% final-purchase success. These gains hold across bench-marks, model scales, and horizon groups, without the probe-rollout overhead of per-sample search. In summary, our contributions are as follows: • We reveal the neighborhood structure of guid-ance depth: informative depths form a band with approximately Gaussian training-signal profile, explaining the structural failure modes of both shared-depth schedulers and per-sample probing. • We propose Agent-G 2, a Gaussian guidance framework that estimates the per-task depth distribution online from rollout statistics via a global-local decomposition, requiring no probe rollouts or learned depth predictor. • On ALFWorld and WebShop with Qwen2.5-1.5B / 7B-Instruct, we show that Agent-G 2 con-sistently outperforms the strongest non-probing hint-based, hint-free, and Aux-RL baselines on both benchmarks, at under one-third the rollout cost of per-sample probing. 
+
+2 Preliminary Analysis 
+
+We diagnose guidance-depth assignment on Qwen2.5-1.5B-Instruct / ALFWorld at step 50, where the policy’s no-hint success rate is near 50% and the spread of per-task informative depths is widest. We sweep a depth grid D and estimate pi(d)
+
+from 32 rollouts per (task, depth) pair. The in-range set of task i is Ri = {d ∈ D : pi(d) ∈ [0 .4, 0.6] }
+
+, where training is most informative (Florensa et al., 2018); an assignment di is under-guided if pi(di) < 0.4 and over-guided if pi(di) > 0.6.The mismatch ratio ρ is the fraction of tasks with 20 1 2 3 4 5 6    
+
+> (a) Injection depth k
+> 025 50 75 100
+> Prompt-groups (%)  Under-guided In-range Over-guided
+> −0.4−0.2 0.0 0.2 0.4
+> (b) Relative depth Δd
+> 0.0 0.5 1.0 1.5 2.0 2.5
+> Density
+
+Figure 3: Useful guidance forms a band around d⋆i .
+
+(a) Rollout success rate pi(d) vs. depth, with under-/in-range/over-guided regimes shaded; the in-range band spans several depths. (b) Bernoulli-variance informa-tiveness aligned by ∆d = d − d⋆i , with a Gaussian fit (σ=0 .22 , R2=0 .92 ). 
+
+di /∈ R i. Full details appear in Appendix A. 
+
+Mismatch in Shared-Depth Scheduling Shared-depth schedulers set one guidance depth from the training step or batch-level feedback and apply it to all tasks in a batch. While avoiding additional probe rollouts, this scalar assignment ignores task-level heterogeneity. Figure 2(a) shows that among the shared-depth schedulers we test, the three step-based schedulers place only 15%–23% of rollout groups inside the in-range band, with most assign-ments being over-guided. Even the best shared scheduler, Target-acc, leaves 38% of its assign-ments outside the in-range band. This failure is structural rather than a tuning issue: a single depth cannot match tasks with different in-range bands. 
+
+Cost-precision Trade-off of Per-sample Probing 
+
+Per-sample probing samples rollouts at candidate depths and selects the depth whose estimated suc-cess rate ˆpi is closest to 0.5, removing the shared-depth assumption at the cost of additional probe rollouts. Figure 2(b) quantifies this cost-precision trade-off. With Mprobe =2 rollouts per candidate depth, Binary Search still leaves 75% of assign-ments mismatched. Enumeration is more accu-rate but costlier: Mprobe =4 reaches 47% mismatch at 2× the GRPO rollout budget, while near-zero mismatch requires Mprobe =32 at 20 × the budget. Thus, methods that try to pinpoint a single depth from noisy rollout estimates must trade additional rollout cost for selection error. 
+
+Modeling Depth as a Gaussian. The two failure modes above stem from a shared premise: that one optimal depth exists per task. We now show that useful guidance has a richer structure. 
+
+Observation 1: Useful guidance occupies a band. 
+
+Figure 3(a) plots pi(d) against d, with the under-guided, in-range, and over-guided regimes shaded. The in-range regime spans multiple neighboring depths rather than a single value, indicating that several nearby depths can keep rollouts in the just-learnable regime. Thus, a scheduler that localizes one exact depth ignores a neighborhood of infor-mative choices. 
+
+Observation 2: Informative signal is Gaussian-like. 
+
+We define d⋆i = arg min d∈D |pi(d)−0.5| and align task-depth pairs by ∆d = d − d⋆i . As a proxy for training informativeness we use the Bernoulli vari-ance pi(d)(1 − pi(d)) , which peaks at pi=0 .5 and drops to 0 at deterministic rollouts. The peak at 
+
+∆d = 0 follows from the definition of d⋆i , but the symmetry and decay along ∆d do not: they reflect how pi(d) varies with depth. The aligned profile (Figure 3(b)) is unimodal and approximately sym-metric, with a Gaussian fit yielding σ=0 .22 and 
+
+R2=0 .92 . The Gaussian provides the two param-eters our sampler needs: a center μ for the band location and a spread σ for its width. Both map onto the mean and variance of batch rollouts, so the sampler in Section 3 runs online without ex-tra probing. We discuss the choice of parametric family in Section A. 
+
+3 Method: Agent-G 2
+
+Section 2 showed that scalar-depth schedulers ei-ther ignore per-task heterogeneity or require costly per-sample probing, while informative depths form Gaussian-like profiles around task-specific effec-tive depths. Agent-G 2 translates these findings into a practical training framework (Figure 4): an adap-tive Gaussian schedule derives per-task distribu-tions from existing rollout statistics (Section 3.2), sampling draws one depth per task (Section 3.3), and the same rollouts update both the policy and the schedule (Section 3.4). 
+
+3.1 Problem Formulation. 
+
+We consider LLM agents trained with reinforce-ment learning on long-horizon tasks with reward only at termination. Each task i has a natural-language instruction qi and one expert trajectory 
+
+τ ⋆i = (a⋆i, 1, . . . , a ⋆i,L i ) of length Li. A hint scheduler selects a guidance ratio ri ∈ [0 , 1] ,which is converted to a prefix length ni =min( ⌈riLi⌉, L i − 1) . The first ni expert actions are executed in the environment to reach a post-3Schedule update               
+
+> ...
+> Cluster 1 Cluster 2 Cluster K
+> Clustered Tasks Prefix loss GRPO loss
+> Policy update
+> Task Instruction Cluster k Gaussian
+> μk:
+> σk:
+> SFT on expert prefix
+> Adaptive Gaussian Schedule Sample prefix and rollout Policy update
+> Batch feedback
+> Cluster stats
+> μglobal
+> Global baseline Batch acc B
+> Short Medium Long
+> μglobal
+> Shared global baseline
+> policy RL on rollouts
+> ...
+> global progress
+> sample d i~ N ( μ k, σ k2)
+> expert trajectory
+> GRPO rollouts
+> expert prefix model rollout
+> ......
+> Cluster k
+> accuracy A_k
+> variance V_k
+> ...
+> ni=⌈di·L i⌉
+> -∆ +∆
+> early late
+> Gaussian guidance evolves over training
+> middle Closed-loop feedback
+
+Figure 4: Agent-G 2 pipeline. (1) Tasks are clustered offline by difficulty. (2) A global baseline μglobal and per-cluster statistics (Ak, V k) form a per-task Gaussian N (μi, σ 2 
+
+> i
+
+). (3) One prefix length is drawn per task; R rollouts run from the post-prefix state. (4) The policy is updated with prefix SFT plus GRPO loss. (5) The same rollouts refresh 
+
+μglobal , A k, V k for the next batch. 
+
+prefix state, from which the policy πθ runs R in-dependent rollouts. Each rollout j ∈ { 1, . . . , R }
+
+terminates with a binary reward yi,j ∈ { 0, 1}, and 
+
+ˆpi = 1
+
+R
+
+PRj=1 yi,j denotes the empirical success rate. We optimize πθ with GRPO (Shao et al., 2024), which computes a group-normalized advan-tage from the R terminal rewards within each task. 
+
+3.2 Adaptive Gaussian Schedule 
+
+Agent-G 2 assigns each task i a Gaussian distribu-tion N (μi, σ 2
+
+i ) over the guidance ratio ri. Its center and spread are computed online from rollouts al-ready collected for policy optimization. The sched-uler maintains three types of state: a global guid-ance baseline μglobal that tracks the overall guid-ance level, and for each offline cluster Ck, EMA estimates Ak and Vk that summarize the level and dispersion of empirical success rates. We use the standard midpoint target ptarget = 0 .5 for binary success feedback, following the curriculum prin-ciple that training is most informative near the success–failure boundary (Florensa et al., 2018; Zhang et al., 2025a). All schedule states are ini-tialized from weak priors that only determine the first-batch schedule, then continuously refreshed by rollout statistics. 
+
+Global baseline. The global baseline μglobal ∈
+
+[0 , 1] tracks the guidance level required by the cur-rent policy. For a training batch B with average suc-cess rate acc B = 1
+
+|B| 
+
+P
+
+i∈B ˆpi, we shift μglobal by ∆
+
+in the direction that drives acc B toward ptarget :
+
+μglobal ← clip 
+
+
+
+μglobal + sign( ptarget − acc B ) ∆ , 0, 1
+
+
+
+.
+
+(1) 
+
+Low batch success raises the baseline for deeper next-batch prefixes; high success lowers it. 
+
+Cluster statistics. The training set is partitioned offline into K clusters {C k}Kk=1 by each task’s expert-trajectory length, which serves as a simple proxy for separating tasks of different difficulty levels, and k(i) denotes the cluster of task i. For each non-empty Bk = B ∩ C k, the batch produces 
+
+¯pBk = 1
+
+|B k |
+
+X
+
+> i∈B k
+
+ˆpi,vBk = 1
+
+|B k |
+
+X
+
+> i∈B k
+
+(ˆ pi − ¯pBk )2 ,
+
+(2) 
+
+which are folded into Ak and Vk by EMA: 
+
+Ak ← (1 − α)Ak + α¯pBk ,Vk ← (1 − α)Vk + αv Bk . (3) 
+
+Clusters absent from the batch are left unchanged. 
+
+Ak estimates the current success level of cluster 
+
+k, while Vk measures how unevenly tasks in the cluster respond to the current policy. 
+
+Per-task distribution. The center and spread for task i in cluster k=k(i) are 
+
+μi = clip( μglobal + λ(ptarget − Ak ), 0, 1) ,σi = max( γV k , σ min ). (4) 
+
+A lower cluster success rate Ak shifts μi toward deeper guidance; a higher within-cluster variance 
+
+Vk widens σi, giving the sampler broader coverage of the informative band identified in Section 2. 43.3 Per-Task Sampling and Rollout 
+
+Given (μi, σ i) from the schedule, we draw one guidance ratio per task:         
+
+> zi∼ N (μi, σ 2
+> i),ri= clip( zi,0,1) .(5)
+
+The sampled ratio determines the prefix length ni,executed once to reach the post-prefix state shared by all R rollouts of task i (Section 3.1). Since 
+
+(μi, σ i) are induced by the statistics of cluster k(i),tasks in the same cluster share Gaussian parameters, while independent sampling yields task-level depth variation without extra rollouts. 
+
+3.4 Training 
+
+Each batch B closes the loop between policy opti-mization and schedule adaptation: rollouts gener-ated from sampled prefixes drive both updates. 
+
+Policy update. We combine the GRPO loss 
+
+LGRPO (B) with a teacher-forced loss on sampled expert prefixes, following common practice in hint-based RL (Zhang et al., 2025b; Huang et al., 2026): 
+
+Laux (B) = − X
+
+> i∈B
+> ni
+
+X
+
+> t=1
+
+log πθ(a⋆i,t | si,t , q i), (6) where si,t is the state reached after the first t − 1
+
+expert actions. The full objective is 
+
+L(B) = LGRPO (B) + η Laux (B), (7) with η controlling the auxiliary weight. The aux-iliary term preserves imitation supervision on the sampled prefixes and is ablated in Section 4.4. 
+
+Schedule update. The terminal rewards from the same rollouts refresh μglobal , A k, V k for the next batch as specified in Section 3.2. Schedule adap-tation therefore reuses rollouts already collected for policy optimization and introduces no probe rollouts or learned depth predictor. Algorithm 1 summarizes the full per-batch loop. 
+
+4 Experiments 
+
+4.1 Setup Benchmarks. We evaluate Agent-G 2 on two long-horizon agent benchmarks. ALFWorld (Shrid-har et al., 2021) is a text-based embodied environ-ment where the agent completes household tasks through multi-step interaction with sparse termi-nal rewards. We follow the standard six task types and group them by horizon into Short (Pick, Look), 
+
+Algorithm 1 Agent-G 2 per-batch training loop.                                                                                                                   
+
+> Require: Policy πθ,expert trajectories {τ⋆i},clusters
+> {C k}Kk=1
+> Require: Hyperparameters ∆, α, λ, γ, σ min , η, R ;ptarget =0.5
+> 1: Initialize μglobal ←0.8,Ak←0,Vk←0▷weak priors 2: for each batch Bdo
+> ▷Per-task schedule, sampling, and prefix execution
+> 3: for each task i∈ B with k=k(i)do
+> 4: μi←clip( μglobal +λ(ptarget −Ak),0,1)
+> 5: σi←max( γV k, σ min )
+> 6: zi∼ N (μi, σ 2
+> i);ri←clip( zi,0,1)
+> 7: ni←min( ⌈riLi⌉, L i−1)
+> 8: Execute τ⋆i, 1: nito reach state si
+> 9: Record τ⋆i, 1: nifor Laux
+> 10: for j= 1 , . . . , R do
+> 11: Roll out πθfrom si; record yi,j
+> 12: end for
+> 13: end for
+> ▷Policy update
+> 14: Update πθ: minimize LGRPO (B) + ηLaux (B)
+> ▷Schedule feedback
+> 15: ˆpi←1
+> R
+> P
+> jyi,j for i∈ B
+> 16: acc B←1
+> |B|
+> P
+> i∈B ˆpi
+> 17: Refresh Ak, V k, μ global (Section 3.2) 18: end for
+> 19: return πθ
+
+Medium (Clean, Heat, Cool), and Long (Pick2). WebShop (Yao et al., 2023a) is a web navigation environment where the agent searches, filters, and purchases products matching a natural-language specification, with reward issued at final purchase. We compare Agent-G 2 against five families. (1) Prompting : ReAct (Yao et al., 2023b) and Reflex-ion (Shinn et al., 2023) on the same base, with GPT-4o (OpenAI et al., 2024) and Gemini-2.5-Pro (Co-manici et al., 2025) as closed-source references. 
+
+(2) Imitation : Full SFT, supervised fine-tuning on entire expert trajectories. (3) RL without hints :GRPO (Shao et al., 2024), GiGPO (Feng et al., 2025), and BEACON (Wang et al., 2026), trained with sparse terminal rewards and no expert pre-fix. (4) Aux-RL : ETO (Song et al., 2024) and RLVMR (Zhang et al., 2025d), which add auxil-iary supervision beyond the terminal reward. (5) Hint-based RL , subdivided into: schedule-based 
+
+methods (Linear, Cosine, Step decay, Target acc); 
+
+search-based methods (Binary Search, Enumera-tion); and end-to-end methods (StepHint (Zhang et al., 2025a), TraPO (Su et al., 2025)). All schedule- and search-based baselines share Agent-G2’s GRPO backbone, isolating prefix-depth allo-cation as the only variable. 
+
+Implementation. We instantiate Agent-G 2 on Qwen2.5-1.5B / 7B-Instruct (Qwen et al., 5Table 1: Main results on ALFWorld and WebShop (success rate, %). Best and second-best are highlighted. 
+
+Type Method ALFWorld WebShop Short Medium Long All Score Succ 
+
+Pick Look Clean Heat Cool Pick2 
+
+Closed-Source Models 
+
+Prompting GPT-4o (OpenAI et al., 2024) 75.3 60.8 31.2 56.7 21.6 49.8 48.0 31.8 23.7 Prompting Gemini-2.5-Pro (Comanici et al., 2025) 92.8 63.3 62.1 69.0 26.6 58.7 60.3 42.5 35.9 
+
+Base: Qwen2.5-1.5B-Instruct 
+
+Prompting Direct Prompt (Qwen et al., 2025) 5.9 5.5 3.3 9.7 4.2 0.0 4.1 23.1 5.2 Prompting ReAct (Yao et al., 2023b) 17.4 20.5 15.7 6.2 7.7 2.0 12.8 40.1 11.3 Prompting Reflexion (Shinn et al., 2023) 35.3 22.2 21.7 13.6 19.4 3.7 21.8 55.8 21.9 SFT Full SFT 68.8 70.6 61.9 71.4 42.9 28.0 56.3 86.6 69.5 RL GRPO (Shao et al., 2024) 85.3 53.7 84.5 78.2 59.7 53.5 72.8 75.8 56.8 RL GiGPO (Feng et al., 2025) 96.0 76.5 91.8 91.3 71.7 79.5 86.1 83.1 65.0 RL BEACON (Wang et al., 2026) 100 88.2 86.7 100 78.9 92.9 91.4 86.1 75.6 Aux-RL ETO (Song et al., 2024) 73.6 46.3 66.2 68.3 62.8 55.6 66.4 – –Aux-RL RLVMR (Zhang et al., 2025d) 95.2 78.8 91.2 90.2 83.9 77.6 87.9 – –Hint-RL Linear decay 92.5 83.3 90.0 66.6 71.4 82.6 83.6 88.9 74.2 Hint-RL Cosine decay 97.6 70.0 83.3 58.3 85.0 76.2 83.6 83.2 73.4 Hint-RL Step decay 85.0 100 95.0 83.3 95.2 86.9 89.8 89.1 74.2 Hint-RL Target acc 100 83.3 100 100 90.5 82.6 93.8 86.4 75.0 Hint-RL Enumeration 100 81.8 100 68.8 80.0 61.1 86.0 90.1 78.1 Hint-RL Binary Search (Zhang et al., 2025b) 83.3 75.0 90.9 78.6 95.7 81.5 85.2 89.7 77.3 Hint-RL StepHint (Zhang et al., 2025a) 86.0 60.0 84.9 63.7 75.0 65.2 77.3 87.6 71.9 Hint-RL TRAPO (Su et al., 2025) 79.2 50.0 85.2 56.3 54.8 18.2 59.4 89.4 75.8 Hint-RL Agent-G 2 (Ours) 96.8 100 100 92.9 84.2 94.7 95.3 92.3 78.9 
+
+Base: Qwen2.5-7B-Instruct 
+
+Prompting ReAct (Yao et al., 2023b) 48.5 35.4 34.3 13.2 18.2 17.6 31.2 46.2 19.5 SFT Full SFT 75.0 100 80.0 43.8 59.1 37.8 64.9 88.3 79.7 RL GRPO (Shao et al., 2024) 90.8 66.1 89.3 74.7 72.5 64.7 77.6 79.3 66.1 RL GiGPO (Feng et al., 2025) 91.8 88.6 95.9 90.2 86.5 85.2 90.2 84.4 72.8 RL BEACON (Wang et al., 2026) 100 81.8 96.3 92.9 94.7 90.0 94.5 87.7 79.7 Aux-RL ETO (Song et al., 2024) 88.2 70.5 82.3 83.6 71.0 51.2 74.2 – –Aux-RL RLVMR (Zhang et al., 2025d) 95.3 88.2 90.1 92.4 89.8 86.7 91.8 – –Hint-RL Linear decay 97.5 92.9 66.7 85.2 87.5 92.0 85.2 91.1 82.8 Hint-RL Cosine decay 97.1 100 78.9 85.7 83.3 90.0 89.4 90.1 82.0 Hint-RL Step decay 95.0 92.9 90.5 91.7 100 80.0 91.4 92.1 83.6 Hint-RL Target acc 97.5 100 95.2 83.3 81.3 92.0 92.9 89.3 79.7 Hint-RL Enumeration 100 100 96.4 100 90.5 86.7 96.1 96.0 89.8 
+
+Hint-RL Binary Search (Zhang et al., 2025b) 97.6 100 96.3 73.7 84.6 93.8 92.2 91.2 83.6 Hint-RL StepHint (Zhang et al., 2025a) 97.3 100 89.4 94.1 79.1 91.7 91.4 90.9 82.0 Hint-RL TRAPO (Su et al., 2025) 89.3 66.7 88.5 90.0 68.8 44.8 75.0 90.6 77.3 Hint-RL Agent-G 2 (Ours) 100 100 100 100 100 91.7 98.4 92.3 84.4 
+
+2025). Agent-G 2-specific hyperparameters (∆=0 .1, α=0 .2, γ=1 .0) are fixed across both benchmarks without per-task tuning. We report suc-cess rate (%) on the held-out test set averaged over 5 seeds; full configurations appear in Appendix B. 
+
+4.2 Main Results Overall performance. On ALFWorld, Agent-G 2
+
+reaches 95 .3% (1.5B) and 98 .4% (7B). It outper-forms RLVMR, the strongest method using auxil-iary supervision, by +7 .4 / +6 .6, and Enumeration, the strongest probe-based baseline, by +9 .3 / +2 .3,without any auxiliary network or probe rollouts. On WebShop, Agent-G 2 is the strongest non-probing method at both scales ( 92 .3 reward score, 78 .9% /
+
+84 .4% purchase success), and at 1.5B also outper-forms Enumeration by +2 .2 reward-score points. 
+
+Cross-scale robustness. Agent-G 2 remains ef-fective as the backbone scales from 1.5B to 7B. On ALFWorld, the margin over the strongest hint-based baseline grows from +1 .5 to +2 .3, so finer scheduling does not become redundant on stronger backbones. On WebShop, purchase success climbs from 78 .9% to 84 .4% , consistent with stronger ac-tion precision at scale. The 1.5B model also sur-passes all 7B non-probing baselines, indicating that schedule design substitutes for backbone scaling rather than only compensating for limited capacity. 6SFT Prefix SFT Agent-G²       
+
+> (a) Beyond Imitation
+> 025 50 75 100
+> Success Rate (%)
+> 56% 27% 95%
+> 0.00 0.25 0.50 0.75 1.00
+> (b) Schedule at t= 29
+> 01234
+> Density
+> Short Medium Long
+
+Figure 5: Beyond imitation. (a) ALFWorld success on Qwen2.5-1.5B: Agent-G 2 (95%) far exceeds Full SFT (56%) and Sampled-Prefix SFT (27%). (b) Per-cluster (Short / Medium / Long) depth densities at t=29 .0 50 100 150 200            
+
+> (a) Val Success Rate
+> 025 50 75 100
+> Success Rate
+> Agent-G 2
+> Cosine Step GRPO
+> 0.00 0.25 0.50 0.75 1.00
+> (b) Schedule (μt,σ2
+> t)
+> 01234
+> Density
+> t= 5
+> t= 25
+> t= 50
+> t= 200
+
+Figure 6: Training dynamics of Agent-G 2. (a) Success rate vs. gradient steps for Agent-G 2 and the strongest scalar-depth baseline. (b) Evolution of the per-task guidance-depth distribution across training. 
+
+4.3 Analysis Beyond imitation. The gain of Agent-G 2 cannot be explained by imitation alone. Full SFT reaches 56.3%, and Sampled-Prefix SFT, which trains only on the prefix supervision pairs collected during Agent-G 2 training, reaches 26.6%; both are far below Agent-G 2’s 95.3% (Figure 5(a)). The 68.4-point gap between Sampled-Prefix SFT and Agent-G2 isolates the contribution of post-prefix RL: the missing ingredient is not copying expert tokens, but learning from sampled post-prefix states. 
+
+Heterogeneous depths in the same batch. 
+
+Agent-G 2 gains most when samples in the same batch require different prefix depths. In Figure 6(a), the convergence gap is largest between steps 50 and 150, the window in which the depth distribution in Figure 6(b) is widest. A scalar dsched is brittle here: a single depth is too deep for easy samples and too shallow for hard ones, pushing most rollouts outside the informative band. Agent-G 2 samples a neighborhood of depths instead, so both ends of the difficulty spectrum receive usable guidance. 
+
+Schedule emerges from the rollouts. The shape of the distribution in Figure 6(b) is set by training itself. At t=5 it favors deep prefixes, because the 
+
+Table 2: Per-step training cost on Qwen2.5-1.5B / ALFWorld. Median wall-clock seconds per gradient step. Ratios are relative to Agent-G 2.                        
+
+> Method Type Cost/step (s) Ratio Agent-G 2Distribution 88 1.00 ×
+> Step decay Schedule 57 0.65 ×
+> Cosine decay Schedule 60 0.68 ×
+> Linear decay Schedule 61 0.69 ×
+> Target acc Schedule 80 0.91 ×
+> Enumeration Probe 425 4.83 ×
+> Binary Search Probe 285 3.24 ×
+
+policy has yet to reach learnable states on its own. Around t=25 –50 it widens, as the cluster variance 
+
+Vk peaks while easy and hard clusters separate. By 
+
+t=200 it concentrates near zero, because the suc-cess rate has cleared the threshold of Equation (1) on every cluster. The mean follows global and clus-ter success, the spread follows Vk, and both come from rollouts already collected for policy optimiza-tion. Figure 7 in Appendix B samples this pattern across four training phases, with the Long cluster retaining a wider σk for longer. 
+
+Training efficiency. We assess efficiency by con-vergence speed and per-step wall-clock cost. Fig-ure 6(a) shows that Agent-G 2 reaches the final accuracy of scheduled baselines in roughly half the gradient steps. Although Agent-G 2 incurs a modest per-step overhead over scheduled methods (88 s vs. 57 –80 s), it is substantially cheaper than probing-based methods ( 285 –425 s, or 3.24 –4.83 ×
+
+higher), which spend extra rollouts to estimate depths. Therefore, by combining faster conver-gence with much lower cost than probing, Agent-G2 achieves the best overall training efficiency. 
+
+Decomposing the learned schedule. Figure 5(b) decomposes the learned schedule at t=29 by hori-zon group. These patterns are not manually spec-ified: each cluster only maintains rollout-derived statistics Ak and Vk, and the separation emerges from training feedback. 
+
+4.4 Ablation Studies Sampling drives the gain. Replacing the Gaus-sian draw di ∼ N (μi, σ 2 
+
+> i
+
+) with the deterministic mean di = μi removes stochastic depth coverage and drops the overall success rate from 95 .3% to 
+
+89 .8% . This shows that a single-depth estimate cannot cover the informative band. Replacing the Gaussian with a variance-matched uniform distri-7Table 3: Ablation of Agent-G 2 on ALFWorld / Qwen2.5-1.5B-Instruct. ∆ is the change in All rela-tive to the full method. Removing LGRPO is equivalent to Sampled-Prefix SFT.                                            
+
+> Variant Long All ∆
+> Agent-G 294.7 95.3 –
+> Sampling form
+> w/o sampling: di,j =μi, σ i=0 84.6 89.8 ↓5.5
+> Uniform sampling: U[μi±σi]80.8 88.3 ↓7.0
+> Adaptive moments
+> w/o adaptive center: μi=μglobal 79.2 91.4 ↓3.9
+> w/o adaptive spread: σi=σmin 78.3 93.8 ↓1.5
+> w/o grouping: K=1 65.4 89.1 ↓6.2
+> Loss components
+> w/o Laux 76.7 86.7 ↓8.6
+> w/o LGRPO 10.0 26.6 ↓68 .7
+
+bution reduces performance to 88 .3% , confirming that the gain comes from coverage of the informa-tive band, not the exact distributional shape. 
+
+Both center and spread matter. Removing the cluster-dependent center correction by setting μi =
+
+μglobal lowers the overall success rate to 91 .4% ,showing that a global baseline alone cannot cap-ture difficulty variation across clusters. Removing the adaptive spread by setting σi = σmin reduces performance to 93 .8% , with a pronounced drop on Long tasks ( 94 .7% → 78 .3% ), indicating that dynamically adapting σi is important for maintain-ing sufficient depth coverage, especially on hard long-horizon tasks. Collapsing all tasks into a sin-gle cluster ( K = 1 ) drops the overall success rate to 89 .1% , with the largest degradation on Long tasks, decreasing by 29 .3 points. Together, these results show that both cluster-aware centering and adaptive spreading are necessary for handling het-erogeneous task difficulty. 
+
+Auxiliary loss is supportive. Removing Laux 
+
+from Equation (7) lowers the overall success rate by 8.6 points, showing that prefix supervision helps stabilize training. In contrast, removing LGRPO 
+
+reduces the method to Sampled-Prefix SFT and drops performance to 26 .6% , a 68 .7-point decrease. This indicates that imitating sampled prefixes alone is insufficient; the main gain comes from GRPO learning on sampled post-prefix states, while Laux 
+
+acts as a stabilizer for prefix-token imitation. 
+
+5 Related Work 
+
+Hint-Guidance Strategies. Hint-based RL in-jects an expert trajectory prefix into rollouts to ad-dress reward sparsity, and methods differ primarily in how they choose the prefix depth d. Schedule-based methods set d from the training step or batch success rate and share one value across samples (Xi et al., 2024a; Huang et al., 2026; Guo et al., 2025; Lu et al., 2026b). Per-sample methods make d
+
+instance-specific by probing each sample with extra rollouts (Zhang et al., 2025a,b; Wang et al., 2025b; Zhang et al., 2026b; Su et al., 2025; Li et al., 2025). In both lines, d is a deterministic scalar that ignores per-task heterogeneity within a training context, and existing methods are evaluated almost exclu-sively on math reasoning. Agent-G 2 draws a per-task di from a cluster-level Gaussian whose mean and variance are estimated from GRPO’s rollout statistics, removing both the shared-scalar assump-tion and the probing overhead, and we evaluate it on long-horizon agentic benchmarks. 
+
+Auxiliary Supervision for Agentic RL. In agen-tic settings, prior work typically converts expert trajectories into supervision for an auxiliary model, rather than using them to seed rollouts directly. These auxiliary signals take five forms: SFT tar-gets for behavior cloning (Zeng et al., 2023; Xi et al., 2024b; Qi et al., 2025; Bai et al., 2024), pref-erence pairs for trajectory-level DPO (Song et al., 2024; Putta et al., 2024; Lai et al., 2024; Yuan et al., 2025; Lian et al., 2026a), value heads or Q-critics distilled from demonstrations (Xiang et al., 2024; Zhou et al., 2024b; Feng et al., 2024; Gu et al., 2025), step-level process reward models (Choud-hury, 2025; Wang et al., 2025a; Xiong et al., 2024; Lu et al., 2026a), and milestone-shaped rewards extracted from successful traces (Wang et al., 2026; Zheng et al., 2026). Each route adds an auxiliary network and inherits its annotation, Monte-Carlo la-beling, or reward-model fragility cost (Zhang et al., 2025c; Pan et al., 2026). Agent-G 2 uses the same expert trajectories directly as rollout-starting pre-fixes inside an on-policy GRPO loop, training no auxiliary model and requiring no further offline annotation. 
+
+6 Conclusion 
+
+We proposed Agent-G 2, a Gaussian guidance framework for hint-based reinforcement learning on long-horizon agentic tasks. Rather than treating guidance depth as a deterministic scalar, Agent-G2 draws it per task from a Gaussian whose cen-ter and spread are estimated online from rollouts collected for policy optimization, without learned 8depth predictor or extra probe rollouts. Agent-G² is the strongest on ALFWorld and the strongest non-probing method on WebShop at both 1.5B and 7B scales, with 1.5B Agent-G² already surpassing 7B BEACON, showing that schedule design can substitute for backbone scaling. 
+
+Limitations 
+
+Agent-G 2 relies on the availability of one expert trajectory per training task. When such trajectories are unavailable or costly to obtain, the framework cannot be applied directly; extending it to weaker forms of supervision (e.g., suboptimal demonstra-tions or language hints) is an open direction. The Gaussian parameterization is motivated by the empirical informativeness profile observed in Section 2, which fits well on our two benchmarks. Tasks with multimodal or heavily skewed depth profiles may benefit from richer distributional fami-lies, though our uniform-distribution ablation (Sec-tion 4.4) suggests that the exact shape matters less than stochastic coverage of the informative band. The difficulty clusters are defined offline by expert-trajectory length, which serves as a simple proxy for task horizon and difficulty. Although ef-fective in our experiments, this fixed partitioning does not adapt as the policy improves and task-relative difficulty changes. Online difficulty esti-mation could further improve adaptivity. 
+
+Ethics Statement 
+
+We adhere to the ACL Code of Ethics and Code of Conduct. Our work uses only publicly available benchmarks and pretrained open-source models. Code and training scripts will be released under the MIT License upon publication. We used Claude for grammatical refinement; all scientific content and conclusions are the authors’ own work. 
+
+Acknowledgements 
+
+This work was supported by National Key Research and Development Project (No. 2024YFB3312900), National Natural Science Foundation of China (No. 62506332) and CCF-Baidu Open Fund. 
+
+References 
+
+Michael Ahn, Anthony Brohan, Noah Brown, Yev-gen Chebotar, Omar Cortes, Byron David, Chelsea Finn, Chuyuan Fu, Keerthana Gopalakrishnan, Karol Hausman, Alex Herzog, Daniel Ho, Jasmine Hsu, Julian Ibarz, Brian Ichter, Alex Irpan, Eric Jang, Rosario Jauregui Ruano, Kyle Jeffrey, and 26 others. 2022. Do as i can, not as i say: Grounding language in robotic affordances. Preprint , arXiv:2204.01691. Hao Bai, Yifei Zhou, Mert Cemri, Jiayi Pan, Alane Suhr, Sergey Levine, and Aviral Kumar. 2024. Di-girl: Training in-the-wild device-control agents with autonomous reinforcement learning. Preprint ,arXiv:2406.11896. Daniil A. Boiko, Robert MacKnight, and Gabe Gomes. 2023. Emergent autonomous scientific research capabilities of large language models. Preprint ,arXiv:2304.05332. Andres M Bran, Sam Cox, Oliver Schilter, Carlo Baldas-sari, Andrew D White, and Philippe Schwaller. 2023. Chemcrow: Augmenting large-language models with chemistry tools. Preprint , arXiv:2304.05376. Tongbo Chen, Zhengxi Lu, Zhan Xu, Guocheng Shao, Shaohan Zhao, Fei Tang, Yong Du, Kaitao Song, Yizhou Liu, Yuchen Yan, Wenqi Zhang, Xu Tan, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. 2026. Knowu-bench: Towards interactive, proactive, and personalized mobile agent evaluation. Preprint , arXiv:2604.08455. Sanjiban Choudhury. 2025. Process reward models for llm agents: Practical framework and directions. 
+
+Preprint , arXiv:2502.10325. Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Mar-cel Blistein, Ori Ram, Dan Zhang, Evan Rosen, Luke Marris, Sam Petulla, Colin Gaffney, Asaf Aharoni, Nathan Lintz, Tiago Cardal Pais, Henrik Jacobs-son, Idan Szpektor, Nan-Jiang Jiang, and 3416 oth-ers. 2025. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. Preprint ,arXiv:2507.06261. Xiang Deng, Yu Gu, Boyuan Zheng, Shijie Chen, Samuel Stevens, Boshi Wang, Huan Sun, and Yu Su. 2023. Mind2web: Towards a generalist agent for the web. Preprint , arXiv:2306.06070. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2025. Group-in-group policy optimization for llm agent training. Preprint , arXiv:2505.10978. Peiyuan Feng, Yichen He, Guanhua Huang, Yuan Lin, Hanchong Zhang, Yuchen Zhang, and Hang Li. 2024. Agile: A novel reinforcement learning framework of llm agents. Preprint , arXiv:2405.14751. Carlos Florensa, David Held, Xinyang Geng, and Pieter Abbeel. 2018. Automatic goal genera-tion for reinforcement learning agents. Preprint ,arXiv:1705.06366. Yu Gu, Kai Zhang, Yuting Ning, Boyuan Zheng, Boyu Gou, Tianci Xue, Cheng Chang, Sanjari Srivastava, Yanan Xie, Peng Qi, Huan Sun, and Yu Su. 2025. Is your llm secretly a world model of the internet? 
+
+9model-based planning for web agents. Preprint ,arXiv:2411.06559. Yongxin Guo, Wenbo Deng, Zhenglin Cheng, and Xi-aoying Tang. 2025. G 2rpo-a: Guided group relative policy optimization with adaptive guidance. Preprint ,arXiv:2508.13023. Wenlong Huang, Pieter Abbeel, Deepak Pathak, and Igor Mordatch. 2022. Language models as zero-shot planners: Extracting actionable knowledge for em-bodied agents. Preprint , arXiv:2201.07207. Zeyu Huang, Tianhao Cheng, Zihan Qiu, Zili Wang, Yinghui Xu, Edoardo M. Ponti, and Ivan Titov. 2026. Blending supervised and reinforcement fine-tuning with prefix sampling. Preprint , arXiv:2507.01679. Hanyu Lai, Xiao Liu, Iat Long Iong, Shuntian Yao, Yux-uan Chen, Pengbo Shen, Hao Yu, Hanchen Zhang, Xiaohan Zhang, Yuxiao Dong, and Jie Tang. 2024. Autowebglm: A large language model-based web navigating agent. Preprint , arXiv:2404.03648. Dinging Li, Yingxiu Zhao, Xinrui Cheng, Kangheng Lin, Hongbo Peng, Hongxing Li, Zixuan Wang, Yuhong Dai, Haodong Li, Jia Wang, Yukang Shi, Liang Zhao, Jianjian Sun, Zheng Ge, Xiangyu Zhang, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. 2026. Spatialevo: Self-evolving spatial intelligence via deterministic geometric envi-ronments. Preprint , arXiv:2604.14144. Ziheng Li, Zexu Sun, Jinman Zhao, Erxue Min, Yongcheng Zeng, Hui Wu, Hengyi Cai, Shuaiqiang Wang, Dawei Yin, Xu Chen, and Zhi-Hong Deng. 2025. Staying in the sweet spot: Responsive reason-ing evolution via capability-adaptive hint scaffolding. 
+
+Preprint , arXiv:2509.06923. Niu Lian, Tongbo Chen, Zhehao Yu, Chengzhen Duan, Fazhan Liu, Hui Liu, Pei Fu, Jian Luan, Heng Qu, Shu-Tao Xia, and Jinpeng Wang. 2026a. Ui-mopd: Multi-platform on-policy distillation for unified gui agents. Preprint , arXiv:2607.04425. Niu Lian, Yuting Wang, Hanshu Yao, Jinpeng Wang, Bin Chen, Yaowei Wang, Min Zhang, and Shu-Tao Xia. 2026b. From verbatim to gist: Distilling pyra-midal multimodal memory via semantic information bottleneck for long-horizon video agents. In Proceed-ings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 11601–11617. Zhengxi Lu, Zhiyuan Yao, Zhuowen Han, Zi-Han Wang, Jinyang Wu, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. 2026a. Self-distilled agentic reinforcement learning. 
+
+Preprint , arXiv:2605.15155. Zhengxi Lu, Zhiyuan Yao, Jinyang Wu, Chengcheng Han, Qi Gu, Xunliang Cai, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. 2026b. Skill0: In-context agentic reinforcement learning for skill internalization. Preprint , arXiv:2604.02268. OpenAI, :, Aaron Hurst, Adam Lerer, Adam P. Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, Aleksander M ˛ adry, Alex Baker-Whitcomb, Alex Beutel, Alex Borzunov, Alex Carney, Alex Chow, Alex Kirillov, and 401 others. 2024. Gpt-4o system card. Preprint , arXiv:2410.21276. Teng Pan, Yuchen Yan, Zixuan Wang, Ruiqing Zhang, Guiyang Hou, Wenqi Zhang, Weiming Lu, Jun Xiao, and Yongliang Shen. 2026. CoVerRL: Breaking the consensus trap in label-free reasoning via generator-verifier co-evolution. In Proceedings of the 64th An-nual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 29833– 29853, San Diego, California, United States. Associ-ation for Computational Linguistics. Pranav Putta, Edmund Mills, Naman Garg, Sumeet Motwani, Chelsea Finn, Divyansh Garg, and Rafael Rafailov. 2024. Agent q: Advanced reasoning and learning for autonomous ai agents. Preprint ,arXiv:2408.07199. Zehan Qi, Xiao Liu, Iat Long Iong, Hanyu Lai, Xueqiao Sun, Wenyi Zhao, Yu Yang, Xinyue Yang, Jiadai Sun, Shuntian Yao, Tianjie Zhang, Wei Xu, Jie Tang, and Yuxiao Dong. 2025. Webrl: Training llm web agents via self-evolving online curriculum reinforcement learning. Preprint , arXiv:2411.02337. Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, and 25 oth-ers. 2025. Qwen2.5 technical report. Preprint ,arXiv:2412.15115. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. Deepseekmath: Pushing the limits of mathemati-cal reasoning in open language models. Preprint ,arXiv:2402.03300. Yongliang Shen, Kaitao Song, Xu Tan, Dongsheng Li, Weiming Lu, and Yueting Zhuang. 2023. Hugging-gpt: Solving ai tasks with chatgpt and its friends in hugging face. In Advances in Neural Information Processing Systems , volume 36, pages 38154–38180. Curran Associates, Inc. Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2025. Hybridflow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Sys-tems , EuroSys ’25, page 1279–1297, New York, NY, USA. Association for Computing Machinery. Noah Shinn, Federico Cassano, Edward Berman, Ash-win Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Reflexion: Language agents with verbal rein-forcement learning. Preprint , arXiv:2303.11366. 
+
+10 Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2021. Alfworld: Aligning text and embodied environments for interactive learning. 
+
+Preprint , arXiv:2010.03768. Yifan Song, Da Yin, Xiang Yue, Jie Huang, Sujian Li, and Bill Yuchen Lin. 2024. Trial and error: Exploration-based trajectory optimization for LLM agents. In Proceedings of the 62nd Annual Meet-ing of the Association for Computational Linguistics (ACL) .Mingyu Su, Jian Guan, Yuxian Gu, Minlie Huang, and Hongning Wang. 2025. Trust-region adaptive policy optimization. Preprint , arXiv:2512.17636. Geng Tu, Dingming Li, Jun Huang, and Ruifeng Xu. 2026. Consensus-driven multi-agent cognitive rea-soning for enhancing the emotional intelligence of large language models. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 17751–17759. Hanlin Wang, Chak Tou Leong, Jiashuo Wang, Jian Wang, and Wenjie Li. 2025a. Spa-rl: Reinforcing llm agents via stepwise progress attribution. Preprint ,arXiv:2505.20732. Xinyi Wang, Jinyi Han, Zishang Jiang, Tingyun Li, Ji-aqing Liang, Sihang Jiang, Zhaoqian Dai, Shuguang Ma, Fei Yu, and Yanghua Xiao. 2025b. Hint: Help-ing ineffective rollouts navigate towards effectiveness. 
+
+Preprint , arXiv:2510.09388. Zixuan Wang, Dingming Li, Hongxing Li, Shuo Chen, Yuchen Yan, Wenqi Zhang, Yongliang Shen, Weim-ing Lu, Jun Xiao, and Yueting Zhuang. 2025c. Om-niear: Benchmarking agent reasoning in embodied tasks. Preprint , arXiv:2508.05614. Zixuan Wang, Yuchen Yan, Hongxing Li, Teng Pan, Dingming Li, Ruiqing Zhang, Weiming Lu, Jun Xiao, Yueting Zhuang, and Yongliang Shen. 2026. Milestone-guided policy learning for long-horizon language agents. Preprint , arXiv:2605.06078. Zhiheng Xi, Wenxiang Chen, Boyang Hong, Senjie Jin, Rui Zheng, Wei He, Yiwen Ding, Shichun Liu, Xin Guo, Junzhe Wang, Honglin Guo, Wei Shen, Xiaoran Fan, Yuhao Zhou, Shihan Dou, Xiao Wang, Xinbo Zhang, Peng Sun, Tao Gui, and 2 others. 2024a. Training large language models for reasoning through reverse curriculum reinforcement learning. Preprint ,arXiv:2402.05808. Zhiheng Xi, Yiwen Ding, Wenxiang Chen, Boyang Hong, Honglin Guo, Junzhe Wang, Dingwen Yang, Chenyang Liao, Xin Guo, Wei He, Songyang Gao, Lu Chen, Rui Zheng, Yicheng Zou, Tao Gui, Qi Zhang, Xipeng Qiu, Xuanjing Huang, Zuxuan Wu, and Yu-Gang Jiang. 2024b. Agentgym: Evolv-ing large language model-based agents across diverse environments. Preprint , arXiv:2406.04151. Yufei Xiang, Yiqun Shen, Yeqin Zhang, and Cam-Tu Nguyen. 2024. Retrospex: Language agent meets offline reinforcement learning critic. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP) .Weimin Xiong, Yifan Song, Xiutian Zhao, Wenhao Wu, Xun Wang, Ke Wang, Cheng Li, Wei Peng, and Su-jian Li. 2024. Watch every step! llm agent learning via iterative step-level process refinement. Preprint ,arXiv:2406.11176. Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2023a. Webshop: Towards scalable real-world web interaction with grounded language agents. Preprint , arXiv:2207.01206. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023b. React: Synergizing reasoning and acting in language models. Preprint , arXiv:2210.03629. Siyu Yuan, Zehui Chen, Zhiheng Xi, Junjie Ye, Zhengyin Du, and Jiecao Chen. 2025. Agent-r: Train-ing language model agents to reflect via iterative self-training. Preprint , arXiv:2501.11425. Aohan Zeng, Mingdao Liu, Rui Lu, Bowen Wang, Xiao Liu, Yuxiao Dong, and Jie Tang. 2023. Agenttun-ing: Enabling generalized agent abilities for llms. 
+
+Preprint , arXiv:2310.12823. Kaiyi Zhang, Ang Lv, Jinpeng Li, Yongbo Wang, Feng Wang, Haoyuan Hu, and Rui Yan. 2025a. Stephint: Multi-level stepwise hints enhance reinforcement learning to reason. Preprint , arXiv:2507.02841. Ningyu Zhang, Yunzhi Yao, Jiaxin Qin, Haoming Xu, Yuqi Zhu, Zeping Yu, Mengru Wang, Yuqi Tang, Jia-Chen Gu, Shumin Deng, and Huajun Chen. 2026a. Towards principled knowledge editing methods for large language model reasoning. Nature Machine Intelligence , 8(8):1189–1200. Xichen Zhang, Sitong Wu, Yinghao Zhu, Haoru Tan, Shaozuo Yu, Ziyi He, and Jiaya Jia. 2026b. Scaf-grpo: Scaffolded group relative policy opti-mization for enhancing llm reasoning. Preprint ,arXiv:2510.19807. Xuechen Zhang, Zijian Huang, Yingcong Li, Chenshun Ni, Jiasi Chen, and Samet Oymak. 2025b. Bread: Branched rollouts from expert anchors bridge sft & rl for reasoning. Preprint , arXiv:2506.17211. Zhenru Zhang, Chujie Zheng, Yangzhen Wu, Beichen Zhang, Runji Lin, Bowen Yu, Dayiheng Liu, Jin-gren Zhou, and Junyang Lin. 2025c. The lessons of developing process reward models in mathematical reasoning. Preprint , arXiv:2501.07301. Zijing Zhang, Ziyang Chen, Mingxiao Li, Zhaopeng Tu, and Xiaolong Li. 2025d. Rlvmr: Reinforce-ment learning with verifiable meta-reasoning re-wards for robust long-horizon agents. Preprint ,arXiv:2507.22844. 
+
+11 Congmin Zheng, Xiaoyun Mo, Xinbei Ma, Qiqiang Lin, Yin Zhao, Jiachen Zhu, Xingyu Lou, Jun Wang, Zhaoxiang Wang, Weiwen Liu, Zhuosheng Zhang, Yong Yu, and Weinan Zhang. 2026. Adap-tive milestone reward for gui agents. Preprint ,arXiv:2602.11524. Shuyan Zhou, Frank F. Xu, Hao Zhu, Xuhui Zhou, Robert Lo, Abishek Sridhar, Xianyi Cheng, Tianyue Ou, Yonatan Bisk, Daniel Fried, Uri Alon, and Gra-ham Neubig. 2024a. Webarena: A realistic web envi-ronment for building autonomous agents. Preprint ,arXiv:2307.13854. Yifei Zhou, Andrea Zanette, Jiayi Pan, Sergey Levine, and Aviral Kumar. 2024b. Archer: Training language model agents via hierarchical multi-turn rl. Preprint ,arXiv:2402.19446. 
+
+12 A Diagnostic Protocol Details 
+
+In-range set and mismatch ratio. Let D denote the guidance-depth grid and T the diagnostic task set. For each (i, d ) ∈ T × D , we estimate the per-depth success rate by enumeration with M = 32 
+
+independent rollouts: 
+
+ˆpi(d) = 1
+
+M
+
+> M
+
+X
+
+> m=1
+
+1[rollout m at depth d succeeds ] .
+
+(8) Following Florensa et al. (2018), the in-range set of task i is the subset of depths whose estimated suc-cess rate lies in the just-learnable band [0 .4, 0.6] :
+
+Ri = { d ∈ D : ˆ pi(d) ∈ [0 .4, 0.6] } . (9) Depths with ˆpi(d) < 0.4 are under-guided and those with ˆpi(d) > 0.6 are over-guided . Given a scheduler that assigns depth di to each task i,the mismatch ratio is the fraction of tasks placed outside their in-range set: 
+
+ρ = 1
+
+|T | 
+
+X
+
+> i∈T
+
+1[di /∈ R i] . (10) 
+
+ρ = 0 corresponds to every task receiving an in-range depth, and ρ = 1 corresponds to every as-signment being under- or over-guided. 
+
+Shared-depth schedulers. A shared scheduler outputs one depth dt per training step that is ap-plied to every task in the batch, so the per-task assignment is di = dt for all i. The stacked bars in Figure 2(a) report the empirical fraction of assign-ments in each of the three categories defined above: under-guided ( ˆpi(dt) < 0.4), in-range ( dt ∈ R i), and over-guided ( ˆpi(dt) > 0.6). 
+
+Mismatch across training checkpoints. The di-agnostic in Figure 2(a) is computed at step 50 . To verify that shared-depth mismatch is not specific to this checkpoint, we repeat the protocol at five addi-tional Qwen2.5-1.5B / ALFWorld checkpoints (Ta-ble 4). The Fix-step baseline, which holds dt con-stant within 20 -step windows, exceeds 48% mis-match at every checkpoint, and the two step-decay schedules (Linear, Step-dec) stay near 50% . Target-acc, the only shared scheduler with batch-level feedback, achieves the lowest mismatch ( 39 .8% 
+
+on average) but still misses the in-range band on roughly two in five tasks. The structural mismatch of shared-depth scheduling thus persists across the training trajectory and is not a step-50 artifact.                                          
+
+> Table 4: Mismatch ratio ρof shared-depth schedulers across five training checkpoints on Qwen2.5-1.5B / ALFWorld. nis the number of diagnostic tasks at that step.
+> Step nFix-step Linear Step-dec Tar-acc
+> 10 28 67 .942 .942 .932 .120 28 64 .339 .339 .335 .740 28 75 .057 .157 .150 .080 58 48 .355 .255 .241 .4160 45 71 .155 .655 .640 .0
+> Avg —65 .350 .050 .039 .8
+
+Probing schedulers. A probing scheduler sam-ples Mprobe rollouts per visited depth on a can-didate subset D′ ⊆ D , forms the noisy estimate 
+
+˜p(Mprobe ) 
+
+> i
+
+(d), and outputs 
+
+di = arg min  
+
+> d∈D ′
+
+˜p(Mprobe ) 
+
+> i
+
+(d) − 0.5 . (11) 
+
+D′ is the full grid for Enumeration and the subset visited during the search for Binary Search. The output di is judged against the reference in-range set Ri via the mismatch ratio defined above. Fig-ure 2(b) varies Mprobe ∈ { 2, 4, 8, 16 , 32 }. Sched-uler implementations follow the hint-based RL baselines in Table 7. 
+
+Agent-G 2. For Agent-G 2 in Figure 2(b), we draw 
+
+di ∼ N (μi, σ 2 
+
+> i
+
+) using the schedule parameters reached at step 50 (5 independent draws per task) and report the mismatch ratio averaged over draws and over tasks. No probing rollouts are performed: 
+
+μi and σi are read from the rollouts already col-lected for the GRPO update at that step. 
+
+Rollout-cost axis. The horizontal axis in Fig-ure 2(b) reports |D ′| · Mprobe /R , where R = 8 
+
+is the GRPO rollout budget per task. Agent-G 2 is plotted at 1× because its schedule is refreshed from these R rollouts without any additional probing. 
+
+Reference depth d⋆i . The per-task reference depth 
+
+d⋆i = arg min  
+
+> d∈D
+
+|ˆpi(d) − 0.5|, (12) with ties broken in favor of the smaller depth, is used only in Figure 3(b) to align profiles via ∆d =
+
+d−d⋆i . It plays no role in the mismatch computation of Section 2. 
+
+Gaussian fit. For Figure 3(b), we bin pairs by relative depth ∆d with width 0.1 and fit 
+
+a exp( −∆d2/2σ2) to the binned mean Bernoulli variance by least squares. 13 Table 5: Agent-G 2 hyperparameters. Shared across ALFWorld and WebShop unless noted. Hint-based RL baselines reuse the Policy optimization , Rollout , and 
+
+Training schedule blocks.                                                       
+
+> Hyperparameter Symbol Value
+> Agent-G 2-specific
+> Global baseline step ∆0.1
+> Cluster EMA rate α0.2
+> Center scale λ1.0
+> Variance scale γ1.0
+> Variance floor σmin 0.1
+> Aux. loss weight η0.5
+> Target success rate ptarget 0.5
+> Initial baseline μ(0) global 0.8
+> Difficulty clusters K3
+> Policy optimization
+> Optimizer –AdamW Peak learning rate –1×10 −5
+> LR schedule –cosine, 10% warmup AdamW (β1, β 2)–(0 .9,0.999)
+> Weight decay –0.01
+> GRPO clip ratio ϵ0.2
+> KL penalty βKL 0.01
+> Precision –bfloat16
+> Rollout
+> Tasks per step |B| 16
+> Rollouts per task R8
+> Max prompt length –7000
+> Max response length –512
+> Temperature (train/eval) –1.0/0.4
+> Training schedule
+> Steps (ALFWorld) –200
+> Steps (WebShop) –150
+
+Gaussian fit across training. Figure 3(b) reports the fit at step 50 . To check that the Gaussian shape is not specific to this checkpoint, we partition the training trajectory into three non-overlapping win-dows, pool aligned pairs (∆ d, p i(d)(1 − pi(d))) 
+
+within each window to enlarge the per-window sam-ple size and reduce statistical noise in the fit, and refit the same form (Table 6). The fit quality stays high across all three windows ( R2 ∈ [0 .89 , 0.94] ), and the fitted width σ drifts only mildly from 0.198 
+
+early to 0.231 late, consistent with a gradually widening informative band as the policy improves and with the upward trend of the per-cluster σk in Figure 6(b). The two-parameter Gaussian thus cap-tures the informativeness profile throughout train-ing, not only at the mid-training checkpoint used in the figure. 
+
+Choice of Gaussian for the sampler. Our choice of Gaussian for the sampler in Section 3 rests on two design considerations rather than fit quality alone. First, the Gaussian provides a simple two-
+
+Table 6: Gaussian fit of the aligned informativeness profile across training windows on Qwen2.5-1.5B / ALFWorld. Each window pools (∆ d, p i(d)(1 − pi(d))) 
+
+pairs collected within the listed checkpoint range; n
+
+counts pairs entering the least-squares fit.                
+
+> Training Stage σR2n
+> Early (ckpts 0–50 )0.198 0.906 116
+> Mid (ckpts 50 –100 )0.206 0.888 146
+> Late (ckpts 100 –150 )0.231 0.936 109
+
+moment parameterization whose mean and vari-ance align directly with the two statistics that batch rollouts naturally produce: μi is driven by the per-cluster empirical success rate, and σi by the per-cluster success-rate variance. Other symmetric families require additional shape parameters (for instance, the degrees of freedom of Student-t or the shape exponent of generalized normal) that cannot be read directly from rollout aggregates. Second, Gaussian sampling on the bounded ratio ri ∈ [0 , 1] 
+
+admits a closed-form truncated form and is nu-merically stable; heavy-tailed alternatives such as Cauchy produce unbounded magnitudes that would require ad-hoc clipping. The ablation in Table 3 confirms that on top of these design considerations, replacing the Gaussian with a variance-matched uniform distribution over the same band drops over-all success by 7.0 points and Long-horizon success by 13 .9 points. 
+
+B Implementation Details 
+
+Hyperparameters. Table 5 lists the full Agent-G2 configuration. On both benchmarks we build on the GiGPO codebase (Feng et al., 2025), adopting its training recipe for shared hyperparameters and inheriting its train/validation/test splits. 
+
+Baseline configurations. Table 7 summarizes the trained baselines; prompting baselines run inference-time without further specification. We use the authors’ public implementations with default hyperparameters for GiGPO, BEACON, StepHint, and TraPO. 
+
+Expert trajectory source. The expert tra-jectories used by Laux are drawn from the same ALFWorld and WebShop expert pool as RLVMR (Zhang et al., 2025d) and ETO (Song et al., 2024), so the underlying expert data is iden-tical across the three methods. The difference lies in usage: Agent-G 2 treats the prefix tokens only as a token-level imitation target inside the joint ob-14 0.00 0.25 0.50 0.75 1.00                             
+
+> (i) t= 5 —Deep init
+> 01234
+> Density
+> Short Medium Long
+> 0.00 0.25 0.50 0.75 1.00
+> (ii) t= 30 —Clusters separate
+> 0.00 0.25 0.50 0.75 1.00
+> (iii) t= 75 —Spreads peak
+> 0.00 0.25 0.50 0.75 1.00
+> (iv) t= 200 —Converged
+
+Figure 7: Four-phase snapshot of the per-cluster Gaussian schedule on Qwen2.5-1.5B / ALFWorld. Each panel shows the density N (μk, σ 2
+
+> k
+
+) for the K=3 horizon clusters (Short, Medium, Long) at one training step. Their batch-weighted mixture yields the aggregate in Figure 6(b). Table 7: Baseline configurations. Hint-based RL base-lines reuse the training blocks of Table 5; only the depth-assignment rule differs. 
+
+Method Configuration 
+
+Imitation 
+
+Full SFT LR 1×10 −5, |B| =32 , 2 epochs 
+
+RL without hints 
+
+GRPO Table 5 with di=0 
+
+GiGPO authors’ default BEACON authors’ default 
+
+Hint-based RL: schedule 
+
+Linear linear, 1.0 → 0.0
+
+Cosine cosine, 1.0 → 0.0
+
+Step step decay 0.1 / 20 steps Target-acc online to batch-acc 0.8
+
+Hint-based RL: search 
+
+Binary Search O(log |D| ) probes per task Enumeration exhaustive over D
+
+Hint-based RL: end-to-end 
+
+StepHint authors’ default TraPO authors’ default 
+
+jective, without introducing any auxiliary network or additional supervision signal. The gains over RLVMR and ETO in Table 1 therefore reflect al-gorithmic differences rather than any advantage in expert-data access. 
+
+Hardware and framework. We implement train-ing in the verl framework (Sheng et al., 2025) and run all experiments on a single node with 8
+
+NVIDIA H800 GPUs; a Qwen2.5-1.5B-Instruct training run on ALFWorld ( 200 gradient steps) takes approximately 10 hours. 
+
+Per-cluster training dynamics. Figure 7 sam-ples the per-cluster Gaussian schedule N (μk, σ 2
+
+> k
+
+)
+
+at four training steps that mark distinct phases of training. At t=5 (saturation ), μk stays near 1 on every cluster ( 0.98 , 1.00 , 1.00 for Short, Medium, Long) with σk ≈ 0.11 , because the policy cannot yet reach learnable states unaided. At t=30 (sep-aration ), the means split by horizon ( 0.19 , 0.35 ,
+
+0.68 ) and σk widens with the cluster variance Vk.At t=75 (peak spread ), the means contract toward 
+
+0 on all clusters while σk reaches its peak ( 0.15 ,
+
+0.21 , 0.23 ); the sampler draws a wide neighbor-hood around the shallow center to keep harder tasks in the just-learnable band. By t=200 (collapse ), 
+
+μk = 0 on every cluster and σk recedes toward 
+
+σmin =0 .1, with only Long retaining a wider spread (0.16 ), consistent with the slower convergence of long-horizon tasks. Figure 8 plots the full (μk, σ k)
+
+trajectories across all 200 training steps for the same three clusters. 0.00 0.25 0.50 0.75 1.00 
+
+k1
+
+> μt
+> 0.10 0.15 0.20 0.25
+> σt
+> 0.00 0.25 0.50 0.75 1.00
+
+k2    
+
+> 0.10 0.15 0.20 0.25 050 100 150 200
+> Training step
+> 0.00 0.25 0.50 0.75 1.00
+
+k3    
+
+> 050 100 150 200
+> Training step
+> 0.10 0.15 0.20 0.25
+
+Figure 8: Per-cluster schedule trajectories on Qwen2.5-1.5B / ALFWorld. Each row shows one hori-zon cluster ( k1 Short, k2 Medium, k3 Long); columns plot μt and σt over training steps. 
+
+15 Table 8: Clustering design ablation on Qwen2.5-1.5B / ALFWorld (success rate %). Length-quantile bins tasks by horizon; random samples a partition uniformly. ±                 
+
+> values are 5-seed standard deviations. K=1 and length-quantile K=3 are reproduced from Table 3.
+> Clustering signal KAll
+> None 189 .1
+> Length quantile 395 .3±2.3
+> Length quantile 596 .5±1.9
+> Length quantile 10 86 .2
+> Random 389 .4
+
+Clustering design. Table 8 sweeps the cluster count for length-quantile clustering and adds a random-assignment control on Qwen2.5-1.5B / ALFWorld. Length-quantile clustering is stable in the K=3 –
+
+5 range: K=3 (95 .3±2.3) and K=5 (96 .5±1.9)overlap within run-to-run noise, so the difference between them is not significant under our seed bud-get. Pushing to K=10 thins each cluster to under two tasks per batch under |B| =16 and drops accu-racy by 9.1 points relative to K=3 , as per-cluster sample size becomes inadequate for stable EMA estimation. Random assignment at K=3 comes within 0.5 points of K=1 , so the gain from clus-tering relies on alignment with difficulty, not on partitioning itself. We pick length as the alignment signal for two reasons. (i) Length correlates with the difficulty of reaching the terminal reward without guidance, so it accelerates the convergence of (Ak, V k) relative to a difficulty-orthogonal signal. (ii) Length needs no task-type annotation or semantic embedding, so the same rule applies to both benchmarks. We fix K=3 across both ALFWorld and Web-Shop without per-benchmark tuning, because it matches the Short / Medium / Long taxonomy of Section 4.1 and keeps per-cluster sample size suffi-cient for stable EMA under |B| =16 . The 6.2-point 
+
+K=1 vs. K=3 gap in Table 3 bounds what a richer signal could recover; in benchmarks where horizon and difficulty decouple, additional signals beyond length may help. 16

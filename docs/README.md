@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-24</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 15 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 40 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>29</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-24 20:34:16 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-28 04:14:43 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日阅读15篇论文，精读6篇，重点关注两篇9.0分的工作。最值得看的是长期任务智能体的加权记忆树，以及离线强化学习的策略解耦提取。建议优先精读这两篇高分论文，理解其核心方法。</p>
+<p>今日精读29篇、速读11篇，重点聚焦多模态智能体记忆与检索增强生成。最值得关注的是满分论文GraphMemix的查询感知证据森林，以及MCite-RL用强化学习提升多模态RAG引用可靠性。建议优先精读这两篇，再速览GUI智能体的长度感知对比学习与持续蒸馏方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">29 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Weighted Memory Tree: Remembering What Matters for Long-Horizon LLM Agents">Weighted Memory Tree: Remembering What Matters for Long-Horizon LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Decoupling Policy Extraction for Offline Reinforcement Learning">Decoupling Policy Extraction for Offline Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="ForeDreamer: A Self-Evolving Dual-Agent Memory Architecture for Future Event Prediction">ForeDreamer: A Self-Evolving Dual-Agent Memory Architecture for Future Event Prediction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory">GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="MCite-RL: Towards Reliable Multimodal RAG via Citation-enhanced Agentic Reinforcement Learning">MCite-RL: Towards Reliable Multimodal RAG via Citation-enhanced Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="HiDiffTIR: Hierarchical Difficulty-Aware Policy Optimization for Multi-Turn Tool-Integrated Reasoning">HiDiffTIR: Hierarchical Difficulty-Aware Policy Optimization for Multi-Turn Tool-Integrated Reasoning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>29</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraniKV: Asymmetric Granularity KV-Cache Paging for Multi-Agent Systems with Long Shared Prefix">GraniKV: Asymmetric Granularity KV-Cache Paging for Multi-Agent Systems with Long Shared Prefix</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Mixing of Policies from Searching and Policies from Learning">Adaptive Mixing of Policies from Searching and Policies from Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Why2Speak: Faithful Reasoning for Abstaining Action Policies">Why2Speak: Faithful Reasoning for Abstaining Action Policies</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Beyond Success and Failure: Length-Aware Contrastive Learning for GUI Agents">Beyond Success and Failure: Length-Aware Contrastive Learning for GUI Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="CIDER: Continual Interactive Distillation for Embodied Reinforcement Learning">CIDER: Continual Interactive Distillation for Embodied Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="OptiMAS: Automatically Optimize Multi-Agent System">OptiMAS: Automatically Optimize Multi-Agent System</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>9</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
 </div>
 
