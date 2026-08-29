@@ -4,6 +4,13 @@
     <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
   </div>
   <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-08-28">08.28</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">区间日报可正常点开</strong>
+      <span class="dpr-home-notice-entry-summary">长时间窗日报会挂在结束日那天的日历格上，此前点击没有反应，现在可以正常展开查看。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
     <time class="dpr-home-notice-date" datetime="2026-07-20">07.20</time>
     <div>
       <strong class="dpr-home-notice-entry-title">反馈功能上线</strong>
@@ -41,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-28</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 40 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>29</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-28 04:14:43 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 03:01:44 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读29篇、速读11篇，重点聚焦多模态智能体记忆与检索增强生成。最值得关注的是满分论文GraphMemix的查询感知证据森林，以及MCite-RL用强化学习提升多模态RAG引用可靠性。建议优先精读这两篇，再速览GUI智能体的长度感知对比学习与持续蒸馏方向。</p>
+<p>今日共推荐17篇论文，精读6篇，重点关注自动驾驶课程学习与智能体长期记忆优化。最值得精读的是《Scaling Curriculum Learning For Autonomous Driving》（9.0分）和《The Retriever Should Remember》（9.0分），前者聚焦自动驾驶训练策略，后者解决智能体记忆检索难题。建议优先阅读这两篇高分论文，可结合速读中的社交导航与世界模型论文拓宽视角。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">29 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory">GraphMemix: Query-Aware Evidence Forests for Long-Term Multimodal Agent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="MCite-RL: Towards Reliable Multimodal RAG via Citation-enhanced Agentic Reinforcement Learning">MCite-RL: Towards Reliable Multimodal RAG via Citation-enhanced Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="HiDiffTIR: Hierarchical Difficulty-Aware Policy Optimization for Multi-Turn Tool-Integrated Reasoning">HiDiffTIR: Hierarchical Difficulty-Aware Policy Optimization for Multi-Turn Tool-Integrated Reasoning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Scaling Curriculum Learning For Autonomous Driving">Scaling Curriculum Learning For Autonomous Driving</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Retriever Should Remember: Experience-Amortized Reranking for Long-Term Agent Memory">The Retriever Should Remember: Experience-Amortized Reranking for Long-Term Agent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="From State to Action: OODA-Tool for Reliable Multi-Turn Tool Use">From State to Action: OODA-Tool for Reliable Multi-Turn Tool Use</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>29</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +94,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Beyond Success and Failure: Length-Aware Contrastive Learning for GUI Agents">Beyond Success and Failure: Length-Aware Contrastive Learning for GUI Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="CIDER: Continual Interactive Distillation for Embodied Reinforcement Learning">CIDER: Continual Interactive Distillation for Embodied Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="OptiMAS: Automatically Optimize Multi-Agent System">OptiMAS: Automatically Optimize Multi-Agent System</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Advantage-Driven Explicit Memory for Social Navigation">Advantage-Driven Explicit Memory for Social Navigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="HypoForge: A Self-Improving Multi-Agent Framework for Automated Hypothesis Generation and Testing via Scientific Skill Learning">HypoForge: A Self-Improving Multi-Agent Framework for Automated Hypothesis Generation and Testing via Scientific Skill Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Predicting Consequences and Reinforcing Navigation Policies with Latent World Models">Predicting Consequences and Reinforcing Navigation Policies with Latent World Models</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>

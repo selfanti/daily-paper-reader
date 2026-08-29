@@ -1,0 +1,526 @@
+Title: psRL: Efficient Training for Agentic AI via Training-Time Prefix Sharing
+
+URL Source: https://arxiv.org/pdf/2608.25683v1
+
+Published Time: Thu, 27 Aug 2026 00:55:13 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# psRL: Efficient Training for Agentic AI via Training-Time Prefix Sharing 
+
+## Mianjie Yu 1, Zizhao Mo 1, Huanyu Qu 1, Zhirong Qian 1, Huanle Xu 1,† 
+
+## Cen Li 2, Zifeng Zhao 2, Zhi Zhou 2, Jinhua Zhou 2, Jun Xie 2, Chengzhong Xu 1,† 1University of Macau 2Independent Researchers 
+
+## Abstract 
+
+In modern agentic AI training, the system bottleneck is shift-ing from rollout to update. Emerging sampling strategies such as tree-structured and step-wise RL greatly increase training sample volume while incurring relatively low mar-ginal rollout cost, causing the update phase to dominate the end-to-end execution time. Crucially, this shift exposes a new optimization opportunity, as production traces reveal substantial prefix redundancy across training samples. In this paper, we propose psRL ( prefix sharing for RL ), a new training system for agentic AI designed to exploit prefix redundancy among training samples. Leveraging the global visibility and data immutability inherent to the update phase, psRL achieves efficient workload scheduling and memory management for distributed training. Specifically, psRL intro-duces two novel prefix-sharing mechanisms that enable flex-ible, fine-grained workload distribution across GPU workers, simultaneously optimizing prefix reuse and achieving load balancing. Moreover, psRL implements a new underlying KV cache manager that facilitates adaptable block-size allocation and dynamic KV caching, maximizing memory utilization while maintaining a high prefix hit rate. Evaluations using production traces demonstrate that psRL outperforms exist-ing systems by up to 5.2 × in throughput. The source code will be publicly available soon .
+
+## 1 Introduction 
+
+Agentic AI has fundamentally enhanced the reasoning ca-pabilities of Large Language Models (LLMs), enabling them to tackle intricate tasks [1, 2, 7, 12, 28, 46, 60, 63]. Their effi-ciency stems primarily from advanced Reinforcement Learn-ing (RL) [33, 34, 36, 52]. A standard RL training pipeline com-prises three distinct phases: rollout , reward , and update . In the rollout phase, the model interacts with an environment to generate sequences, or trajectories, for a specific task. Subse-quently, the reward phase evaluates action quality, assigning scalar scores to these trajectories. Finally, the update phase leverages the generated samples and corresponding reward signals to refine model parameters via gradient descent. Under traditional linear, trajectory-wise sampling, autore-gressive generation dominates end-to-end cost, positioning 
+
+> †Corresponding authors: Huanle Xu ( huanlexu@um.edu.mo ) and Chengzhong Xu ( czxu@um.edu.mo ).
+
+rollout latency as the primary optimization target. In mod-ern RL training, however, the system bottleneck is shifting from rollout to update due to a rapidly changing workload landscape. Specifically, to improve sample diversity and mit-igate reward sparsity, recent RL pipelines have increasingly adopted tree-structured sampling strategies [13, 15, 17, 21] and step-wise RL [8, 11, 25, 40, 45], where parallel exploration is launched from shared decision prefixes. While these ap-proaches significantly increase the number of training sam-ples derived from a single trajectory and often enhance con-vergence quality—for instance, in industrial Digital Twin Net-work (DTN) operations agent, step-wise RL achieves nearly 
+
+2× higher convergence performance than linear trajectory-wise RL—they expand the solution space and training sample volume at low marginal rollout cost, yet introduce a severe and often overlooked system overhead. Our analysis of pro-duction workloads and internal benchmarks reveals a funda-mental shift in the bottleneck: update overhead has grown by more than 5× and now accounts for over 50 % of end-to-end RL training time, dominating overall system latency. Fortunately, this algorithmic shift conceals a significant optimization opportunity: generated training samples exhibit high prefix redundancy. This phenomenon is intrinsic to the sampling methodologies themselves. In tree-structured RL, multiple parallel branches diverge from a common parent node, resulting in distinct samples sharing identical extensive prefixes. Similarly, step-wise RL creates a recursive data de-pendency, where a sample at step 𝑡 essentially encompasses the token sequence of step 𝑡 -1. Our analysis of both open-source and industrial production traces reveals that prefix matching rates frequently exceed 90 % in agentic workloads. This indicates that current training systems [27, 32, 56] treat-ing samples as isolated sequences incur massive waste by repeatedly calculating and storing identical data segments. Drawing inspiration from the success of prefix sharing in inference systems [19, 22, 50, 59], we propose to adapt and extend these primitives to the training domain. How-ever, realizing this optimization within existing infrastruc-tures presents two primary challenges. First, efficient work-load scheduling requires increasing the prefix match rate while simultaneously achieving load balancing—a fundamen-tally difficult combination. Disparities in workload across micro-batches, driven by varying sequence lengths and the extent of prefix sharing, introduce severe pipeline bubbles. 
+
+> 1arXiv:2608.25683v1 [cs.DC] 26 Aug 2026
+
+Second, traditional memory management poses a critical bottleneck. Allocating KV states with fixed-size blocks fun-damentally mismatches the highly variable lengths of reused prefixes, forcing a strict trade-off between memory access overhead and memory consumption overhead. Moreover, existing caching policies struggle to balance minimizing the KV state footprint with maintaining a high prefix hit rate. In this paper, we introduce psRL to enable effective prefix sharing and address the challenges in agentic RL training. The architecture of psRL leverages a fundamental character-istic of training: the training phase exhibits two key prop-erties— Global Visibility and Data Immutability . Since the entire input dataset is known upfront and its distribution remains static within each iteration, psRL unlocks a broad design space for optimization across the system stack. To tackle the challenges of workload scheduling, psRL proposes two novel prefix-sharing mechanisms: inter-batch and self-sequence sharing. Inter-batch sharing allows se-quences with shared prefixes to be distributed across differ-ent micro-batches while reusing the computed KV states, thereby providing high scheduling flexibility. Self-sequence sharing partitions a single long sequence into multiple con-tiguous chunks assigned to different micro-batches. By en-suring that suffix tokens reuse the KV states of prefix to-kens, this mechanism facilitates fine-grained distribution of the computational load. Building on these two mechanisms, psRL implements a hierarchical workload distribution strat-egy. Globally, psRL constructs semantic groups consolidating sequences with identical prefixes, employing efficient algo-rithms to partition them into evenly distributed workloads across training workers. Within each worker, psRL utilizes token-wise micro-batching to slice sequences at the token level, significantly reducing pipeline bubbles caused by in-ternal workload imbalances. psRL also designs an adaptive KV cache manager with two new mechanisms that effectively overcome the bottlenecks of traditional memory management. Specifically, the Adap-tive Block Allocation mechanism allocates variable-sized contiguous memory blocks via analyzing the precise lengths of shared prefixes, thereby eradicating internal fragmenta-tion [19, 59] and improving memory access efficiency. Fur-thermore, to reduce the KV cache memory footprint while maintaining a high prefix sharing rate, the Dynamic Block Caching mechanism employs a strict Just-in-Time policy. By analyzing the prefix tree constructed during rollout, this policy proactively caches KV blocks required for future oper-ations and promptly evicts unreferenced blocks, maximizing system throughput and computational efficiency. We implement psRL on top of veRL [38], with the primary modifications made to Megatron-LM [27], the underlying training engine used in the RL update phase. Notably, we extend the scope of our prefix sharing and optimization to accelerate the reference model forward passes and the com-putation of old policy log-probabilities , both of which are critical in RL pipelines. We also conduct evaluations using real-world production traces from industry agentic work-loads, comparing psRL against state-of-the-art training sys-tems. Experimental results demonstrate that psRL achieves up to 5.2 × improvement in training throughput. To summa-rize, we have made the following contributions in this paper: 
+
+• We identify the fundamental shift in Agentic AI train-ing towards update-bound workloads and quantita-tively demonstrate the high prefix redundancy inher-ent in tree-structured and step-wise RL. 
+
+• We design two novel prefix-sharing mechanisms that enable flexible, fine-grained workload distribution across GPU workers, simultaneously optimizing pre-fix reuse and achieving load balancing. 
+
+• We implement a new underlying KV cache manager that facilitates adaptable block-size allocation and dy-namic KV caching, maximizing memory utilization while maintaining a high prefix hit rate. 
+
+## 2 Background and Motivation 
+
+2.1 Agentic Training Pipelines 
+
+The training of Agentic AI often operates as an iterative RL process consisting of multiple repeated cycles [33, 34, 36, 52, 57, 58]. Each cycle typically comprises three distinct stages: 
+
+Rollout: The LLM functions as a policy network, generating responses or action trajectories from input prompts. This phase performs standard batched LLM inference, producing token sequences via autoregressive decoding. 
+
+Reward: The generated responses are evaluated to assign scalar scores. This scoring is typically performed using either rule-based functions or learned reward models that approxi-mate human preferences. 
+
+Update: Leveraging the generated data and rewards, the system calculates the loss and performs backpropagation. This involves computing parameter gradients and applying optimizer steps to update weights of LLMs. 
+
+2.2 The Rollout-Centric Optimization Paradigm 
+
+Following the standard training pipelines introduced above, prior system optimizations in RLHF and agent training [5, 6, 9, 14, 29, 30, 41, 42, 47, 61] overwhelmingly target the rollout phase. This focus stems from a fundamental characteristic of traditional RL workloads: they predominantly rely on short, independent, and linear trajectories. Under these regimes, the sequential, memory-bandwidth-bound nature of autore-gressive token generation emerges as the primary bottleneck dictating end-to-end training latency. To alleviate genera-tion overhead, Kimi-K2 [42] employs aggressive trajectory truncation, while StreamRL [61] tackles load imbalance via dynamic batch resizing. CoPRIS [30] bounds these inefficien-cies by terminating generation once sufficient samples are gathered and recycling unfinished trajectories for subsequent iterations. Building on this speculative decoding (SD) [20],                
+
+> 2Sample 0
+> Prompt Step Step Step ……
+> Prompt Step Step Step ……
+> Step ……
+> Single Sample
+> Step
+> Sample 1
+> Step …… Sample N
+> a) Linear Trajectory-wise RL b) Tree-structured RL
+> Prompt Step Step Step ……
+> Sample 0 Sample 1 Sample N
+> c) Step-wise RL
+> Step = LLM Inference + Agent Action + Observation from Environment
+> Prompt Step Step Step ……
+> Step ……
+> Step Step ……
+> d) Tree-Step RL
+> Sample 1 Sample 0 Sample N-2 Sample N-1 Sample N
+
+Figure 1. Evolution of data sampling in agentic training. a) Linear Trajectory-wise RL treats full interaction sequences as single atomic samples. To improve sample efficiency and reward density, modern workloads shift to structured paradigms: b) Tree-structured RL explores parallel branches, c) Step-wise RL decomposes trajectories into granular, cu-mulative samples, and d) Tree-Step RL combines both. SpecActor [6] deploys a lightweight draft path to rapidly pro-pose tokens, ensuring algorithmic fidelity through parallel verification against the target model. ReSpec [5] dynami-cally tunes SD configurations and continuously evolves the drafter via knowledge distillation. Furthermore, systems like RhymeRL [14] and Seer [29] exploit similarity of samples to maximize rollout throughput by SD. 
+
+The Architectural Blind Spot. While these techniques suc-cessfully optimize the generation step, they are intrinsically predicated on the assumption of isolated and linear sam-ple trajectories. However, the emergence of modern agentic workloads fundamentally shatters this assumption, render-ing these rollout-centric optimizations insufficient. 
+
+2.3 Status Quo: The Shift to Structured RL Sampling 
+
+The pursuit of higher algorithmic accuracy and sample effi-ciency has driven the adoption of complex, structured sam-pling strategies in industry. As illustrated in Fig. 1, we classify agent training workloads into four distinct patterns. 
+
+a) Linear trajectory-wise RL. This is the foundational paradigm used in standard RLHF. The algorithm treats the entire interaction trajectory—comprising multiple steps of thoughts, actions, and observations—as a single, atomic train-ing sample. However, this approach is plagued by the sparse reward problem and high sampling overhead [15, 17, 21], as each sample requires a full, independent rollout generation. 
+
+b) Tree-structured RL. To address sample inefficiency, Tree-structured sampling (e.g., ByteDance’s TreePO [21], TreeRL [15]) introduces parallel branching at critical deci-sion points. In this paradigm, each complete path from the root to a leaf node constitutes a distinct training sample. By exploring multiple branches from a shared parent node, this mode leverages prefix reuse to amortize the rollout cost. 
+
+c) Step-wise RL. To tackle reward sparsity, Step-wise meth-ods (e.g., Microsoft’s LightningRL [25], DeepMind’s SWiRL [11], SenseTime’s StepSearch [45], GiGPO [8], rLLM [40]) decom-pose a long trajectory into granular step-wise samples. Each step is scored and treated as an independent training unit, providing dense supervision signals. Consequently, every partial trajectory—extending from the root to any interme-diate node—serves as an independent training sample. To further optimize context length and computational cost, sev-eral variants exist: 1) Step w/ Remove Think (e.g., MiniWoB, FrozenLake): Removes internal "thought" chains from the history before feeding into the next step. 2) Step w/ Summary 
+
+(e.g., Search [18], ALFWorld [39]): Compresses the historical context into a summary before feeding into the next step. 
+
+d) Tree-Step RL. Combining the benefits of parallel ex-ploration and dense supervision, Tree-Step methods (e.g., SPO [13], Alibaba’s Tree-GRPO [17]) represent the state-of-the-art agentic training. This mode performs parallel branch-ing at each step while simultaneously assigning rewards to individual actions. As a result, every node in the generated search tree (spanning from the root to any leaf or intermedi-ate node) constitutes an independent training sample. 
+
+The Algorithmic Superiority of Structured Sampling. 
+
+The industry-wide transition to structured sampling is fun-damentally driven by its superior model performance in complex tasks. As demonstrated in Fig. 2a, when training an industrial DTN agent built upon Qwen3-235 [31] (detailed in Sec. 7.1.2), the Step-wise and Tree-Step paradigm [8, 17] drastically outperforms the traditional Trajectory-wise base-line [36]. Because traditional RL defers the reward signal to the end of a long interaction sequence, it suffers from severe credit assignment issues; consequently, its reward fluctuates heavily and stagnates around 0.5. In contrast, by explicitly decomposing the trajectory and providing dense supervision, the Step-wise and Tree-Step modes enable highly stable con-vergence, achieving a nearly 1 .8× higher final reward within 60 iterations. 
+
+2.4 The Bottleneck Shift: From Rollout-Bound to Update-Bound 
+
+While unlocking substantial algorithmic gains, the struc-tured sampling strategies introduce a severe and largely overlooked cost on the training pipeline. In particular, the exponential increase in generated training samples funda-mentally reshapes the performance bottleneck of agent train-ing. To quantify this impact, we conduct a comprehensive experiment across diverse production-grade agents, includ-ing Search [18], WebShop [49], ALFWorld [39], and a large-scale industrial DTN Agent. We evaluate multiple represen-tative sampling strategies: linear trajectory-wise RL (Tra-jectory) [38], tree-structured RL (Tree) [15], step-wise RL    
+
+> 3025 50 Iterations 0.5 1.0 Reward Score
+> 1.8 ×
+> Traj. Step Tree-Step
+
+(a) Reward convergence. Traj. Step Step-S Step-RT Tree 0200 400 Time (s)                        
+
+> 55 32 26 32 40 32 51 50 51 41
+> Search
+> Traj. Step Step-S Step-RT 0100 200
+> 70 32 38 31 21 57 40 58
+> WebShop
+> Traj. Step Step-S Step-RT 01K 2K
+> 53 30 43 30 31 48 43 48
+> ALFWorld
+> Traj. Step Step-RT Tree-Step 01K
+> 72 39 37 40 48 47 47
+> DTN Agent
+> Rollout Log old prob Reference Update Other
+
+(b) Breakdown of end-to-end RL time across diverse agent workloads (percentages shown inside the bars). 
+
+Figure 2. The algorithmic benefits and system bottlenecks of structured agentic sampling. a) Unlike traditional Trajectory-wise RL, Step-wise sampling resolves credit assignment issues, achieving significantly higher final rewards. b) However, shifting to structured topologies fundamentally alters the system workload, inflating Update phase latency due to massive samples. 
+
+Table 1. Prefix Match Rate (PMR) of sample data across diverse agent workloads                                       
+
+> Agent Search WebShop ALFWorld DTN Agent Mode Traj. Step Step-S Step-RT Tree Traj. Step Step-S Step-RT Traj. Step Step-S Step-RT Traj. Step Step-RT Tree-Step
+> PMR (%) 51.85 72.56 25.44 68.44 53.81 13.86 90.22 21.79 88.85 11.97 94.51 42.63 94.44 53.01 88.92 89.13 62.24
+
+(Step) [8], and its variants Step with Removed Thinking (Step-RT), Step with Summarization (Step-S), and Tree-Step [17]. Detailed experimental settings are summarized in Tab. 2 and Sec. § 7.1. Fig. 2b illustrates the breakdown of end-to-end RL time across these workloads. First, except for agents uti-lizing summarization (Step-S), employing step-wise or tree-structured RL significantly inflates end-to-end RL latency compared to linear trajectory baselines. For instance, in DTN Agent, the total RL time for structured sampling strategies is 1.78 × to 2.5 × that of the linear trajectory baseline. Crucially, this latency surge is not caused by slower rollout execution. Instead, the overhead stems entirely from the Up-date phase. Once step-wise or tree-structured RL is adopted, update time increases disproportionately. For example, in the WebShop workload, the update phase for step-wise RL increases by over 5 × compared to linear trajectory sampling, while the rollout time remains virtually unchanged. Con-sequently, a consistent bottleneck shift emerges across all agents. Under traditional trajectory-wise training, rollout clearly dominates RL time, accounting for 53%–72% of the total runtime. However, in structured sampling regimes, the update phase rapidly becomes the dominant cost, contribut-ing up to 40%–58% of the total RL time. This contrasts starkly with the linear trajectory baseline, where the update phase typically consumes only 19%–32%. This shift indicates that agent training is no longer bottlenecked by rollout genera-tion but by model updates, exposing a fundamental ineffi-ciency in how current systems handle the training phase. 
+
+2.5 Opportunity: Exploiting Prefix Redundancy 
+
+While the shift to update-bound workloads presents a per-formance bottleneck, it simultaneously exposes a massive optimization opportunity. Unlike standard pre-training data The result is            
+
+> not
+> Self-Attention
+> QVxSeq 1 Prob.
+> 0.8 0.1 0.8 0.5 0.7
+> The result is
+> right wrong
+> 0.9
+> Seq 0 Loss
+> Compute Loss
+> Adv. K
+> 111100111011
+> Share Pre fi xActivation
+> Adv. Mask
+> 2.4 8.1 2.5 5.8 7.6 2.7
+> MLP Activation
+> MLP
+> Attention Mask
+
+Figure 3. Training-Time Prefix Sharing. which is typically unique, agentic training samples generated via structured sampling share extensive common prefix. To assess the magnitude of this potential, we analyzed the 
+
+Prefix Match Rate —defined as the percentage of prefix tokens in a batch that are identical to those in other samples. Tab. 1 presents the results across different agents and sampling strategies. In the traditional Trajectory mode, redundancy is relatively low (e.g., ∼12% for ALFWorld and ∼14% for WebShop), as each sample is a distinct, full-length rollout. However, structured sampling fundamentally alters this pro-file. In Step mode, where a trajectory is sliced into cumulative segments, the prefix match rate skyrockets to 94.51% in ALF-World and 90.22% in WebShop. Even in high-complexity industrial scenarios like the DTN Agent , the Step-wise redun-dancy remains exceptionally high at 88.92% , and Tree-Step maintain a robust match rate of 62.24% .
+
+Prefix sharing in training. Motivated by the high prefix re-dundancy in agentic training samples, we propose Training-Time Prefix Sharing to accelerate the update stage. Since training requires rigorous computation of loss functions and gradient backpropagation, we leverage two key mechanisms to ensure correctness (as shown in Fig. 3): 1) Attention Mask-ing: Applies a sequence-specific attention mask that strictly follows the original autoregressive dependency of each se-quence. This guarantees that, although QKV are shared, the 
+
+> 4
+
+attention results remain identical to those obtained from in-dependent computation. 2) Advantage Masking: Introduces an advantage mask during loss computation, as different sequences may have distinct advantage values. This mask ensures that each token only contributes to the loss corre-sponding to its own sequence, preventing cross-sequence interference and preserving correct gradient flow. 
+
+## 3 System Overview 
+
+3.1 Design Challenges 
+
+Leveraging prefix sharing can significantly reduce redundant computations and accelerate end-to-end training through-put. However, realizing this optimization within existing infrastructures presents two key challenges. • The workload scheduling of training samples poses an immediate challenge. Simultaneously increasing the prefix match rate and achieving load balancing is inherently diffi-cult. At the global level, the system must orchestrate data distribution across all training workers to achieve both a high internal prefix match rate and a balanced workload among them. At the local level, the micro-batching strategy within each worker further complicates workload manage-ment. Specifically, both the extent of prefix sharing and the sequence lengths within a single micro-batch dictate its exe-cution time. Consequently, workload disparities among dif-ferent micro-batches introduce pipeline bubbles, which sub-sequently prolong the overall execution time of the worker. • Memory management introduces another critical bottle-neck. Current systems typically allocate KV state using fixed-size blocks—a design fundamentally misaligned with the highly variable lengths of reused prefixes. This mismatch forces a hard trade-off: excessively small block sizes increase memory access overhead, while overly large blocks cause re-dundant prefix storage and introduce internal fragmentation. Furthermore, the system must balance the trade-off between reducing the KV state footprint and maintaining a high prefix hit rate. Storing an excessive number of KV states constrains available memory for batching, thereby reducing through-put. Conversely, aggressively evicting KV states diminishes prefix utilization, which impairs computational efficiency. 
+
+3.2 System Architecture 
+
+To support effective prefix sharing while addressing its inher-ent challenges in agentic RL training, we introduce psRL. The two key properties inherent to the training phase— Global Visibility and Data Immutability —unlock significant opportu-nities for deterministic optimization in workload scheduling and memory management. 
+
+Workload scheduling. To tackle the challenges of work-load distribution, psRL proposes two novel prefix-sharing mechanisms that enable flexible and fine-grained workload distribution: inter-batch sharing and self-sequence sharing. Pre fi x-aware Data Orchestrator Token-wise Scheduler Pre fi x Sharing Training Runtime Adaptive KV Manager Rollout Data  
+
+> Micro-Batches
+> ①②③
+> GPU HBM
+> Store KV Get KV Malloc Read Free
+> Data Parallelism Worker
+> ④⑤⑥⑦⑧
+> Data Flow Request Flow
+
+…… 
+
+Figure 4. System architecture of psRL. These two sharing mechanisms enable high scheduling flexi-bility that facilitate fine-grained distribution of the computa-tional load. Building on these mechanisms, psRL implements a hierarchical workload distribution strategy. At the global level, psRL constructs semantic groups to consolidate se-quences sharing identical prefixes across the global batch, and employs efficient algorithms to partition these groups into evenly distributed workloads across workers. At the local worker level, it employs token-wise micro-batching, which slices sequences into micro-batches at the token level, significantly reducing pipeline bubbles caused by workload imbalances within each worker. 
+
+Memory management. Leveraging global visibility and data immutability, psRL introduces another two mechanisms to overcome the bottlenecks of traditional memory man-agement. First, to eliminate the rigid trade-offs imposed by fixed-size paging, the Adaptive Block Allocation mechanism allocates variable-sized contiguous memory blocks based on the precise lengths of shared prefixes. Second, the Dynamic Block Caching mechanism replaces conventional LRU-based caching with a strict Just-in-Time policy. By analyzing the prefix tree constructed from rollout data, this mechanism proactively caches KV blocks required by future training samples and eagerly evicts blocks that are no longer refer-enced, thus eliminating wasted GPU memory. 
+
+System workflow. As shown in Fig. 4, the system work-flow proceeds as follows: 1 ○ The Orchestrator ingests raw rollout data and constructs a global data partition to identify prefix reuse opportunities. 2 ○ It dispatches optimally parti-tioned data subsets to each training worker. 3 ○ Inside each worker, the Planner analyzes the assigned data, slicing data into optimized micro-batches and generating a deterministic execution schedule for the Runtime. 4 ○ During execution, the Runtime sends computed KV states to the Adaptive KV Cache Manager. 5 ○ The Manager proactively preserves the KV states required by subsequent micro-batches within HBM. 6○ When a subsequent micro-batch requires shared KV, the Runtime requests the KV blocks. 7 ○ The Manager retrieves the data directly from the high-speed cache. 8 ○ Upon the completion of the last dependent sequence, the Manager automatically frees the memory to reclaim space.              
+
+> 5b) Self-sequence Sharing
+> The result is
+> Self-Attention
+> The result is
+> Compute Loss
+> not
+> QVKxxSeq 1 Prob.
+> 0.8 0.1 0.8 0.5 0.7
+> right wrong
+> Q0.9
+> Seq 0 V2.4 8.1
+> Loss Adv. K
+> 1110
+> Share Pre fi x KV for Latter Seq 1 Share Advantage for Former Seq 0
+> Micro-Bach 0 Micro-Bach 1 Time
+> Mask
+> Self-Attention Compute Loss
+> The result is not
+> Self-Attention
+> QVProb.
+> 0.8 0.1 0.8 0.5
+> wrong
+> 0.9 2.4 8.1
+> Loss
+> Compute Loss
+> Adv. KKVxx
+> Micro-Bach 0 Micro-Bach 1 Time
+> Seq QShare Pre fi x KV for Suf fi x Tokens
+> 1.4 2.4 5.1 2.5 5.8 7.6 2.7
+> MLP Act. MLP Act.
+> MLP MLP MLP Act. MLP Act.
+> a) Inter-batch Sharing
+
+Figure 5. Mechanisms for Training-Time Prefix Sharing. a) Inter-batch Sharing caches prefix KV states and advantage values across sequential micro-batches, eliminating redundant computations. b) Self-sequence Sharing partitions a long sequences across multiple micro-batches, reusing cached KV to bound peak memory footprint and eliminate pipeline bubbles. 
+
+## 4 Workload Scheduling 
+
+This section details psRL’s hierarchical workload distribution scheme. We first introduce two key prefix-sharing mecha-nisms that enable fine-grained, flexible workload manage-ment. Building on these primitives, we describe the global scheduling algorithm and present a token-wise micro-batching strategy used at the local worker level. 
+
+4.1 Flexible Prefix Sharing Mechanisms 4.1.1 Inter-batch Sharing. Inter-batch sharing addresses prefix redundancy across micro-batches, permitting shared prefixes to be reused within the same training worker. This mechanism enhances the prefix reuse ratio while simultane-ously supporting flexible workload distribution. Specifically, as shown in Fig. 5(a), when sequences sharing an identical prefix are assigned to different micro-batches, the system ensures that the earliest micro-batch computes and caches the KV state of the prefix. Subsequently, later micro-batches reuse this stored KV state and the associated attention re-sults, thereby completely bypassing repeated computations of the prefix. Crucially, the earlier micro-batch also receives the advantage values of subsequent sequences and computes the corresponding loss utilizing an advantage mask that is perfectly aligned with the shared prefix. 
+
+4.1.2 Self-sequence Sharing. Self-sequence sharing mech-anism addresses redundancy of KV caches within a single long trajectory and mitigates pipeline inefficiencies caused by workload imbalances [44]. Conceptually similar to the mechanism of chunked prefill [4] in inference systems, this mechanism allows to partition a long sequence into multiple contiguous chunks and schedule them across different micro-batches. As shown in Fig. 5(b), the prefix chunk is processed in an earlier micro-batch, and the system preserves the cor-responding KV states within the cache. When a subsequent chunk is executed in a later micro-batch, the system retrieves the cached KV states to initialize the attention computation, thereby bypassing the recomputation of the prefix. 
+
+4.2 Workload Balance with Semantic Grouping 
+
+To fully leverage the capability of the developed KV sharing mechanisms, it is essential to balance the workload evenly among distributed workers while simultaneously maximiz-ing the rate of prefix reuse. To achieve this goal, psRL first constructs semantic groups that cluster training data based on prefix similarity, thereby consolidating sequences with high potential for reuse. 
+
+Semantic grouping. Structured RL sampling inherently groups sequences by their semantic origin—for example, multiple generation branches from the same prompt or suc-cessive samples collected along a shared trajectory. We refer to each such cluster as a semantic group . Sequences within the same group are not only semantically related but also tend to exhibit substantial token prefix overlap, since they originate from the same prompt or share a common trajec-tory prefix. To validate this observation, we sort training sequences by semantic origin and measure pairwise pre-fix matching rates within a batch. Our analysis confirms a clear separation: high prefix overlap is concentrated within groups, whereas cross-group overlap remains limited. This indicates that prefix reuse is predominantly a within-group phenomenon. Motivated by this finding, psRL adopts semantic groups, rather than individual sequences, as the fundamental unit of scheduling. By keeping a group intact during placement, psRL preserves most prefix-sharing opportunities without incurring the complexity of fine-grained cross-worker co-ordination. This design also provides a natural abstraction for workload estimation: the scheduler can compute each group’s effective workload by aggregating sequence lengths after accounting for cacheable prefixes, and then strategically place groups across workers to improve both load balance and KV-cache locality. 
+
+Load balancing. To enable efficient partitioning of semantic groups across training workers, psRL estimates the compu-tational workload of each group based on its constituent 
+
+> 62.Bubble
+> b) Token-wise Batching
+> Reuse KV State
+> a) Sequence-wise Batching
+> Micro-Batch 0 Micro-Batch 1
+> 1.GPU Memory Limitation
+> Time
+
+Figure 6. Comparison of Micro-Batching paradigms. a) Tra-ditional sequence-wise batching treats trajectories as indi-visible units. b) Token-wise Micro-Batching partitions long sequences at the token level across micro-batch boundaries. sequences. For a given sequence 𝑠 with length 𝑙 and cached prefix length ℎ, the workload is determined by the uncached suffix of length 𝑙 𝑠𝑢 𝑓 = 𝑙 − ℎ. psRL models the execution time 𝑇 (𝑠 ) as a combination of attention computation, MLP processing, and system overhead: 
+
+𝑇 (𝑠 ) = 𝛼 1 · 𝑙 𝑠𝑢 𝑓 · 𝑙 + 𝛼 2 · 𝑙 𝑠𝑢 𝑓 + 𝛼 3, (1) where 𝛼 1, 𝛼 2, and 𝛼 3 are associated parameters derived from profiling. The workload of a semantic group is then com-puted as the sum of 𝑇 (𝑠 ) on all sequences within that group. With group-level workload estimates, psRL performs load-balanced partitioning by greedily placing semantic groups across workers. Specifically, semantic groups are sorted in descending order of estimated workload and iteratively as-signed to the worker with the smallest cumulative load. After each assignment, the worker’s load is updated to reflect the added group cost. Each semantic group is kept intact, i.e., never split across workers, thereby preserving the locality required for high KV-cache reuse. 
+
+4.3 Token-wise Micro-Batching 
+
+With the training workload assigned to each worker, psRL leverages a fine-grained micro-batching strategy that packs samples into micro-batches to minimize pipeline bubbles. Building on the self-sequence sharing mechanism, this strat-egy adopts token-wise micro-batching instead of conven-tional sequence-wise batching. As illustrated in Fig. 6, token-wise batching offers distinct advantages under the long-tail workload distributions commonly observed in RL roll-outs [9, 14, 42, 61]. First, it strictly bounds the peak memory footprint of each micro-batch, effectively preventing out-of-memory errors caused by extremely long trajectories. Second, it enables finer-grained workload scheduling by allowing flexible token-level packing across micro-batches. psRL partitions the assigned training data into micro-batches based on estimated workload. Given a pre-assigned mini-batch and a given number of micro-batches, psRL first estimates the total workload of the mini-batch using Eq. (1) and derives a per-micro-batch workload budget. As it pro-cesses incoming sequences, it continuously tracks the accu-mulated workload of the current micro-batch. When adding a new sequence would exceed the remaining budget, psRL splits the sequence at the token level and distributes its re-maining tokens across subsequent micro-batches, thereby ensuring balanced and efficient execution. 
+
+## 5 Memory Management 
+
+This section presents the details of the memory management mechanisms within psRL. 
+
+5.1 Adaptive Block Allocation 
+
+As highlighted in § 3.1, existing memory management sys-tems based on fixed-size block allocation are ill-suited for the highly variable lengths of reused prefixes under psRL. While extremely fine-grained allocation eliminates internal fragmentation, it significantly increases memory access fre-quency and the overhead of pointer indirection, as illustrated in Fig. 7(a). Conversely, adopting a large block size leads to substantial memory waste. Since prefix sharing operates strictly at block granularity, overlapping prefixes that do not align with block boundaries cannot be effectively reused. For example, as shown in Fig. 7(b), although Block 0 and Block 2 share identical tokens from positions 0 to 27, their divergence at tokens 28 to 31 prevents them from sharing the same block. Consequently, the KV states for the overlap-ping prefix must be redundantly materialized in both blocks, severely limiting effective prefix reuse and inflating memory consumption. psRL is founded on a key insight that enables near-maximal utilization of KV prefixes: in training workloads, the struc-ture of prefix reuse is known in advance, and the training samples themselves remain immutable throughout execu-tion. By analyzing the prefix tree constructed from rollout data, psRL can precisely identify the span and reuse degree of each shared prefix. This enables block allocation to be guided by semantic reuse boundaries rather than fixed token counts. Leveraging this insight, psRL introduces Adaptive Block Allocation, which dynamically tailors block sizes to exactly match reusable prefix spans. Each logical block cor-responds to a contiguous prefix segment shared across one or more sequences, and its physical allocation is sized ac-cording to the actual prefix length. As shown in Fig. 7(c), this design eliminates redundant materialization of prefix states, substantially reduces internal fragmentation, and minimizes unnecessary memory accesses. 
+
+5.2 Dynamic Block Caching 
+
+psRL proposes a new KV block caching mechanism driven by prefix tree analysis. As shown in Fig. 8(left), during rollout, all generated samples jointly form a prefix tree where each node corresponds to a KV block and shared prefixes naturally merge. Before the update phase, psRL analyzes this tree and, for each KV block, identifies its reference count —the number of training samples that will access this block in the subsequent update stage. In Fig. 8, the reference count of the root block is 4, as all four training samples will access it, while the reference count of the leaf block is 1. This reference count serves as an indicator of each block’s reuse potential during training.                     
+
+> 7T0 T1 …T26 T27 T28 T29 …T41 T28 T29 T30 T31 T32 T42
+> a) Small Block Size (1)
+> High Memory Access
+> Logi. Block Phy. Block 023 113 ...... ...... 46 44 47 21
+> Block 0: T0-T27 Block 1: T28-T42 Block 2: T28-T32
+> c) psRL (Adaptive Block Allocation)
+> Logi. Block Phy. Block 013 165 237 Block Size 28 15 5
+> Light Memory Access Less Internal Frag. Zero Redundant Pre fi x
+> b) Large Block Size (32)
+> Pre fi x Overlap (T0-T27)
+> Logi. Block Phy. Block 053 114 2125 349
+> Internal Frag. (T33-T64)
+> Block 0: T0-T31
+> Block 2: T0-T31 Block 3: T32-T63
+> Block Table
+> Block 1: T32-T63
+
+Figure 7. Comparison of KV block allocation strategies. a) Token-level fine-grained allocation increases memory access overhead. b) Fixed-granularity allocation with a large block size leads to redundant prefix materialization and internal fragmentation. c) Adaptive block allocation dynamically sizes blocks to exactly cover reusable prefix spans. abc abc abc bc bc bcccc                     
+
+> ab
+> Store Delete 3 blocks' reference about a
+> Store Delete 4 blocks' reference about b
+> Delete 4 blocks' reference about c
+> Evict 4 blocks without reference
+> c
+> Peak Memory: 3
+> Reference Information Peak Memory: 6
+> aaaab ab abbabc abc cb
+> abc
+> Rollout :Generation of Pre fi x Tree
+> Pre fi x Analysis Update :Dynamic Block Caching
+> abc abc abc cb
+> The block shared by 3 samples abc
+> abc
+> 3 Generated Samples abcStore: Evict ：:It is old :It is not old :It is not new
+
+Figure 8. Illustration of Dynamic Block Caching. Left: dur-ing rollout, generated samples form a shared prefix tree in which each node corresponds to a KV block and common prefixes are merged. Middle: before training, psRL analyzes the tree to compute. Right: during update, reference counts are decremented at micro-batch granularity as samples are processed. During training, psRL maintains block liveness at micro-batch granularity by decrementing the reference count when-ever a sample completes computation on the block. After each micro-batch backward pass, the system removes the corresponding reference entries from all accessed blocks. A block is kept in GPU memory only if its reference count is positive, indicating future reuse. In Fig. 8, when training sample a, the first two blocks are preserved because they will be reused by subsequent samples bcd and bc , while the third block is removed. By caching only blocks that are guaranteed to be reused, psRL significantly reduces the peak memory footprint without introducing recomputation. When GPU memory becomes insufficient, psRL may proac-tively evict blocks whose reference count is still positive. Because the full prefix tree and the execution order of data expose the exact future access pattern, the system can de-termine the next access time of each block and evict the one with the farthest reuse distance. This eviction strategy minimizes recomputation and offloading overhead. 
+
+## 6 System Implementation 
+
+We implement psRL on top of veRL [38], with the primary system modifications made to the underlying training engine, Megatron-LM [27]. The implementation comprises approx-imately 7,000 lines of code and is organized around four components: a prefix-aware data orchestrator, a token-wise execution planner, an adaptive KV cache manager, and a prefix-sharing training runtime. Beyond the update phase itself, the same mechanisms are also extended to other RL pipeline stages that operate over the same static training samples and exhibit similar prefix redundancy. 
+
+Prefix-aware data orchestrator. During training initializa-tion, psRL designates a master device within the update clus-ter as orchestrator to collect and reorganize rollout samples. Samples sharing a uid form a semantic group; the master device then partitions and dispatches these groups across devices in different pipelines. 
+
+Token-wise execution planner. The planner executes ex-clusively on the first-stage device of each pipeline. It par-titions samples assigned by the orchestrator into micro-batches, analyzing their prefixes to generate the requisite attention, advantage, and loss masks. These generated masks, alongside the execution sequence, are subsequently dispatched to downstream devices within the same pipeline. 
+
+Adaptive KV cache manager. psRL implements manager for both block allocation and caching. To reduce memory consumption, KV memory for each variable-sized block is allocated online as a CUDA tensor through the PyTorch caching allocator, rather than carved out from a pre-allocated fixed-size pool. To mitigate allocation overhead, psRL pre-allocates the required memory one micro-batch ahead of use and overlaps memory creation with ongoing computation. The manager maintains per-block metadata, including the base address, block size, position of the corresponding token segment in the full sequence, and reference count. These metadata allow the runtime to correctly access the blocks, while the reference count supports dynamic block eviction. 
+
+Prefix-sharing training runtime. For each device, the training runtime executes the ordered micro-batches gener-ated by the planner, and handles the corresponding computa-tion and communication. To support attention over variable-sized blocks, psRL modifies the attention backend to read the KV-block metadata provided by the memory manager and use them to locate the corresponding KV states for computa-tion. To avoid redundant backward computation on shared prefix states, we first accumulate all consumer-induced gra-dient adjoints on the shared prefix representations and then perform a single backward pass through the prefix producer graph. 
+
+> 8
+
+Accelerating RL pipeline. psRL is also designed to opti-mize the reference model forward pass and old policy log-probability computation phases in the RLHF pipeline [35, 36]. These phases contribute 10%-20% of end-to-end training time. They are structurally similar to the update phase because they operate over the same static training samples and re-quire forward computation on highly redundant prefixes. As a result, psRL extends its prefix sharing, scheduling, and memory management mechanisms to these phases. 
+
+## 7 Evaluation 
+
+7.1 Experiment Setup 7.1.1 Hardware settings. We deploy psRL on a large-scale GPU cluster. Specifically, each node is equipped with four 80 GB NVIDIA A100 GPUs and powered by the Intel Xeon Gold 6342 CPU with 48 physical cores and 128 GB of host DRAM. Within each node, GPUs are connected via a 200 Gb/s interconnect, while cross-node communication is supported by a 100 Gb/s RDMA network fabric. 
+
+7.1.2 Models and configuration. We evaluate psRL across a diverse spectrum of agentic RL workloads, ranging from academic benchmarks to large-scale industrial deployments. As summarized in Tab. 2, our evaluation suite includes the following settings: 1) Standard Agents. Following the Verl-Agent framework [8], we evaluate agents in the Search , Web-Shop , and ALFWorld environments. These agents are instan-tiated using the Qwen2.5 [31] family with 1.5B and 7B pa-rameters. 2) Industrial-Scale Agent. To stress-test system scalability, we additionally evaluate a proprietary industrial 
+
+DTN Agent . This agent is a digital twin network operations assistant built on the Qwen3-235B [48] Mixture-of-Experts (MoE) model. It is designed as a network engineering assis-tant that can understand configuration files from routers, firewalls, switches, and other devices from different vendors, and can solve operational tasks using both built-in knowl-edge and external tools. This agent generates 8 samples for each prompt and supports up to 40K prompt tokens followed by 20K generation tokens per step. 
+
+Algorithms. We conduct experiment on five RL strategies: Step-wise ( Step ) [8], Step with Summarization ( Step+S ) [8], Step with Remove Think ( Step+RT) [8], Tree-structured ( Tree ) [15], and Tree-Step [17]. The setting strictly follows the imple-mentations provided by above frameworks and the most commonly adopted practices for each respective agent. 
+
+Distributed execution. We align distributed parallelism with model scale to reflect production training environments. For standard benchmarks using Qwen2.5-1.5B and Qwen2.5-7B, we employ a compact 3D parallelism setup with Data Parallelism (DP)=2, Tensor Parallelism (TP)=2, and Pipeline Parallelism (PP)=2, spanning 8 GPUs. For the industrial DTN Agent based on Qwen3-235B, we adopt a larger configura-tion with DP=4, TP=4, Expert Parallelism (EP)=8, and PP=12, distributing the model across 1536 GPUs. 
+
+Table 2. Experiment Configurations Agent Model Max Prom. Max Gen. Max Step NRoll.                     
+
+> Search Qwen2.5-7B 4K 512 45WebShop Qwen2.5-1.5B 4K 512 15 4ALFWorld Qwen2.5-1.5B 4K 512 50 8DTN Agent Qwen3-235B 40K 20K 10 8
+
+7.1.3 Baselines. We evaluate psRL against three baselines within the veRL [38], whose update phase is powered by Megatron-LM [27]. Because existing training engines do not natively support prefix sharing for these workloads, we compare against the default veRL and two veRL variants whose training engines are augmented with prefix-sharing mechanisms adapted from inference systems [19, 59]. 
+
+veRL [38]. The default veRL pipeline serves as our primary baseline. Its update phase uses Megatron-LM [27] as the underlying distributed training engine and supports DP, TP, PP, and EP, but without prefix sharing. 
+
+veRL w/ vLLM-PS. We implement a vLLM-style prefix-sharing mechanism in the update engine of veRL to enable prefix reuse. It adopts fixed-size KV blocks with a block size of 16 tokens, matching the default design of vLLM [19]. 
+
+veRL w/ SGLang-PS. Similarly, we implement an SGLang-style prefix-sharing mechanism in the update engine of veRL. The key difference is SGLang [59] uses a block size of 1 token, which reduces internal fragmentation and improves fine-grained reuse, but incurs higher memory-access overhead. 
+
+7.2 Main Results Update throughput. Fig. 9 depicts the comparison of end-to-end training throughput against veRL, vLLM-PS, and SGLang-PS across four benchmarks. psRL consistently dom-inates, achieving 1.2 ×–5.2 × speedups over veRL by maxi-mizing prefix reuse. The advantage is most pronounced in the DTN Agent environment under the Step mode, where psRL reaches 239.1k tokens/s, yielding an approximate 3.8 ×
+
+speedup over the strongest baseline, SGLang-PS, which peaks at 62.7k tokens/s. In other agent environments such as Search and WebShop, psRL generally delivers a 1.5 × to 2.5 × through-put improvement over vLLM-PS and SGLang-PS. This consis-tent superiority validates the effectiveness of the proposed prefix sharing mechanisms in eliminating redundant compu-tation during the update phase. 
+
+Memory usage. Fig. 9 shows peak memory allocations across all systems. Notably, vLLM-PS and SGLang-PS con-sistently consume 2 ×–10 × more memory than veRL; for instance, in ALFWorld (Step-S), vLLM-PS peaks at 73.1 GB versus veRL’s 6.4 GB. Their inference-centric allocation lacks optimizations vital for training. In contrast, psRL maintains a minimal memory footprint comparable to veRL across stan-dard benchmarks. Specifically, on the extreme-scale DTN Agent workload, psRL reduces peak memory from 56.2 GB            
+
+> 9020K 40K Throughput (tokens/s) 11.1K 9.1K 11.1K 18.2K 14.5K 10.4K 14.7K 20.4K 14.0K 9.8K 13.7K 19.8K 29.9K 11.1K 26.5K 26.5K
+> Search
+> 020K 40K 11.3K 20.0K 10.3K 15.3K 21.6K 12.5K 17.6K 20.9K 15.9K 34.6K 23.2K 30.3K
+> WebShop
+> 020K 40K 9.2K 16.2K 9.4K 12.9K 19.0K 11.5K 13.4K 17.6K 11.8K 33.0K 33.6K 34.0K
+> ALFWorld
+> 0100K 200K 300K 45.9K 44.0K 22.6K 60.8K 52.8K 27.8K 62.7K 59.5K 26.0K 239.2K 225.4K 51.5K
+> DTN Agent
+> Step Step-S Step-RT Tree 050K 100K Peak Memory (MB) 25.1K 27.0K 25.0K 26.0K 61.4K 75.1K 56.8K 75.9K 57.7K 75.3K 53.3K 73.7K 27.3K 27.1K 26.9K 27.3K Step Step-S Step-RT 020K 40K 60K 7.1K 7.0K 7.4K 41.1K 45.1K 37.9K 36.6K 44.0K 33.4K 9.6K 7.6K 8.9K Step Step-S Step-RT 050K 100K 8.0K 6.4K 8.6K 73.1K 73.1K 74.2K 68.3K 70.9K 69.5K 15.5K 7.0K 15.1K Step Step-RT Tree-Step 050K 100K 56.2K 56.2K 50.8K 77.5K 77.5K 75.7K 73.0K 73.0K 72.5K 33.0K 33.0K 30.3K veRL veRL w/ vLLM-PS veRL w/ SGLang-PS psRL
+
+Figure 9. Performance comparison of the Update phase. We report the throughput (tokens/s) and peak GPU memory consumption (MB) across diverse agentic workloads and structured sampling modes. Step Step-S Step-RT Tree              
+
+> Search
+> 0200 400 600 126 502 120 157 107 455 103 147 108 471 105 149 74 403 76 121 Step Step-S Step-RT
+> WebShop
+> 0200 400 254 267 255 211 250 222 195 250 199 141 221 148 Step Step-S Step-RT
+> ALFWorld
+> 01K 2K 3K 2085 478 2045 1675 439 1783 1635 453 1751 997 328 1075 Step Step-RT Tree-Step
+> DTN Agent
+> 0500 1000 1500 961 926 1298 806 777 1151 788 734 1204 478 442 865
+> Time (s)
+> veRL veRL w/ vLLM-PS veRL w/ SGLang-PS psRL Rollout Log old prob Reference Update Other
+
+Figure 10. E2E Latency comparison of RL training pipeline. to 33 GB. This 41% reduction proves our block management effectively eliminates redundant storage in long-context RL, freeing memory capacity for larger batch sizes. 
+
+End-to-End RL performance. Fig. 10 details the execu-tion time breakdown for a complete RL training iteration under veRL [38]. Overall, psRL achieves up to 2.1 × end-to-end speedup over veRL, eliminating inherent RLHF compu-tational bottlenecks. In DTN Agent (Step), psRL cuts Log Old Prob and Reference computation times from 57.1 s and 68.3 s to 7.1 s and 8.3 s. This 8 × speedup transforms these compute-heavy steps into lightweight, memory-bound op-erations. Similarly, in ALFWorld, the latency of these two phases drops by over 5 ×. Furthermore, token-wise micro-batching and dynamic block caching dramatically reduce up-date time; for DTN Agent, update latency drops from 462.1 s (veRL) to 88.7 s. While vLLM-PS and SGLang-PS offer mar-ginal improvements over veRL via basic KV caching, they consistently underperform psRL. For instance, psRL com-pletes a WebShop (Step) iteration in just 148.1 s, significantly outpacing all baselines. 200 300   
+
+> Step Step-RT Tree-Step DTN Agent (Tree-Step) 50 100 Compute Time (s)  Sharing-Agnostic Balancing Prefix-Match-First Balance-First psRL
+
+(a) Impact of workload schedul-ing on the execution time. Step Step-RT Tree-Step DTN Agent (Tree-Step) 050K 100K Peak Memory (MB) 73.0K 73.1K 72.5K 33.0K 33.0K 30.3K w/o DBC psRL 
+
+(b) Impact of Dynamic Block Caching (DBC) on peak memory. 
+
+Figure 11. Ablation study on individual design of the psRL. 
+
+7.3 Evaluating Individual Design 
+
+To understand the benefits of psRL, we analyze its design through both component-wise ablation and fine-grained run-time traces. As illustrated in Fig. 11 and Fig. 12, we exam-ine how the key designs of psRL enhance runtime behavior across two complementary dimensions: workload scheduling and memory management. 
+
+7.3.1 Workload scheduling. The design of workload sched-uling within psRL consists of two components: workload bal-ance across workers and Token-wise Micro-Batching (TMB). Together, they make the execution time of different work-ers more balanced while also reducing the latency of each worker, thereby improving overall training efficiency. 
+
+Workload balance across workers. Fig. 11a compares four data scheduling strategies by execution time of each DP worker under DTN Agent. Sharing-Agnostic Balancing, the default strategy of veRL, balances only by sequence length and ignores prefix reuse, leading to substantial execution skew, with worker times in Tree-Step ranging from 235.12 s to 299.45 s. Prefix-Match-First maximizes prefix reuse but introduces even more severe imbalance; in Tree-Step, worker times range from 209.45 s to 305.12 s. Balance-First always assigns data to the currently lightest worker, which improves balance but sacrifices prefix locality, resulting in a maximum         
+
+> 10 010K KV Usage (MB)  Search (Step)
+> 010K 20K
+> DTN Agent (Tree-Step)
+> 050 100 Cache Hit Rate (%) 050 100 020 40 Micro-Batch Index 0.0 0.5 Time (s) 020 40 60 Micro-Batch Index 02veRL veRL w/ vLLM-PS veRL w/ SGLang-PS psRL
+
+Figure 12. Micro-batch level dynamics of KV memory allo-cation, cache hit rate and execution latency. worker time of 287.25 s in Tree-Step. In contrast, psRL jointly optimize prefix reuse and workload balance, with worker times tightly grouped between 245.13 s and 261.23 s in Tree-Step. 
+
+Token-wise micro-batching. At a finer granularity, TMB further smooths execution within each worker by repacking and partitioning data according to token-level computational density. As shown in Fig. 12 (bottom), this design makes the forward and backward latency of each micro-batch much more uniform, avoiding severe latency spikes and jitter. Such smoothing is critical for distributed training, because it re-duces wait-time bubbles and keeps GPU compute units con-sistently busy throughout the training iteration. As a result, TMB not only shortens per-worker execution time, but also improves global throughput by making micro-batch execu-tion more predictable and balanced. 
+
+7.3.2 Memory management. The memory management of psRL consists of Adaptive Block Allocation (ABA) and Dynamic Block Caching (DBC). ABA improves memory ef-ficiency and access efficiency at the allocation level, while DBC controls KV-state growth and preserves high cache effectiveness during execution. 
+
+Dynamic block caching. DBC further improves memory behavior during execution. As shown in Fig. 11b, without DBC, KV-state memory grows excessively in DTN Agent, reaching 73.0k MB and 73.1k MB in Step and Step-RT modes. With DBC, peak memory consumption drops to 33.0k MB in both modes, a reduction of more than 54%. In Tree-Step mode, memory usage similarly falls from 72.5k MB to 30.3k MB. This reduction comes from reclaiming blocks immediately after their final use rather than retaining redundant states. 22 25 28     
+
+> Block Size 1.0 1.1 1.2 1.3 Normalized Time
+> 222528
+> Block Size 1.0 1.1 1.2 1.3 Normalized Memory
+> DTN Agent (Tree-Step) Search (Step) w/o ABA psRL
+
+Figure 13. Performance comparison between Adaptive Block Allocation (ABA) and fixed-size block strategies, nor-malized to psRL. The fine-grained runtime trace in Fig. 12 (top and mid-dle) further shows that DBC controls KV-state growth with-out reducing cache effectiveness. Traditional prefix-sharing mechanisms such as vLLM-PS and SGLang-PS lack fine-grained lifecycle semantics for extreme-context RL trajec-tories. In DTN Agent (Tree-Step), their KV-state footprint grows nearly linearly during the initial phase, then stalls and fluctuates sharply around the 30th micro-batch due to OOM pressure and reactive mechanisms such as forced cache evic-tion. In contrast, psRL uses DBC to reclaim invalidated KV blocks after their final referencing computation step, produc-ing a controlled sawtooth KV-memory pattern that bounds peak usage within hardware limits. More importantly, this bounded footprint does not compromise cache utilization. 
+
+Adaptive block allocation. As shown in Fig. 13, fixed-size paging exposes a fundamental tradeoff between memory effi-ciency and execution speed, and the optimal block size varies significantly across workloads. As block size increases from 1 to 512, peak memory consumption rises monotonically be-cause of internal fragmentation, increasing from 27k MB to 35k MB in the Search environment and reaching a 1.3 × nor-malized memory overhead. Execution time, however, follows a U-shaped trend: the best fixed block size is 32 in Search but 128 in DTN Agent. This sensitivity makes manual tuning impractical. In contrast, ABA allocates blocks according to reusable prefix spans, which reduces internal fragmentation, improves memory access efficiency, and increases effective prefix reuse without requiring workload-specific tuning. 
+
+7.4 System Scalability Scalability w.r.t. #devices. We evaluate psRL’s scalability by proportionally doubling the DP degree alongside the GPU count. Fig. 14 demonstrates near-linear scaling across both small and extreme cluster setups. On the Search benchmark, psRL maintains a clear lead. In Step mode on 64 devices, it achieves 128.5k tokens/s, outperforming veRL by 2.7 × and SGLang-PS by 1.9 ×. Under extreme-scale conditions test-ing the DTN Agent, psRL exhibits highly robust scalability. On 12,288 GPUs, our throughput reaches 1.14M tokens/s,                
+
+> 11 816 32 64
+> Search (Step)
+> 50K 100K
+> 816 32 64
+> Search (Tree)
+> 50K 100K
+> 1536 3072 6144 12288
+> DTN Agent (Step)
+> 0500K 1000K
+> 1536 3072 6144 12288
+> DTN Agent (Tree-Step)
+> 100K 200K 300K
+> Throughput (tokens/s) veRL veRL w/ vLLM-PS veRL w/ SGLang-PS psRL
+
+Figure 14. Throughput of psRL against baseline systems across varying cluster sizes. dwarfing veRL by 4.7 × and SGLang-PS by 3.4 ×. These re-sults confirm that our memory and scheduling designs intro-duce negligible overhead, unlocking the full computational potential of massive distributed clusters. 
+
+Scalability w.r.t. sequence length. We evaluate system resilience to longer sequences by scaling sample length from 1× to 8 ×. To isolate this effect without altering prefix reuse rates, we insert 𝑛 -1 dummy tokens per original token for 𝑛 ×
+
+scales. Fig. 15 shows the resulting throughput. As attention computation grows quadratically, psRL degrades gracefully despite steep baseline drop-offs. In the Search benchmark (Step) at 8 ×, psRL sustains 12.8k tokens/s, maintaining a 3 ×–4× advantage over SGLang-PS and veRL. Crucially, on DTN Agent at 8 × length, immense memory pressure from long-context causes all baselines to exhaust GPU memory and crash. In contrast, psRL survives, delivering 42.1k tokens/s in Step mode. 
+
+## 8 Related Works 
+
+Agentic systems. Early systems such as NeMo-Aligner [37] and OpenRLHF [16] adopt a disaggregated pipeline archi-tecture, where rollout and training stages are executed on separate resources. Frameworks such as veRL [38], ReaL [26], and RLHFuse [62] colocate multiple RL stages within the same GPU pool to better overlap computation and reduce idle time. StreamRL [61] proposes a one-step off-policy pipeline where rollout proceeds with slightly stale policy weights, enabling better overlap between generation and training. AReaL [9] further relaxes synchronization constraints and enables fully asynchronous RL training. Building on this paradigm, RhymeRL [14] integrates speculative decoding to accelerate rollout generation by leveraging history output. Recent work like Tree Training [43] and AReaL-DTA [54] organize samples as explicit prefix trees and reuse computa-tion through DFS-based execution. In contrast, psRL supports intra-batch, inter-batch, and self-sequence sharing, decou-pling prefix reuse from tree execution and jointly optimizing scheduling and memory management. ×1 ×2 ×4 ×8            
+
+> Search (Step)
+> 10K 20K 30K
+> ×1×2×4×8
+> Search (Tree)
+> 10K 20K
+> ×1×2×4×8
+> DTN Agent (Step)
+> 100K 200K
+> ×1×2×4×8
+> DTN Agent (Tree-Step)
+> 20K 40K
+> Throughput (tokens/s) veRL veRL w/ vLLM-PS veRL w/ SGLang-PS psRL
+
+Figure 15. Throughput of psRL against baseline systems across varying scales of sequence lengths. 
+
+KV management. A broad line of research heavily opti-mizes KV cache management for online LLM serving. To mitigate memory fragmentation, vLLM [19] introduces Page-dAttention, whereas SGLang [59] proposes RadixAttention to dynamically eliminate redundant prefix computations. Subsequent efforts extend these concepts to complex serv-ing scenarios, including prefix caching for chatbots [10], streaming-aware scheduling [51], and cache management for tool calling (e.g., InferCept [3]). Furthermore, systems such as Autellix [24] and ParrotServe [23] specifically ex-plore request scheduling for agentic workflows during infer-ence. Furthermore, Jenga [53] employs an attention-aware allocator and pattern-based eviction strategies to enhance memory reuse, while DiffKV [55] introduces an on-GPU memory manager that compacts fragmented memory in par-allel, translating cache sparsity into performance gains. 
+
+## 9 Conclusion 
+
+This paper presents psRL, a prefix-sharing training system designed for modern agentic RL workloads. We observe that the bottleneck in RL training is shifting from rollout to update, as tree-structured and step-wise RL strategies substantially increase training sample volume with only a low marginal cost for rollout. Moreover, we find that these sampling strategies introduce significant prefix redundancy among training samples—an opportunity that existing train-ing systems largely fail to exploit. psRL addresses this gap by leveraging global visibility and data immutability to enable prefix-aware optimizations in both workload scheduling and memory management. Specifically, psRL introduces novel mechanisms for flexible prefix sharing, load-balanced ex-ecution, adaptive KV allocation, and dynamic KV caching. Extensive evaluations using production traces and real-world agentic workloads demonstrate that psRL improves agentic training throughput by up to 5.2 ×.
+
+> 12
+
+## References 
+
+[1] 2025. Introducing Claude 4. https://www.anthropic.com/news/claude-4.[2] 2025. The Llama 4 herd: The beginning of a new era of natively multi-modal AI innovation. https://ai.meta.com/blog/llama-4-multimodal-intelligence/ .[3] Reyna Abhyankar, Zijian He, Vikranth Srivatsa, Hao Zhang, and Yiy-ing Zhang. 2024. Infercept: Efficient intercept support for augmented large language model inference. arXiv preprint arXiv:2402.01869 
+
+(2024). [4] Amey Agrawal, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav S Gulavani, and Ramachandran Ramjee. 2023. Sarathi: Effi-cient llm inference by piggybacking decodes with chunked prefills. 
+
+arXiv preprint arXiv:2308.16369 (2023). [5] Qiaoling Chen, Zijun Liu, Peng Sun, Shenggui Li, Guoteng Wang, Ziming Liu, Yonggang Wen, Siyuan Feng, and Tianwei Zhang. 2025. ReSpec: Towards Optimizing Speculative Decoding in Reinforcement Learning Systems. arXiv preprint arXiv:2510.26475 (2025). [6] Rongxin Cheng, Kai Zhou, Xingda Wei, Siyuan Liu, Mingcong Han, Mingjing Ai, Yeju Zhou, Baoquan Zhong, Wencong Xiao, Rong Chen, et al. 2025. Fast LLM Post-training via Decoupled and Fastest-of-N Speculation. arXiv preprint arXiv:2511.16193 (2025). [7] Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al. 2025. Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities. arXiv preprint arXiv:2507.06261 (2025). [8] Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2025. Group-in-group policy optimization for llm agent training. arXiv preprint arXiv:2505.10978 (2025). [9] Wei Fu, Jiaxuan Gao, Xujie Shen, Chen Zhu, Zhiyu Mei, Chuyi He, Shusheng Xu, Guo Wei, Jun Mei, Jiashu Wang, et al. 2025. AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Lan-guage Reasoning. arXiv preprint arXiv:2505.24298 (2025). [10] Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang, Djordje Jevdjic, Junbo Deng, Xingkun Yang, Zhou Yu, and Pengfei Zuo. 2024. {Cost-Efficient } large language model serving for multi-turn conversations with {CachedAttention }. In 2024 USENIX annual technical conference (USENIX ATC 24) . 111–126. [11] Anna Goldie, Azalia Mirhoseini, Hao Zhou, Irene Cai, and Christo-pher D Manning. 2025. Synthetic data generation & multi-step rl for reasoning & tool use. arXiv preprint arXiv:2504.04736 (2025). [12] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al. 2025. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 (2025). [13] Yiran Guo, Lijie Xu, Jie Liu, Dan Ye, and Shuang Qiu. 2025. Segment policy optimization: Effective segment-level credit assignment in rl for large language models. arXiv preprint arXiv:2505.23564 (2025). [14] Jingkai He, Tianjian Li, Erhu Feng, Dong Du, Qian Liu, Tao Liu, Yu-bin Xia, and Haibo Chen. 2025. History rhymes: Accelerating llm reinforcement learning with rhymerl. arXiv preprint arXiv:2508.18588 
+
+(2025). [15] Zhenyu Hou, Ziniu Hu, Yujiang Li, Rui Lu, Jie Tang, and Yuxiao Dong. 2025. TreeRL: LLM Reinforcement Learning with On-Policy Tree Search. arXiv preprint arXiv:2506.11902 (2025). [16] Jian Hu, Xibin Wu, Zilin Zhu, Weixun Wang, Dehao Zhang, Yu Cao, et al. 2024. Openrlhf: An easy-to-use, scalable and high-performance rlhf framework. arXiv preprint arXiv:2405.11143 6 (2024). [17] Yuxiang Ji, Ziyu Ma, Yong Wang, Guanhua Chen, Xiangxiang Chu, and Liaoni Wu. 2025. Tree search for llm agent reinforcement learning. 
+
+arXiv preprint arXiv:2509.21240 (2025). [18] Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-r1: Training llms to reason and leverage search engines with reinforcement learning. 
+
+arXiv preprint arXiv:2503.09516 (2025). [19] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th symposium on operating systems principles . 611–626. [20] Yaniv Leviathan, Matan Kalman, and Yossi Matias. 2023. Fast in-ference from transformers via speculative decoding. In International Conference on Machine Learning . PMLR, 19274–19286. [21] Yizhi Li, Qingshui Gu, Zhoufutu Wen, Ziniu Li, Tianshun Xing, Shuyue Guo, Tianyu Zheng, Xin Zhou, Xingwei Qu, Wangchunshu Zhou, et al. 2025. Treepo: Bridging the gap of policy optimization and efficacy and inference efficiency with heuristic tree-based modeling. arXiv preprint arXiv:2508.17445 (2025). [22] Yuhang Li, Rong Gu, Chengying Huan, Zhibin Wang, Renjie Yao, Chen Tian, and Guihai Chen. 2025. Hotprefix: Hotness-aware kv cache scheduling for efficient prefix sharing in llm inference systems. 
+
+Proceedings of the ACM on Management of Data 3, 4 (2025), 1–27. [23] Chaofan Lin, Zhenhua Han, Chengruidong Zhang, Yuqing Yang, Fan Yang, Chen Chen, and Lili Qiu. 2024. Parrot: Efficient serving of 
+
+{LLM-based } applications with semantic variable. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . 929–945. [24] Michael Luo, Xiaoxiang Shi, Colin Cai, Tianjun Zhang, Justin Wong, Yichuan Wang, Chi Wang, Yanping Huang, Zhifeng Chen, Joseph E Gonzalez, et al. 2025. Autellix: An efficient serving engine for llm agents as general programs. arXiv preprint arXiv:2502.13965 (2025). [25] Xufang Luo, Yuge Zhang, Zhiyuan He, Zilong Wang, Siyun Zhao, Dongsheng Li, Luna K Qiu, and Yuqing Yang. 2025. Agent light-ning: Train any ai agents with reinforcement learning. arXiv preprint arXiv:2508.03680 (2025). [26] Zhiyu Mei, Wei Fu, Kaiwei Li, Guangju Wang, Huanchen Zhang, and Yi Wu. 2024. Realhf: Optimized rlhf training for large language mod-els through parameter reallocation. arXiv preprint arXiv:2406.14088 
+
+(2024). [27] Deepak Narayanan, Mohammad Shoeybi, Jared Casper, Patrick LeGres-ley, Mostofa Patwary, Vijay Korthikanti, Dmitri Vainbrand, Prethvi Kashinkunti, Julie Bernauer, Bryan Catanzaro, et al. 2021. Efficient large-scale language model training on gpu clusters using megatron-lm. In Proceedings of the international conference for high performance computing, networking, storage and analysis . 1–15. [28] Vignesh Prabhakar, Md Amirul Islam, Adam Atanas, Yao-Ting Wang, Joah Han, Aastha Jhunjhunwala, Rucha Apte, Robert Clark, Kang Xu, Zihan Wang, et al. 2025. Omniscience: A domain-specialized llm for scientific reasoning and discovery. arXiv preprint arXiv:2503.17604 
+
+(2025). [29] Ruoyu Qin, Weiran He, Weixiao Huang, Yangkun Zhang, Yikai Zhao, Bo Pang, Xinran Xu, Yingdi Shan, Yongwei Wu, and Mingxing Zhang. 2026. Seer: Online Context Learning for Fast Synchronous {LLM }
+
+Reinforcement Learning. In 20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26) . 883–901. [30] Zekai Qu, Yinxu Pan, Ao Sun, Chaojun Xiao, and Xu Han. 2025. Co-PRIS: Efficient and Stable Reinforcement Learning via Concurrency-Controlled Partial Rollout with Importance Sampling. arXiv preprint arXiv:2511.05589 (2025). [31] Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu. 2025. Qwen2.5 Technical 
+
+> 13
+
+Report. arXiv:2412.15115 [cs.CL] https://arxiv.org/abs/2412.15115 
+
+[32] Jeff Rasley, Samyam Rajbhandari, Olatunji Ruwase, and Yuxiong He. 2020. Deepspeed: System optimizations enable training deep learning models with over 100 billion parameters. In Proceedings of the 26th ACM SIGKDD international conference on knowledge discovery & data mining . 3505–3506. [33] John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. 2015. Trust Region Policy Optimization. In Proceedings of the 32nd International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 37) , Francis Bach and David Blei (Eds.). PMLR, Lille, France, 1889–1897. https://proceedings.mlr.press/ v37/schulman15.html 
+
+[34] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proximal Policy Optimization Algorithms. arXiv:1707.06347 [cs.LG] https://arxiv.org/abs/1707.06347 
+
+[35] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proximal policy optimization algorithms. arXiv preprint arXiv:1707.06347 (2017). [36] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 (2024). [37] Gerald Shen, Zhilin Wang, Olivier Delalleau, Jiaqi Zeng, Yi Dong, Daniel Egert, Shengyang Sun, Jimmy Zhang, Sahil Jain, Ali Taghibakhshi, et al. 2024. Nemo-aligner: Scalable toolkit for efficient model alignment. arXiv preprint arXiv:2405.01481 (2024). [38] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. 2025. Hybrid-flow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Systems . 1279–1297. [39] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2020. Alfworld: Align-ing text and embodied environments for interactive learning. arXiv preprint arXiv:2010.03768 (2020). [40] Sijun Tan, Michael Luo, Colin Cai, Tarun Venkat, Kyle Mont-gomery, Aaron Hao, Tianhao Wu, Arnav Balyan, Manan Roongta, Chenguang Wang, Li Erran Li, Raluca Ada Popa, and Ion Stoica. 2025. rLLM: A Framework for Post-Training Language Agents. 
+
+https://pretty-radio-b75.notion.site/rLLM-A-Framework-for-Post-Training-Language-Agents-21b81902c146819db63cd98a54ba5f31 .Notion Blog. [41] Xin Tan, Yicheng Feng, Yu Zhou, Yimin Jiang, Yibo Zhu, and Hong Xu. 2026. OrchestrRL: Dynamic Compute and Network Orchestration for Disaggregated RL. arXiv preprint arXiv:2601.01209 (2026). [42] Kimi Team, Yifan Bai, Yiping Bao, Guanduo Chen, Jiahao Chen, Ningxin Chen, Ruijue Chen, Yanru Chen, Yuankun Chen, Yutian Chen, et al. 2025. Kimi k2: Open agentic intelligence. arXiv preprint arXiv:2507.20534 (2025). [43] Jinghui Wang, Shaojie Wang, Yinghan Cui, Xuxing Chen, Chao Wang, Liang Huang, Can Tang, Xiaojiang Zhang, Junyi Peng, Li Wan, Haotian Zhang, and Bin Chen. 2026. Tree Training: Accelerating Agentic LLMs Training via Shared Prefix Reuse. arXiv:2511.00413 [cs.LG] 
+
+https://arxiv.org/abs/2511.00413 
+
+[44] Zheng Wang, Anna Cai, Xinfeng Xie, Zaifeng Pan, Yue Guan, Wei-wei Chu, Jie Wang, Shikai Li, Jianyu Huang, Chris Cai, et al. 2025. 
+
+{WLB-LLM }:{Workload-Balanced } 4D Parallelism for Large Lan-guage Model Training. In 19th USENIX Symposium on Operating Sys-tems Design and Implementation (OSDI 25) . 785–801. [45] Ziliang Wang, Xuhui Zheng, Kang An, Cijun Ouyang, Jialu Cai, Yuhang Wang, and Yichao Wu. 2025. StepSearch: Igniting LLMs Search Ability via Step-Wise Proximal Policy Optimization. arXiv preprint arXiv:2505.15107 (2025). [46] Junde Wu, Jiayuan Zhu, and Yuyuan Liu. 2025. Agentic reason-ing: Reasoning llms with tools for the deep research. arXiv preprint arXiv:2502.04644 9 (2025). [47] Yongji Wu, Xueshen Liu, Haizhong Zheng, Juncheng Gu, Beidi Chen, Z Morley Mao, Arvind Krishnamurthy, and Ion Stoica. 2025. Rlboost: Harvesting preemptible resources for cost-efficient reinforcement learning on llms. arXiv preprint arXiv:2510.19225 (2025). [48] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 (2025). [49] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. Webshop: Towards scalable real-world web interaction with grounded language agents. Advances in Neural Information Processing Systems 
+
+35 (2022), 20744–20757. [50] Lu Ye, Ze Tao, Yong Huang, and Yang Li. 2024. Chunkattention: Efficient self-attention with prefix-aware kv cache and two-phase partition. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 11608–11620. [51] Lingfan Yu, Jinkun Lin, and Jinyang Li. 2025. Stateful large language model serving with pensieve. In Proceedings of the Twentieth European Conference on Computer Systems . 144–158. [52] Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al. 2025. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 (2025). [53] Chen Zhang, Kuntai Du, Shu Liu, Woosuk Kwon, Xiangxi Mo, Yufeng Wang, Xiaoxuan Liu, Kaichao You, Zhuohan Li, Mingsheng Long, et al. 2025. JENGA: Effective memory management for serving LLM with heterogeneity. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles . 446–461. [54] Jiarui Zhang, Yuchen Yang, Ran Yan, Zhiyu Mei, Liyuan Zhang, Daifeng Li, Wei Fu, Jiaxuan Gao, Shusheng Xu, Yi Wu, and Binhang Yuan. 2026. AREAL-DTA: Dynamic Tree Attention for Efficient Reinforcement Learning of Large Language Models. arXiv:2602.00482 [cs.LG] https://arxiv.org/abs/2602.00482 
+
+[55] Yanqi Zhang, Yuwei Hu, Runyuan Zhao, John CS Lui, and Haibo Chen. 2025. Diffkv: Differentiated memory management for large language models with parallel kv compaction. In Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles . 431–445. [56] Yanli Zhao, Andrew Gu, Rohan Varma, Liang Luo, Chien-Chin Huang, Min Xu, Less Wright, Hamid Shojanazeri, Myle Ott, Sam Shleifer, et al. 2023. Pytorch fsdp: experiences on scaling fully sharded data parallel. 
+
+arXiv preprint arXiv:2304.11277 (2023). [57] Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, Jingren Zhou, and Junyang Lin. 2025. Group Sequence Policy Optimization. arXiv:2507.18071 [cs.LG] https://arxiv.org/abs/2507.18071 
+
+[58] Haizhong Zheng, Jiawei Zhao, and Beidi Chen. 2025. Prosperity before Collapse: How Far Can Off-Policy RL Reach with Stale Data on LLMs? 
+
+arXiv preprint arXiv:2510.01161 (2025). [59] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Livia Sun, Jeff Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. 2024. Sglang: Efficient execution of structured language model programs. Advances in neural information processing systems 37 (2024), 62557–62583. [60] Yuxiang Zheng, Dayuan Fu, Xiangkun Hu, Xiaojie Cai, Lyumanshan Ye, Pengrui Lu, and Pengfei Liu. 2025. Deepresearcher: Scaling deep research via reinforcement learning in real-world environments. In 
+
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing . 414–431. [61] Yinmin Zhong, Zili Zhang, Xiaoniu Song, Hanpeng Hu, Chao Jin, Bingyang Wu, Nuo Chen, Yukun Chen, Yu Zhou, Changyi Wan, et al. 2025. StreamRL: Scalable, Heterogeneous, and Elastic RL for LLMs with Disaggregated Stream Generation. arXiv preprint arXiv:2504.15930 
+
+(2025). 
+
+> 14
+
+[62] Yinmin Zhong, Zili Zhang, Bingyang Wu, Shengyu Liu, Yukun Chen, Changyi Wan, Hanpeng Hu, Lei Xia, Ranchen Ming, Yibo Zhu, et al. 2025. Optimizing {RLHF } training for large language models with stage fusion. In 22nd USENIX Symposium on Networked Systems Design and Implementation (NSDI 25) . 489–503. [63] Yifei Zhou, Song Jiang, Yuandong Tian, Jason Weston, Sergey Levine, Sainbayar Sukhbaatar, and Xian Li. 2025. Sweet-rl: Training multi-turn llm agents on collaborative reasoning tasks. arXiv preprint arXiv:2503.15478 (2025).
