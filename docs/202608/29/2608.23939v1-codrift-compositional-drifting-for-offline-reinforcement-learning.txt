@@ -1,0 +1,504 @@
+Title: CoDrift: Compositional Drifting for Offline Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.23939v1
+
+Published Time: Wed, 26 Aug 2026 00:29:07 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# CoDrift: Compositional Drifting for Offline Reinforcement Learning 
+
+Xiewei Ni , Ruofeng Mei , Xiangyu Xu ∗
+
+Xi’an Jiaotong University 
+
+> ∗
+
+Corresponding author 
+
+Offline reinforcement learning is intrinsically multi-objective: a policy must remain compatible with the behavioral support of a fixed dataset while preferentially selecting high-value actions. We recast these objectives in a common form by viewing each as an action-space motion field that specifies how generated actions should move. This perspective enables heterogeneous learning objectives to be combined directly through field composition. Inspired by drifting models, we propose CoDrift , a compositional framework for one-step generative policy learning. CoDrift combines three objective-level fields into a unified policy field. The conditional field preserves state-dependent behavioral structure, while the marginal field pools actions across states to provide a more stable generative signal in the single-positive-sample regime of continuous-control offline RL. The value field moves generated actions toward higher-value regions. The composed field is absorbed into a stochastic generator that produces an action with a single forward pass at deployment. We evaluate CoDrift on 73 tasks from OGBench and D4RL in both offline and offline-to-online settings. CoDrift compares favorably with state-of-the-art methods and achieves the best average rank in both settings. 
+
+## 1 Introduction 
+
+Offline reinforcement learning (RL) aims to learn effective policies entirely from previously collected experience, without further interaction with the environment (Levine et al., 2020). A central challenge is that policy optimization must satisfy multiple objectives simultaneously. On the one hand, the learned policy should remain compatible with the behavioral support of the offline dataset, since actions far outside the data distribution may lead to unreliable value estimates and poor decisions. On the other hand, merely reproducing the behavior policy is insufficient: the policy must preferentially select high-value actions in order to improve return. Offline RL can therefore be viewed as an intrinsically multi-objective policy-learning problem, balancing behavioral fidelity with value maximization. Generative policies provide a powerful way to model the behavioral side of this problem. In particular, diffusion-based policies have demonstrated good capability to represent complex and multimodal action distributions (Wang et al., 2023; Hansen-Estruch et al., 2023), while flow-matching approaches provide an even stronger generative policy class (Park et al., 2025b). These successes suggest that expressive generative modeling is a natural foundation for offline policy learning. We build on this perspective, but take a different view of how the multiple objectives of offline RL should be incorporated into a generative policy. Our starting point is simple: different learning objectives can all be interpreted as specifying how a generated action should move in action space. A behavioral objective moves generated actions toward regions supported by the offline data, whereas a value objective moves them toward directions of higher predicted return. Once expressed as action-space displacements, these heterogeneous objectives share a common representation and can thereby be composed naturally. This motivates the central principle of our approach: offline policy learning can be formulated as the composition of action-space motion fields , with each field corresponding to a distinct learning objective. Our formulation is inspired by drifting models (Deng et al., 2026), a recent class of generative models that learns stochastic generators from displacement fields acting directly on generated samples. In the original drifting formulation, a displacement field is constructed from two elementary components: attraction toward 1arXiv:2608.23939v1 [cs.LG] 25 Aug 2026 𝑝 𝒟 (𝑎) 
+
+𝑞 𝜃 (𝑎) 
+
+𝑄(𝑠 𝑖 ,·) 
+
+𝑎 𝑖 
+
+ො𝑎 𝑖,𝑘 
+
+𝜂 𝑣 𝑉 value 
+
+Data Sample 𝑎 𝑖 ~𝑝 𝒟 (𝑎) 
+
+𝜂 𝑚 𝑉 marg 
+
+𝜂 𝑐 𝑉 cond 
+
+Generated Sample ො 𝑎 𝑖,𝑘 ~𝑞 𝜃 (𝑎) 
+
+𝑉 CoDrift = 𝜂 𝑐 𝑉 cond  ො𝑎 𝑖,𝑘 + 𝜂 𝑚 𝑉 marg ( ො 𝑎 𝑖,𝑘 ) + 𝜂 𝑣 𝑉 value  𝑠 𝑖 , ො 𝑎 𝑖,𝑘 
+
+𝑉 CoDrift Figure 1 Overview of CoDrift. Conditional and marginal behavioral fields keep generated actions within the support of the offline data at two statistical scales, while the value field moves them toward higher-return regions. The three are composed additively into a single policy field VCoDrift .
+
+positive data samples and repulsion from negative generated samples. For our setting, it suggests a broader principle: while the original attraction and repulsion components jointly realize a single distribution-matching objective, different learning objectives can themselves be represented as displacement fields and composed directly in action space. Based on this principle, we propose CoDrift , a compositional drifting framework for offline RL. CoDrift instantiates three complementary action-space fields as illustrated in Figure 1. First, a conditional behavioral field preserves state-dependent behavioral support by attracting candidate actions toward actions observed at the corresponding states while maintaining stochasticity through repulsion among generated actions. Second, a marginal behavioral field captures global structure in the action distribution by pooling data and generated actions across states within a minibatch. This marginal field is particularly useful in continuous-control offline RL, where essentially every state is paired with only a single observed action. Consequently, the conditional field is estimated from a single Monte Carlo sample at each state, whereas marginal field can exploit multiple actions across the batch, yielding a more stable, lower-variance generative signal. Finally, a value field pushes generated actions toward higher-value regions using action gradients from learned critics. These fields play complementary roles and are combined additively into a single generative policy field. Our contributions are summarized as follows: • We introduce CoDrift, a compositional drifting framework for generative policy learning in offline RL, where heterogeneous learning objectives are represented as additive action-space fields. CoDrift achieves expressive stochastic generation while requiring only a single forward pass at deployment. • We identify the single-positive-sample problem in conditional drifting for offline RL. We address this issue with marginal drifting, which pools actions across states to provide a more stable training signal. • We conduct extensive experiments across 73 tasks from OGBench and D4RL in both offline and offline-to-online settings. CoDrift compares favorably with state-of-the-art approaches, achieving the best average rank in both settings. 22 Preliminaries 
+
+2.1 Offline RL 
+
+We consider a Markov decision process (MDP) M = ( S, A, P, r, ρ, γ ) (Levine et al., 2020), where S is the state space, and A = [ −1, 1] d is the d-dimensional continuous action space. P (· | s, a ) : S × A → ∆( S) is the transition dynamics, where ∆( X ) denotes the set of probability distributions over a space X . The reward function is r : S × A → R, ρ ∈ ∆( S) is the initial state distribution, and γ ∈ [0 , 1) is the discount factor. A policy πθ(· | s) : S → ∆( A) induces a trajectory distribution pπθ (ζ) under the dynamics P and the initial state distribution ρ, and is evaluated by its expected discounted return 
+
+J(πθ ) = Eζ∼pπθ
+
+" ∞X
+
+> t=0
+
+γtr(st, a t)
+
+#
+
+, (1) with associated action-value function 
+
+Qπθ (s, a ) = Eζ∼pπθ
+
+" ∞X
+
+> t=0
+
+γtr(st, a t) s0 = s, a 0 = a
+
+#
+
+.
+
+Offline RL seeks to maximize Eq. 1 using only a fixed dataset D = {(s, a, r, s ′)} of transitions collected by an unknown behavior policy πβ , without further interaction with the environment. In this work, we also consider the offline-to-online setting, where the offline pre-trained policy is further fine-tuned with a modest amount of online environment interactions. A fundamental difficulty in offline RL is distribution shift: because D covers only state–action regions visited by πβ , a critic fit on D cannot be expected to extrapolate reliably outside the support of the behavior distribution, and unconstrained value maximization against such a critic drives the actor toward out-of-distribution actions (Levine et al., 2020). 
+
+Behavior-regularized actor–critic methods. Wu et al. (2019); Fujimoto & Gu (2021); Tarasov et al. (2023) address this issue by balancing value maximization with an explicit constraint that keeps the learned policy close to the offline behavior. A critic Qφ is typically trained by Bellman regression, 
+
+LQ(φ) = E(s,a,r,s ′)∼D ,a′∼πθ (·| s′)
+
+h
+
+(Qφ(s, a ) − r − γQ ¯φ(s′, a ′)) 2i
+
+,
+
+where Q ¯φ denotes a target network (Mnih et al., 2015). The actor is then commonly optimized using an objective of the form 
+
+Lπ (θ) = E s∼D ,a∼πθ (·| s)
+
+[−Qφ(s, a ) + αR(πθ )] ,
+
+where R(πθ ) regularizes the policy toward the offline behavior distribution and α controls the trade-off between behavioral fidelity and value maximization. CoDrift follows the same fundamental principle of balancing behavioral fidelity and value maximization, but realizes it in a different form. Rather than combining a critic objective with an explicit behavioral penalty at the loss level, CoDrift represents the learning objectives as action-space displacement fields and composes them into a joint policy field, as introduced in the following sections. 
+
+2.2 Drifting Models 
+
+Drifting models (Deng et al., 2026) are a recent approach to one-step generative modeling. Let p := pdata be the target distribution on Rd and pε := N (0 , I ) a prior on Rm. A one-step generator fθ : Rm → Rd maps noise 
+
+ε ∼ pε to a sample x = fθ(ε), inducing the pushforward distribution qθ := [ fθ]#pε, and the goal is to make 
+
+qθ match p. Unlike diffusion and flow models, which transport samples through a sequence of intermediate states at inference time, drifting models shift this iterative transport process to training. The generator itself remains a single forward mapping, while its induced distribution qθ is progressively moved toward p over the course of optimization. 3The transport direction is given by a distribution-dependent drifting field Vp,q (x) = V + 
+
+> p
+
+(x) − V − 
+
+> q
+
+(x), whose two components are kernel-normalized mean-shift vectors: 
+
+V + 
+
+> p
+
+(x) = Eu+∼p[κτ (x, u +)( u+ − x)] 
+
+Eu+∼p[κτ (x, u +)] ,V − 
+
+> q
+
+(x) = Eu−∼q [κτ (x, u −)( u− − x)] 
+
+Eu−∼q [κτ (x, u −)] ,
+
+(2) where κτ (·, ·) is a positive similarity kernel. Throughout this work, we adopt the Laplace kernel κτ (x, u ) = exp( −∥ x−u∥2/τ ), which assigns larger weights to nearby samples, with τ controlling the effective neighborhood size. Because the kernel weights are normalized, each term in Eq. 2 represents a displacement vector from x to the weighted centroid of a reference set. Accordingly, V + 
+
+> p
+
+acts as an attractive component , pulling generated samples toward the target distribution, whereas subtracting V − 
+
+> q
+
+produces a repulsive component that pushes generated samples away from one another and discourages mode collapse. An important property of the drifting field is its antisymmetry: Vp,q (x) = −Vq,p (x). In particular, when 
+
+q = p, the attractive and repulsive components cancel and Vp,q (x) = 0 , so matching the target distribution corresponds to an equilibrium of the drifting dynamics. Training moves the generator toward this equilibrium by constructing a displaced target for each generated sample. Given x = fθ (ε), the target is ˜x = x + Vp,q (x),which is treated as fixed when updating the generator. The resulting regression objective is 
+
+Ldrift (θ; p, q ) = Eε∼pε
+
+h
+
+fθ (ε) − sg ( fθ (ε) + Vp,q (fθ (ε))) 22
+
+i
+
+, (3) where sg( ·) is the stop-gradient operator. Thus, rather than explicitly integrating the drifting field at inference time, training repeatedly regresses the one-step generator toward samples displaced by the current field. In practice, the expectations in Eq. 2 are approximated with minibatch samples. Given references u1, . . . , u N ,each component takes the form PNi=1 wi(ui − x) with normalized weights wi = κτ (x, u i)/ PNj=1 κτ (x, u j ). For the repulsive component, the references are other samples generated in the same training step, with the query sample excluded from its own reference set. For later use, we write V (x; Y, Z) for the minibatch drifting field evaluated at x, with positive reference set Y
+
+and negative reference set Z, which can be seen as a Monte Carlo approximation of Vp,q (x). Throughout, a query particle is excluded from its own negative references, allowing Z to denote the full set of generated particles without additional notation. 
+
+## 3 Method 
+
+We introduce CoDrift , a compositional drifting framework for offline reinforcement learning. CoDrift represents different learning objectives as displacement fields acting directly on generated actions and composes them into a single policy field. Specifically, CoDrift contains three objective-level fields: a conditional behavioral field , a 
+
+marginal behavioral field , and a value field . The first two preserve behavioral structure at complementary statistical scales, while the third pushes generated actions toward higher-value regions. Figure 1 provides an overview. We parameterize the policy as a one-step stochastic generator fθ . Given a state s and noise ε ∼ pε = N (0 , I ),
+
+ˆa = fθ (s, ε ), πθ (· | s) =  fθ (s, ·)
+
+> #
+
+pε, (4) where fθ uses tanh to ensure that ˆa ∈ [−1, 1] d. Sampling from πθ therefore requires only one noise draw and one forward pass. 
+
+3.1 Conditional Behavioral Field 
+
+The conditional behavioral field preserves the state-dependent action distribution of the offline data. At the population level, it instantiates the drifting field of Sec. 2.2 between the behavioral conditional distribution 4pD (a | s) and the policy πθ (a | s), where pD (a | s) plays the role of the target distribution pdata , while πθ (a | s)
+
+plays the role of the generated distribution qθ .Given a minibatch B = {(si, a i)}Bi=1 , we draw K independent noise samples for each state, 
+
+εi,k ∼ N (0 , I ), ˆai,k = fθ (si, ε i,k ), k = 1 , . . . , K. 
+
+For each state si, the positive and generated reference sets are 
+
+Ycond  
+
+> i
+
+= {ai}, Zcond  
+
+> i
+
+= {ˆai, 1, . . . , ˆai,K }. (5) Using the minibatch drifting notation introduced in Sec. 2.2, we define 
+
+Vcond (ˆ ai,k ) := V  ˆai,k ; Ycond  
+
+> i
+
+, Zcond 
+
+> i
+
+ .
+
+Because the positive set Ycond  
+
+> i
+
+contains only the single action paired with si, the attractive component has weight one and reduces to 
+
+V +cond (ˆ ai,k ) = ai − ˆai,k . (6) The repulsive component is computed from the other generated actions at the same state, 
+
+V −
+
+> cond
+
+(ˆ ai,k ) = X 
+
+> l̸=k
+
+wcond  
+
+> kl
+
+(ˆ ai,l − ˆai,k ),
+
+where the normalized affinities wcond  
+
+> kl
+
+= κτ (ˆ ai,k ,ˆai,l )P      
+
+> j̸=kκτ(ˆ ai,k ,ˆai,j )
+
+following Eq. 2, and ˆai,k is excluded from its own negative references. Thus, 
+
+Vcond = V +cond − V −
+
+> cond
+
+.
+
+A distinctive issue arises in continuous-control offline RL: an exact state is essentially observed only once, and hence pD (a | si) is represented by only one observed action. Consequently, the attractive component in Eq. 6 is effectively a one-sample Monte Carlo estimate of the population conditional drifting field, which can have high variance. This motivates a complementary field that can exploit distributional information pooled across states. 
+
+3.2 Marginal Behavioral Field 
+
+The same stochastic generator also induces a marginal action distribution when states are drawn from the offline state distribution. Recall from Eq. 4 that, for a fixed state s, fθ(s, ·) pushes the noise distribution pε
+
+forward to the conditional policy distribution πθ(· | s). If we additionally draw s ∼ pD(s), then the joint mapping 
+
+(s, ε ) 7 → fθ (s, ε )
+
+pushes the product distribution pD (s)pε(ε) forward to the policy-induced marginal action distribution 
+
+qθ = ( fθ )#
+
+ pD ⊗ pε
+
+,
+
+where ⊗ denotes product distribution. Equivalently, 
+
+qθ (a) = 
+
+Z
+
+pD (s) πθ (a | s) ds. 
+
+The corresponding marginal action distribution in the offline data is 
+
+pD (a) = 
+
+Z
+
+pD (s) pD (a | s) ds. 
+
+This yields a second distribution-matching objective at the marginal level. In particular, if 
+
+πθ (a | s) = pD (a | s), (7) 5then marginalizing over s immediately gives 
+
+qθ (a) = pD (a). (8) Hence matching the marginal action distribution in Eq. 8 is a necessary condition for matching the conditional behavioral distribution in Eq. 7. More importantly, the marginal distribution is much better sampled in an offline minibatch. For each predicted action ˆai,k , we pool actions across states: 
+
+Ymarg = {a1, . . . , a B }, Zmarg  
+
+> k
+
+= {ˆa1,k , . . . , ˆaB,k }.
+
+The marginal behavioral field acting on ˆai,k is 
+
+Vmarg (ˆ ai,k ) := V (ˆ ai,k ; Ymarg , Zmarg  
+
+> k
+
+) .
+
+It decomposes into attractive and repulsive components, 
+
+Vmarg = V +marg − V −
+
+> marg
+
+,
+
+where the attraction is computed from all B offline actions in the minibatch and the repulsion from generated actions pooled across states. The crucial difference from conditional drifting is that state–action pairing is deliberately removed at the marginal level. States used to generate policy actions are sampled from pD (s), while positive reference actions are sampled independently from pD(a). Therefore, instead of estimating a conditional expectation from the single action observed at one state ( Ycond  
+
+> i
+
+in Eq. 5), marginal drifting is able to estimate the corresponding distributional field using B positive samples in Ymarg . Consequently, it provides a more stable, lower-variance generative signal while constraining a distribution that must also match whenever the full conditional behavior is matched. The conditional and marginal fields are thus complementary: the former preserves state–action correspondence, whereas the latter supplies population-level action-distribution information. 
+
+3.3 Value Field 
+
+Behavioral matching alone does not solve offline RL: among actions supported by the dataset, the policy should favor those with higher expected return. We therefore express value improvement as a third action-space field. We maintain two critics, Qφ1 and Qφ2 , together with target networks Q ¯φ1 and Q ¯φ2 obtained through Polyak averaging (Fujimoto et al., 2018). For a transition (s, a, r, s ′) ∼ D , we sample 
+
+a′ = fθ (s′, ε ′), ε′ ∼ N (0 , I ),
+
+and form the Bellman target 
+
+y = r + γ Q ¯φ1 (s′, a ′) + Q ¯φ2 (s′, a ′)2 .
+
+The critics minimize 
+
+Lcritic = E
+
+"
+
+12
+
+> 2
+
+X
+
+> n=1
+
+(Qφn (s, a ) − y)2
+
+#
+
+.
+
+When updating the actor, the critics are held fixed. Let 
+
+Q(s, a ) = Qφ1 (s, a ) + Qφ2 (s, a )2 .
+
+The value field is simply the action gradient of the critic, 
+
+Vvalue (s, a ) = ∇aQ(s, a ).
+
+It specifies the local action-space direction of increasing predicted return. Unlike the conditional and marginal fields, which arise from distribution matching, the value field is not associated with a reference distribution. Nevertheless, all three objects are displacement fields in the same action space and can therefore be composed directly. 63.4 Compositional Drifting 
+
+We now combine the three objective-level fields into a single policy field. For every generated particle ˆai,k ,define 
+
+VCoDrift (si, ˆai,k ) = ηcVcond (ˆ ai,k ) + ηmVmarg (ˆ ai,k ) + ηv Vvalue (si, ˆai,k ), (9) where ηc, η m, η v ≥ 0 control the relative contributions of conditional behavioral matching, marginal behavioral matching, and value maximization. At a finer level, Eq. 9 contains five displacement components: 
+
+VCoDrift = ηc
+
+ V +cond − V −
+
+> cond
+
+ + ηm
+
+ V +marg − V −
+
+> marg
+
+ + ηv Vvalue .
+
+The first four components define two complementary behavioral fields, while the last introduces task-directed value optimization. Similar to the training of drifting models in Eq. 3, the joint field directly defines a displaced target for every generated action: 
+
+˜ai,k = sg[ˆ ai,k + VCoDrift (si, ˆai,k )] .
+
+The actor is finally trained with 
+
+LCoDrift (θ) = E
+
+"
+
+1
+
+BK 
+
+> B
+
+X
+
+> i=1
+> K
+
+X
+
+> k=1
+
+∥ˆai,k − ˜ai,k ∥22
+
+#
+
+,
+
+which learns the one-step stochastic policy by moving toward the composed target. In our implementation, we parameterize the field weights as 
+
+ηv = 1 , ηc = αλ, ηm = α(1 − λ),
+
+where α controls the overall strength of behavioral regularization and λ ∈ [0 , 1] balances conditional and marginal behavioral matching. 
+
+## 4 Experiments 
+
+We evaluate CoDrift in both offline and offline-to-online reinforcement learning settings across a broad collection of continuous-control benchmarks. Our experiments are designed to answer two main questions: 1) whether compositional drifting provides a competitive generative policy-learning framework across diverse offline RL tasks, and 2) whether marginal drifting improves over conditional drifting alone. 
+
+4.1 Experimental Setup 
+
+Benchmarks. We follow the benchmark suite and evaluation setting of existing works (Park et al., 2025b; Mu, 2026). Specifically, we evaluate on OGBench (Park et al., 2025a), which contains diverse long-horizon continuous-control tasks spanning navigation, locomotion, and manipulation. The datasets of OGBench are collected by task-agnostic policies, and we use their standard single-task variants, where a fixed evaluation goal is specified, and semi-sparse task rewards are relabeled from the original trajectories. We consider ten state-based datasets across six domains: AntMaze, HumanoidMaze, AntSoccer, Cube, Scene, and Puzzle, with five evaluation tasks per dataset, together with five pixel-based visual manipulation tasks. We additionally evaluate on D4RL (Fu et al., 2020), including six AntMaze navigation tasks and twelve Adroit manipulation tasks. Altogether, the offline evaluation comprises 73 tasks spanning different state and action dimensions, observation modalities, reward structures, and control problems. For offline-to-online RL, we follow the same 15-task protocol used by FQL and DeFlow (Park et al., 2025b; Mu, 2026), including five OGBench tasks, six D4RL AntMaze tasks, and four D4RL Adroit tasks. The policy is first trained offline and subsequently fine-tuned using online interactions without changing the learning objective. 7Table 1 Offline RL results. CoDrift is evaluated against representative Gaussian-, diffusion-, and flow-based offline RL methods across OGBench and D4RL. Results for CoDrift are averaged over 8 seeds (4 for pixel-based tasks), and baseline values are taken from prior work (Tarasov et al., 2023; Hansen-Estruch et al., 2023; Chen et al., 2024; Park et al., 2025b; Mu, 2026). The pixel-based row is excluded from ranking as several baselines are unavailable. Lower average rank is better.                                                                                                                                                                                                                                                                                                                                         
+
+> Gaussian Policies Diffusion Policies Flow Policies Drift Policy Task Category BC IQL ReBRAC IDQL SRPO CAC FAWAC FBRAC IFQL FQL DeFlow CoDrift OGBench antmaze-large 11 ±153 ±381 ±521 ±511 ±433 ±46±160 ±628 ±579 ±381 ±384 ±3
+> OGBench antmaze-giant 0±04±126 ±80±00±00±00±04±43±29±612 ±546 ±22
+> OGBench humanoidmaze-medium 2±133 ±222 ±81±01±153 ±819 ±138 ±560 ±14 58 ±548 ±483 ±5
+> OGBench humanoidmaze-large 1±02±12±11±00±00±00±02±011 ±24±25±215 ±5
+> OGBench antsoccer-arena 1±08±20±012 ±41±02±412 ±016 ±133 ±660 ±267 ±366 ±5
+> OGBench visual manipulation —42 ±460 ±2————22 ±250 ±565 ±269 ±261 ±7
+> OGBench puzzle-3x3 2±09±121 ±110 ±218 ±119 ±06±214 ±419 ±130 ±143 ±482 ±13
+> OGBench puzzle-4x4 0±07±114 ±129 ±310 ±315 ±31±013 ±125 ±517 ±211 ±222 ±4
+> OGBench cube-single 5±183 ±391 ±295 ±280 ±585 ±981 ±479 ±779 ±296 ±196 ±292 ±3
+> OGBench cube-double 2±17±112 ±115 ±62±16±25±215 ±314 ±329 ±240 ±549 ±10
+> OGBench scene 5±128 ±141 ±346 ±320 ±140 ±730 ±345 ±530 ±356 ±251 ±359 ±2
+> D4RL antmaze 17 57 78 79 74 30 ±344 ±364 ±765 ±784 ±383 ±273 ±6
+> D4RL adroit 48 53 59 52 ±151 ±143 ±248 ±150 ±252 ±152 ±152 ±150 ±3
+> Average rank ↓(12 categories) 10 .96 7.38 5.29 6.21 9.42 8.04 9.79 6.58 5.58 3.08 3.13 2.54
+
+Baselines. We compare CoDrift against eleven representative offline RL methods spanning several policy classes. Gaussian-policy baselines include behavior cloning (BC), Implicit Q-Learning (IQL; Kostrikov et al., 2022), and ReBRAC (Tarasov et al., 2023). Diffusion-based baselines include IDQL (Hansen-Estruch et al., 2023), SRPO (Chen et al., 2024), and Consistency Actor-Critic (CAC; Ding & Jin, 2024). Flow-based baselines include FQL (Park et al., 2025b), DeFlow (Mu, 2026), and three flow-policy variants introduced as baselines by Park et al. (2025b): FAWAC, FBRAC, and IFQL, which are flow counterparts of AWAC (Nair et al., 2020), Diffusion-QL (Wang et al., 2023), and IDQL (Hansen-Estruch et al., 2023), respectively. In the offline-to-online setting, we additionally compare with Cal-QL (Nakamoto et al., 2023) and RLPD (Ball et al., 2023). Baseline results are taken from prior work under the same benchmark protocols. 
+
+Evaluation protocol. We follow the evaluation protocol of Park et al. (2025b) to ensure direct comparability with previously reported results. CoDrift is trained for a fixed number of gradient steps and evaluated periodically using 50 rollout episodes. Following Kurenkov & Kolesnikov (2022), we do not select the best-performing evaluation checkpoint, which can introduce selection bias. For OGBench, we report the average over the final three evaluation epochs and measure task success rate. For D4RL, we report the final evaluation epoch, using success rate for AntMaze and normalized return for Adroit (Fu et al., 2020). CoDrift results are averaged over eight random seeds, except for pixel-based tasks, which use four seeds. For the offline-to-online experiments, we report performance after offline pretraining at 10 6 steps and after the subsequent online fine-tuning phase at 2×10 6 total steps. Following prior work (Park et al., 2025b; Mu, 2026), values within 95% of the best result in each task category are highlighted as near-best. For average rank, where lower is better, only the best result is highlighted. 
+
+4.2 Comparison with the State of the Art 
+
+Offline RL performance. Table 1 summarizes the offline RL results. Across the full benchmark suite, CoDrift achieves the best overall average rank among the compared methods, indicating strong performance across diverse task domains. CoDrift performs particularly strongly on OGBench tasks, while remaining competitive on D4RL. These results show that the proposed compositional drifting formulation provides a strong alternative to existing Gaussian-, diffusion-, and flow-based policy classes across a diverse collection of offline RL problems. 
+
+Offline-to-online performance. Table 2 reports the offline-to-online results on the 15 fine-tuning tasks. CoDrift can be fine-tuned online without introducing a separate online-stage objective: newly collected transitions are added to the replay buffer, and training proceeds using the same approach as in the offline phase. Across the 15 tasks, CoDrift attains the best overall average rank among the compared methods. These results show that 8Table 2 Offline-to-online RL results. Performance before and after online fine-tuning on the 15-task benchmark suite. CoDrift results are averaged over 8 seeds, and baseline values are taken from prior work. Lower average rank is better. 
+
+Task IQL ReBRAC Cal-QL RLPD IFQL FQL DeFlow CoDrift humanoidmaze-medium-navigate-singletask-v0 21 ±13 → 16 ±8 16 ±20 → 1 ±1 0 ±0 → 0 ±0 0 ±0 → 8 ±10 56 ±35 → 82 ±20 12 ±7 → 22 ±12 13 ±5 → 65 ±12 94 ±5 → 99 ±1
+
+antsoccer-arena-navigate-singletask-v0 2 ±1 → 0 ±0 0 ±0 → 0 ±0 0 ±0 → 0 ±0 0 ±0 → 0 ±0 26 ±15 → 39 ±10 28 ±8 → 86 ±5 44 ±8 → 86 ±3 52 ±7 → 86 ±5
+
+cube-double-play-singletask-v0 0 ±1 → 0 ±0 6 ±5 → 28 ±28 0 ±0 → 0 ±0 0 ±0 → 0 ±0 12 ±9 → 40 ±5 40 ±11 → 92 ±3 48 ±13 → 93 ±4 65 ±10 → 100 ±0
+
+scene-play-singletask-v0 14 ±11 → 10 ±9 55 ±10 → 100 ±0 1 ±2 → 50 ±53 0 ±0 → 100 ±0 0 ±1 → 60 ±39 82 ±11 → 100 ±1 58 ±14 → 100 ±1 92 ±6 → 100 ±0
+
+puzzle-4x4-play-singletask-v0 5 ±2 → 1 ±1 8 ±4 → 14 ±35 0 ±0 → 0 ±0 0 ±0 → 100 ±1 23 ±6 → 19 ±33 8 ±3 → 38 ±52 4 ±4 → 100 ±0 12 ±5 → 88 ±32 
+
+antmaze-umaze-v2 77 → 96 98 → 75 77 → 100 0 ±0 → 98 ±3 94 ±5 → 96 ±2 97 ±2 → 99 ±1 96 ±3 → 99 ±2 90 ±5 → 99 ±1
+
+antmaze-umaze-diverse-v2 60 → 64 74 → 98 32 → 98 0 ±0 → 94 ±5 69 ±20 → 93 ±5 79 ±16 → 100 ±1 87 ±6 → 99 ±1 66 ±13 → 98 ±2
+
+antmaze-medium-play-v2 72 → 90 88 → 98 72 → 99 0 ±0 → 98 ±2 52 ±19 → 93 ±2 77 ±7 → 97 ±2 76 ±5 → 97 ±2 60 ±27 → 98 ±2
+
+antmaze-medium-diverse-v2 64 → 92 85 → 99 62 → 98 0 ±0 → 97 ±2 44 ±26 → 89 ±4 55 ±19 → 97 ±3 61 ±9 → 98 ±2 59 ±15 → 97 ±2
+
+antmaze-large-play-v2 38 → 64 68 → 32 32 → 97 0 ±0 → 93 ±5 64 ±14 → 80 ±5 66 ±40 → 84 ±30 76 ±6 → 95 ±4 41 ±17 → 92 ±3
+
+antmaze-large-diverse-v2 27 → 64 67 → 72 44 → 92 0 ±0 → 94 ±3 69 ±6 → 86 ±5 75 ±24 → 94 ±3 76 ±9 → 96 ±2 7 ±19 → 92 ±4
+
+pen-cloned-v1 84 → 102 74 → 138 −3 → − 3 3 ±2 → 120 ±10 77 ±7 → 107 ±10 53 ±14 → 149 ±6 64 ±13 → 142 ±7 50 ±6 → 143 ±4
+
+door-cloned-v1 1 → 20 0 → 102 −0 → − 0 0 ±0 → 102 ±7 3 ±2 → 50 ±15 0 ±0 → 102 ±5 0 ±0 → 99 ±2 0 ±0 → 108 ±4
+
+hammer-cloned-v1 1 → 57 7 → 125 0 → 0 0 ±0 → 128 ±29 4 ±2 → 60 ±14 0 ±0 → 127 ±17 7 ±3 → 106 ±10 0 ±0 → 139 ±4
+
+relocate-cloned-v1 0 → 0 1 → 7 −0 → − 0 0 ±0 → 2 ±2 −0 ±0 → 5 ±3 0 ±1 → 62 ±8 1 ±0 → 35 ±8 0 ±0 → 23 ±15 
+
+Average rank ↓ (15 tasks) 7.10 4.90 5.47 4.30 5.63 3.07 2.83 2.70 
+
+Table 3 Effectiveness of marginal drifting. Success rates on four representative tasks, averaged over 8 seeds ( ± standard deviation). w/o Marg removes the marginal behavioral field. ∆ denotes the resulting gain from marginal drifting. 
+
+Task CoDrift w/o Marg ∆
+
+antmaze-large 84 ±3 77 ±6 +7 
+
+humanoidmaze-medium 83 ±5 77 ±5 +6 
+
+cube-single 92 ±3 86 ±3 +6 
+
+puzzle-3x3 82 ±13 74 ±4 +8 
+
+Average 85 .3 78 .5 +6 .8
+
+the same compositional drifting formulation remains effective when transitioning from purely offline training to online policy improvement, without requiring an algorithmic change between the two phases. 
+
+4.3 Effectiveness of Marginal Drifting 
+
+As introduced in Sec. 3.2, conditional drifting estimates its attractive component from the single action observed at each state, whereas marginal drifting pools actions across states and therefore constructs its drifting field from a substantially larger positive sample. The resulting batch-level signal complements the paired state–action supervision provided by the conditional field. To isolate the contribution of marginal drifting, we compare the full CoDrift model with a variant that removes the marginal behavioral field by setting λ = 1 , so that all behavioral regularization is assigned to conditional drifting. Table 3 reports results on four representative tasks drawn from different OGBench domains. Adding marginal drifting improves performance on all four tasks, with gains ranging from 6 to 8 percentage points and an average improvement of 6.8 points. This result supports the role of marginal drifting as a complementary behavioral signal beyond per-state conditional drifting. 
+
+## 5 Related Work 
+
+Offline RL and behavior regularization. Offline RL seeks to maximize return using a fixed dataset while avoiding extrapolation errors caused by out-of-distribution actions (Levine et al., 2020; Fujimoto et al., 2019). Existing approaches include value regularization (Kumar et al., 2020; An et al., 2021), in-sample learning (Kostrikov et al., 2022; Xu et al., 2023), and policy regularization. The latter retains an actor–critic formulation while constraining the learned policy toward the behavior distribution, either through explicit penalties (Wu et al., 2019; Fujimoto & Gu, 2021; Tarasov et al., 2023) or weighted regression (Peng et al., 2019; Nair et al., 2020). CoDrift follows the same general principle of balancing behavioral fidelity and value maximization, but represents these objectives as action-space displacement fields. In particular, it constrains behavior at both 9the conditional and marginal levels and composes these behavioral fields directly with a critic-guided value field. 
+
+Generative policies. Expressive generative models provide a natural policy class for representing complex and multimodal action distributions. Existing generative policies have explored several modeling paradigms, including autoregressive models (Kim et al., 2024; Wang et al., 2026a), generative adversarial networks (Vuong et al., 2022), diffusion models (Wang et al., 2023; Chi et al., 2023), and flow matching (Park et al., 2025b; Chang et al., 2026; Wang et al., 2026b; Espinosa-Dice et al., 2025). CoDrift takes a different approach based on drifting models (Deng et al., 2026). Drifting models learn a stochastic generator from displacement fields acting directly on generated samples and support native one-step generation. More importantly for offline RL, their displacement-based formulation provides a natural interface for combining heterogeneous learning objectives: once different objectives are expressed as action-space fields, their effects can be composed additively before training the generator. Concurrent with our work, Koo et al. (2026) also applies drifting models to one-step policy learning, but uses a single drifting field toward a value-reweighted target. In contrast, CoDrift explicitly composes multiple objective-level fields within a unified one-step generative framework. 
+
+## 6 Concluding Remarks 
+
+We introduced CoDrift, a compositional drifting framework for generative policy learning in offline reinforcement learning. The central idea is to represent heterogeneous learning objectives in a common language of action-space displacement fields and compose them into a single policy field. For offline RL, CoDrift instantiates this principle with three complementary objective-level fields: a conditional behavioral field that preserves state-dependent behavioral structure, a marginal behavioral field that captures population-level action structure, and a critic-guided value field that promotes higher-return actions. The resulting joint field directly defines the regression target of a one-step stochastic actor. Empirically, CoDrift achieves strong performance across a broad collection of OGBench and D4RL tasks in both offline and offline-to-online settings, attaining the best overall average rank among the compared methods. These results demonstrate that compositional drifting provides a competitive alternative to existing Gaussian-, diffusion-, and flow-based policy classes, while retaining native one-step stochastic generation at deployment. More broadly, we view the main advantage of the drifting formulation as its objective compositionality. Different requirements need not share the same loss construction; it is sufficient that each can be translated into a displacement in action space. Their interaction can then be expressed through the additive composition of the corresponding fields and absorbed into a single generative policy. We hope this perspective provides a useful foundation for incorporating additional objectives and constraints into future one-step generative policies for reinforcement learning. 
+
+## References       
+
+> Gaon An, Seungyong Moon, Jang-Hyun Kim, and Hyun Oh Song. Uncertainty-based offline reinforcement learning with diversified q-ensemble. In Advances in Neural Information Processing Systems (NeurIPS) , 2021. Philip J. Ball, Laura Smith, Ilya Kostrikov, and Sergey Levine. Efficient online reinforcement learning with offline data. In International Conference on Machine Learning (ICML) , 2023. Jianlei Chang, Ruofeng Mei, Wei Ke, and Xiangyu Xu. Efficientflow: Efficient equivariant flow policy learning for embodied ai. In AAAI Conference on Artificial Intelligence (AAAI) , 2026. Huayu Chen, Cheng Lu, Zhengyi Wang, Hang Su, and Jun Zhu. Score regularized policy optimization through diffusion behavior. In International Conference on Learning Representations (ICLR) , 2024. Cheng Chi, Siyuan Feng, Yilun Du, Zhenjia Xu, Eric Cousineau, Benjamin Burchfiel, and Shuran Song. Diffusion policy: Visuomotor policy learning via action diffusion. In Robotics: Science and Systems (RSS) , 2023. Mingyang Deng, He Li, Tianhong Li, Yilun Du, and Kaiming He. Generative modeling via drifting. arXiv:2602.04770 ,2026.
+
+10 Zihan Ding and Chi Jin. Consistency models as a rich and efficient policy class for reinforcement learning. In 
+
+International Conference on Learning Representations (ICLR) , 2024. Nicolas Espinosa-Dice, Yiyi Zhang, Yiding Chen, Bradley Guo, Owen Oertell, Gokul Swamy, Kianté Brantley, and Wen Sun. Scaling offline RL via efficient and expressive shortcut models. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Justin Fu, Aviral Kumar, Ofir Nachum, George Tucker, and Sergey Levine. D4rl: Datasets for deep data-driven reinforcement learning. arXiv:2004.07219 , 2020. Scott Fujimoto and Shixiang Gu. A minimalist approach to offline reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2021. Scott Fujimoto, Herke van Hoof, and David Meger. Addressing function approximation error in actor-critic methods. In International Conference on Machine Learning (ICML) , 2018. Scott Fujimoto, David Meger, and Doina Precup. Off-policy deep reinforcement learning without exploration. In 
+
+International Conference on Machine Learning (ICML) , 2019. Philippe Hansen-Estruch, Ilya Kostrikov, Michael Janner, Jakub Grudzien Kuba, and Sergey Levine. IDQL: Implicit q-learning as an actor-critic method with diffusion policies. arXiv:2304.10573 , 2023. Moo Jin Kim, Karl Pertsch, Siddharth Karamcheti, Ted Xiao, Ashwin Balakrishna, Suraj Nair, Rafael Rafailov, Ethan Foster, Grace Lam, Pannag Sanketi, et al. Openvla: An open-source vision-language-action model. arXiv:2406.09246 ,2024. Juil Koo, Mingue Park, Jiwon Choi, Yunhong Min, and Minhyuk Sung. Drifting field policy: A one-step generative policy via Wasserstein gradient flow. arXiv:2605.07727 , 2026. Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Offline reinforcement learning with implicit q-learning. In International Conference on Learning Representations (ICLR) , 2022. Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative q-learning for offline reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2020. Vladislav Kurenkov and Sergey Kolesnikov. Showing your offline reinforcement learning work: Online evaluation budget matters. In International Conference on Machine Learning (ICML) , 2022. Sergey Levine, Aviral Kumar, George Tucker, and Justin Fu. Offline reinforcement learning: Tutorial, review, and perspectives on open problems. arXiv:2005.01643 , 2020. Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A. Rusu, Joel Veness, Marc G. Bellemare, Alex Graves, Martin Riedmiller, Andreas K. Fidjeland, Georg Ostrovski, Stig Petersen, Charles Beattie, Amir Sadik, Ioannis Antonoglou, Helen King, Dharshan Kumaran, Daan Wierstra, Shane Legg, and Demis Hassabis. Human-level control through deep reinforcement learning. Nature , 518(7540):529–533, 2015. Zhancun Mu. DeFlow: Decoupling manifold modeling and value maximization for offline policy extraction. 
+
+arXiv:2601.10471 , 2026. Ashvin Nair, Murtaza Dalal, Abhishek Gupta, and Sergey Levine. AWAC: Accelerating online reinforcement learning with offline datasets. arXiv:2006.09359 , 2020. Mitsuhiko Nakamoto, Yuexiang Zhai, Anikait Singh, Max Sobol Mark, Yi Ma, Chelsea Finn, Aviral Kumar, and Sergey Levine. Cal-QL: Calibrated offline RL pre-training for efficient online fine-tuning. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. Seohong Park, Kevin Frans, Benjamin Eysenbach, and Sergey Levine. Ogbench: Benchmarking offline goal-conditioned rl. In International Conference on Learning Representations (ICLR) , 2025a. Seohong Park, Qiyang Li, and Sergey Levine. Flow q-learning. In International Conference on Machine Learning (ICML) , 2025b. Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regression: Simple and scalable off-policy reinforcement learning. arXiv:1910.00177 , 2019. Denis Tarasov, Vladislav Kurenkov, Alexander Nikulin, and Sergey Kolesnikov. Revisiting the minimalist approach to offline reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2023. 
+
+11 Quan Vuong, Aviral Kumar, Sergey Levine, and Yevgen Chebotar. Dasco: Dual-generator adversarial support constrained offline reinforcement learning. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. Ruiheng Wang, Shuanghao Bai, Haoran Zhang, Badong Chen, and Xiangyu Xu. Blockvla: Accelerating autoregressive vla via block diffusion finetuning. arXiv:2605.13382 , 2026a. Zeyuan Wang, Da Li, Yulin Chen, Ye Shi, Liang Bai, Tianyuan Yu, and Yanwei Fu. One-step generative policies with Q-learning: A reformulation of MeanFlow. In AAAI Conference on Artificial Intelligence (AAAI) , 2026b. Zhendong Wang, Jonathan J. Hunt, and Mingyuan Zhou. Diffusion policies as an expressive policy class for offline reinforcement learning. In International Conference on Learning Representations (ICLR) , 2023. Yifan Wu, George Tucker, and Ofir Nachum. Behavior regularized offline reinforcement learning. arXiv:1911.11361 ,2019. Haoran Xu, Li Jiang, Jianxiong Li, Zhuoran Yang, Zhaoran Wang, Victor Wai Kin Chan, and Xianyuan Zhan. Offline rl with no ood actions: In-sample learning via implicit value regularization. In International Conference on Learning Representations (ICLR) , 2023. 
+
+12
