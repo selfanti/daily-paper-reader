@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 28 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 17 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>10</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>18</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 22:18:39 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 21:50:18 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日推荐28篇论文，精读10篇、速读18篇，聚焦智能体上下文管理与工具使用。最值得关注的是程序化上下文管理（9.0分）和边界感知技能记忆（9.0分），均针对长程任务与工具使用Agent的可靠性。建议优先精读这两篇高分论文，并留意MCP训练与离线强化学习评估的速读内容。</p>
+<p>今日精读6篇、速读11篇，聚焦机器人策略与规划前沿；最值得关注的是推理延迟下的通用机器人微调（9.0）与贝叶斯流网络离线轨迹规划（9.0），社会导航与自然语言推理也具亮点；建议优先精读这两篇高分工作，并留意速读中的具身智能与记忆机制新思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">10 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Context as an Environment: Programmatic Context Management for Long-Horizon Agents">Context as an Environment: Programmatic Context Management for Long-Horizon Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Not to Imitate: Boundary-Aware Skill Memory for Reliable Tool-Use LLM Agents">When Not to Imitate: Boundary-Aware Skill Memory for Reliable Tool-Use LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Scaling Curriculum Learning For Autonomous Driving">Scaling Curriculum Learning For Autonomous Driving</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning to Act While Waiting: RL Finetuning of Generalist Robot Policies Under Inference Latency">Learning to Act While Waiting: RL Finetuning of Generalist Robot Policies Under Inference Latency</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Flow Networks for Offline Trajectory Planning">Bayesian Flow Networks for Offline Trajectory Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Verify Smarter, Evolve Further: Efficient Harness Evolution through Behavior-Aware Verification">Verify Smarter, Evolve Further: Efficient Harness Evolution through Behavior-Aware Verification</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>10</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">18 篇</strong>
+    <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MCP-Universe RL: A Framework for Training MCP Tool-Use Agents via Reinforcement Learning">MCP-Universe RL: A Framework for Training MCP Tool-Use Agents via Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sparse Additive Off-Policy Evaluation for Reinforcement Learning with Potentially Limited Number of Trajectories">Sparse Additive Off-Policy Evaluation for Reinforcement Learning with Potentially Limited Number of Trajectories</span></li><li><span class="dpr-home-dashboard-paper-title" title="CoDrift: Compositional Drifting for Offline Reinforcement Learning">CoDrift: Compositional Drifting for Offline Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="StarHarness: Evolving Harnesses with Stratified Search for Enterprise Environments">StarHarness: Evolving Harnesses with Stratified Search for Enterprise Environments</span></li><li><span class="dpr-home-dashboard-paper-title" title="Advantage-Driven Explicit Memory for Social Navigation">Advantage-Driven Explicit Memory for Social Navigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="$R^3$: Training Robots to Reason in Natural Language via Reinforcement Learning">$R^3$: Training Robots to Reason in Natural Language via Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>18</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>
 </div>
 
