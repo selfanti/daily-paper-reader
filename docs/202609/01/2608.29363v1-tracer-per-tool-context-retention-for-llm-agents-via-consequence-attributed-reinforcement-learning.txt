@@ -1,0 +1,1184 @@
+Title: TRACER: Per-Tool Context Retention for LLM Agents via Consequence-Attributed Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.29363v1
+
+Published Time: Tue, 01 Sep 2026 00:51:22 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# TRACER: Per-Tool Context Retention for LLM Agents via Consequence-Attributed Reinforcement Learning 
+
+## Ziqi Lin, Ye Wu, Mengying Yang, Xu Liu, Yizhou Liu, Qiang Ke, Qin Guo 
+
+Abstract 
+
+Enterprise data agents answer business queries by chaining many tool calls over multiple reasoning steps, routinely accu-mulating hundreds of thousands of context tokens per session. Existing compression strategies typically allocate retention budgets without accounting for the downstream consequences of removing individual tool outputs. Aggressive compression may therefore trigger costly tool re-invocations that offset the initial savings. We call this the compression–consequence gap . To close it, we propose TRACER , which formulates compression as a sequential per-tool decision problem. A lightweight REINFORCE policy assigns query-conditioned retention ratios using only information available at each com-pression event. Its consequence-aware objective jointly ac-counts for task success, total token consumption, and post-compression tool re-invocations. To improve credit assign-ment, TRACER uses a learned outcome model to compare the predicted consequences of the selected retention ratio with those of fully retaining each tool output. On held-out pro-duction queries across three compressor backends, TRACER reduces total token consumption by 29–46% relative to keep-ing all context while maintaining comparable or higher task success. Compared with a tool-type-conditional static policy, TRACER provides an additional 15–18% of token savings. Interventional rollouts show that the learned per-tool credit scores correlate with measured single-tool consequences. The learned policy also yields positive savings when transferred across agent backbones and compressor architectures, and re-duces token consumption by 18–25% on five held-out LOCA-bench environments. These results demonstrate the value of consequence-aware, per-tool context retention for improving the efficiency of long-horizon language agents. 
+
+## 1 Introduction 
+
+Enterprise data agents answer business questions by chaining tool calls over many reasoning steps (Yao et al. 2023; Schick et al. 2024). Because each tool output is appended to the context and never discarded, the working memory grows monotonically. A single SQL result alone can exceed ten thousand tokens, and a typical task spans five to ten such calls. The accumulated context therefore routinely reaches hundreds of thousands of tokens, exceeding model windows, exhausting cost budgets, and degrading reasoning through diluted attention. Therefore, context compression becomes essential. 
+
+Figure 1: The compression–consequence gap. Token cost falls as compression becomes more aggressive, but total cost also accounts for downstream re-invocations. Existing compression methods operate at various granu-larities: token-level pruning (Jiang et al. 2023, 2024; Pan et al. 2024), turn-level summarization (Xu, Shi, and Choi 2024), and step-level dropping (Zhang and Sun 2026). Yet they all apply a uniform strategy across heterogeneous con-tent. In an agentic session, tool outputs vary widely in down-stream importance: a schema lookup may be referenced by every subsequent step, whereas a permission check is never revisited. What is needed is a query-conditioned, per-tool retention policy that allocates the token budget according to each output’s future utility. A deeper limitation is that existing methods evaluate com-pression in isolation. In an agentic loop, the model continues to act after compression. When a needed detail has been re-moved, the agent re-invokes the tool to recover it. For data agents, a single compensatory SQL call can consume tens of thousands of additional tokens. Because compression re-curs as new outputs accumulate, such costs compound across steps. We call this mismatch between compression-time sav-ings and downstream cost the compression–consequence gap , illustrated in Figure 1. To close this gap we propose TRACER , a reinforcement-learning framework that dynamically determines the reten-tion ratio for each tool output. The policy emits a continuous action per output, letting the token budget flow to outputs whose removal would trigger expensive recovery. The train-ing reward combines task success, token efficiency, and the fraction of tools re-invoked after compression, so that savings purchased through costly recovery never yield a net gain. We arXiv:2608.29363v1 [cs.AI] 29 Aug 2026 train the policy with REINFORCE (Williams 1992) on full agent episodes. A further challenge is credit assignment: each episode yields only one scalar reward across many per-tool decisions. To produce dense gradient signals, we introduce a learned outcome model that predicts per-tool consequences through single-tool counterfactuals. Our contributions are: 
+
+• We formalize the compression–consequence gap as a se-quential, per-tool decision problem whose reward explic-itly prices downstream re-invocations. 
+
+• We propose a reinforcement learning framework that dy-namically determines per-tool retention ratios, parameter-ized by a Beta distribution over a bounded action space. 
+
+• We introduce a learned attributor that predicts per-tool re-invocation consequences through single-tool counter-factuals. On semantic compressors, the attributor reduces both token consumption and re-invocation rate. On po-sitional compressors, it protects task success by steering retention toward high-consequence outputs. 
+
+## 2 Related Work 
+
+Context compression Context compression operates at multiple granularities, ranging from individual tokens to entire interaction steps. At the token level, methods prune by perplexity (Jiang et al. 2023, 2024) or distilled classi-fiers (Pan et al. 2024), and Selective Context drops low-self-information units (Li et al. 2023). At a coarser level, AGORA retains or discards entire observation–action pairs via counterfactual supervision (Zhang and Sun 2026). Sev-eral recent methods learn when or how to compress the agen-tic context.MemGPT pages information across tiered stor-age (Packer et al. 2024); ACON, Focus, and Sculptor select a compressor mode per turn (Kang et al. 2025; Verma 2026; Li et al. 2025); SUPO co-trains summarization and action poli-cies end-to-end (Lu et al. 2025); AdaCoM trains an external LLM via RL to manage context for a frozen agent (Yi et al. 2026); and LLM-DCP formulates compression as an MDP over token removal (Hu et al. 2025). These methods differ from TRACER primarily in decision granularity and action space. TRACER learns continuous retention ratios for indi-vidual tool outputs while keeping the underlying agent and compressor fixed. This design can potentially complement context managers that select higher-level compression oper-ations, although both approaches optimize how information is retained in the agent context. 
+
+RL for language agents and credit assignment Prior RL methods for language agents assign credit at the step or turn level (Wang, Li et al. 2026; Li, Zhou et al. 2025; Li et al. 2026), exploit episode structure via graph decomposition or process rewards (Cheng, He et al. 2026; Lu, Lin et al. 2026; Su, Zeng et al. 2025; Zhang et al. 2026; Yuan, Xu et al. 2026; Cui et al. 2026), or penalize redundant tool calls (Cao et al. 2026; Chen et al. 2026). All optimize the agent’s action policy. Our setting is the converse: we freeze the action policy and train only the context policy, using excess tool calls as a sparse credit signal. To densify this signal, we adopt counterfactual credit as-signment (Foerster et al. 2018; Wolpert and Tumer 2001; Arjona-Medina et al. 2019; Chen et al. 2025), which isolates one decision’s contribution by comparing realized and alter-native outcomes. We instantiate this at the level of individual tool outputs and learn an outcome model that predicts the consequence of dropping each one. 
+
+## 3 Method 
+
+As illustrated in Figure 2, TRACER recasts context compres-sion as a sequential decision problem. When a compression event occurs, the policy πθ reads per-tool features and emits a heterogeneous retention ratio for each tool. A fixed com-pressor applies these ratios, and the agent continues reason-ing over the compressed context. Throughout the trajectory we record task success, token usage, and tool re-invocations triggered after compression. These signals jointly drive an online REINFORCE update. Once the session ends, an out-come model attributes the observed consequences back to individual tools through single-tool counterfactuals, yield-ing a dense per-tool signal. We build TRACER through the following three core steps: 
+
+3.1 Problem Formulation 
+
+The compression policy operates inside the agent’s execution loop, so we first describe the agent and how its context grows, then define compression over this process. The agent A runs in discrete steps. At step t, it reads the current context ct, issues a tool call, and appends the returned output to ct. A session terminates when A emits a final answer or reaches the iteration limit, and counts as successful when the answer matches the ground truth, within a 5% tolerance for numeric queries. The context ct comprises the system prompt, the tool def-initions, the dialogue history, and the accumulated tool out-puts. The last component dominates growth over a session. Once |ct| exceeds the token budget τ , a compression event shortens ct before the agent continues. Because the prompt and tool definitions are incompressible yet keep accumulat-ing, τ is crossed more than once: a single session triggers Tc
+
+compression events, typically several even under a generous budget. We cast this sequence of events as a sequential decision problem. Each session forms an episode, and each compres-sion event t = 1 , . . . , T c is a decision point. The state st en-codes the composition of ct through its segment shares and per-tool footprints, including the tool-output share ftool that bounds the budget compression can reclaim. The action at
+
+assigns a retention ratio to each of the N tool outputs present at the event. A ratio chosen at event t carries into later events: discarding an output that a subsequent step needs forces a re-invocation whose cost falls on future decision points. This coupling across events defines a sequential process, specified in full in Appendix D. 
+
+3.2 Consequence-Aware Objective 
+
+Minimizing token consumption alone is insufficient because it overlooks the re-invocation cost. Whenever compression 1. Agent + Tools     
+
+> Agent executes multi-step tool calls MLP outputs per-tool ratio vector r = [r !,…, r"]. Each tool output compressed by its ratio 𝑟 #.Agent resumes on compressed context to produce final answer. Task Success Token Usage Two outcomes measures ：
+> LLM Agent Tools
+> r!
+
+…r$r% r"
+
+2. Context Retrieval  
+
+> For selected tool T&
+> Retrieved Context
+
+3. Policy 𝝅 𝜽 4. Compress & Continue  
+
+> User Query Query features + per-tool profile (output size, criticality, call count) encoded into s ∈ ℝ !'(
+> execute_sql validate_field check_data_p ermission
+
+...        
+
+> Context grows beyond budget. e.g. “The conversion rate of top 3 search terms by UV in sports from 20260610 to 20260612 ”𝑠 ∈ ℝ !'(
+> R)*+, = success − 𝜆 -." · ( T/T )*+, )P/,0*11 = 𝜆 /,0*11 6 clamp((N 2.+-− N 2/, )/N 2/, )
+
+5. Reward Signal 
+
+> SPARSITY PROBLEM: One session yields only ONE scalar reward, but the policy made N per-tool ratio decisions across compression events. Credit assignment is intractable without the Attributor.
+
+7. Credit Merge 6. Attributor               
+
+> per-tool features + chosen ratio rᵢ (from 𝜋 3)Transformer block Counterfactual operation: keep tool iintact?
+> Tokens saved Downstream cost
+> Δ𝐶 ˆ&= 𝐶 ˆ 𝑠, 𝑎 − 𝐶 ˆ 𝑠, 𝑎; 𝑟 &: = 1 ≥ 0 coeff #= 𝛼 ⋅ 𝐴 4+ credit #51../ + 𝛽 4⋅ credit #*--/
+> ℒ 𝜃 = − T coeff ##
+> ⋅ log 𝜋 3𝑎 #∣ 𝑠
+> From Step 6 From Step 5
+> per-tool ratio
+
+update 𝜋 "to maximize RFigure 2: Overview of TRACER. TRACER uses a policy network to decide how much of each tool’s information to keep during compression, trains that policy online from trajectory outcomes, and uses a post-hoc counterfactual model to attribute credit precisely to each tool. discards information that is later needed, the agent must re-invoke tools to recover it. We therefore design a reward that decomposes into a session-level base reward and an event-local recall penalty. 
+
+Session-level base reward The first component combines task success with token efficiency and is measured only at episode end: 
+
+Rbase ,k = 1[k=Tc]
+
+
+
+success − λtok clamp   TTbase , 0.2, 2
+
+,
+
+(1) where success ∈ { 0, 1} indicates whether the agent answered correctly, T is the total session token count, and Tbase is the token total under the same query with no compression, averaged over five reference runs. 
+
+Event-local recall penalty While the base reward captures end-of-session outcomes, it cannot pinpoint which compres-sion event caused a re-invocation. To provide a denser train-ing signal, we introduce a penalty assessed immediately after each compression event: 
+
+Precall ,t = λrecall clamp 
+
+ Npost ,t −Npre ,t  
+
+> Npre ,t
+
+, 0, 2
+
+
+
+≥ 0, (2) where Npost ,t and Npre ,t denote the post-compression and reference tool-call counts within the same window. The ref-erence counts are measured rather than assumed: we replay the same compression-trigger boundaries over the five keep-all timelines collected for that query, match windows by event order, and take Npre ,t to be their mean call count. 
+
+Combined objective Combining the two components yields the full objective: 
+
+J(θ) = Eτ ∼πθ
+
+Rbase − Precall 
+
+, Precall = P 
+
+> t
+
+Precall ,t . (3) The measured recall signal carries noise from natural call-count variation between rollouts. Appendix E describes a provenance upgrade that removes this noise through causal matching. 
+
+3.3 Per-Tool Compression Policy 
+
+Action parameterization The retention ratio ai lives on a bounded interval. We use a Beta distribution whose support matches this interval by construction, avoiding truncation artifacts: 
+
+˜ai ∼ Beta( ˜ miκ0, (1 − ˜mi)κ0), (4) where ˜mi = σ(net i) is the network-predicted mean and κ0
+
+is a fixed concentration. At evaluation we replace sampling with the deterministic mean ˜mi.
+
+Network architecture The policy is a two-layer MLP map-ping state s ∈ R174 to per-tool means m ∈ RN with N tool slots. The slots are ordered positions for the individual tool-output instances present at the current compression event, not one position per canonical tool type: repeated calls to the same tool keep distinct output identifiers and therefore re-ceive their own slot, their own retention ratio, and their own gradient. Each slot encodes query relevance, downstream reuse, redundancy, and recency. A presence mask ensures that only tools present at the current event receive gradients. Full feature definitions appear in Appendix G. Training We maximize Eq. 3 with REINFORCE. A per-query EMA baseline bq normalized by per-query standard deviation handles difficulty variation. The per-tool policy loss is: 
+
+L(θ) = − X
+
+> i∈active
+
+coeff i · log πθ (ai | s), (5) where coeff i combines the session-level advantage with per-tool credit signals, defined next. The Beta parameterization makes this baseline choice principled rather than incidental. Writing si = ∂ log π/∂ ˜mi
+
+for the score of slot i, the Beta log-moment identity gives 
+
+E[si] = 0 (Appendix A). Any constant or action-independent baseline is therefore admissible without introducing bias into this score, and the per-slot gradient takes the covariance form 
+
+gi = E[credit i si] = Cov( credit i, s i): a slot moves toward higher retention precisely when sampling a larger ratio co-varies with higher credit. 
+
+3.4 Counterfactual Credit Assignment 
+
+The objective in Eq. 3 yields one scalar reward per session across many per-tool decisions. Standard REINFORCE as-signs the same gradient magnitude to all tools, providing no signal about which tool caused a failure. We address this with a two-channel scheme. The first channel distributes the penalty uniformly as a model-free floor. The second adds per-tool directionality through a learned outcome model. 
+
+Channel I: uniform penalty floor The first channel dis-tributes Precall ,t uniformly over the k active tools: credit floor  
+
+> i
+
+= −Precall ,t 
+
+1[i ∈ active ]
+
+k ,
+
+X
+
+> i
+
+credit floor  
+
+> i
+
+= −Precall ,t . (6) Even if the attribution channel degrades entirely, this floor guarantees a correct, if coarse, penalty signal. 
+
+Channel II: counterfactual attribution via outcome model Let K denote the number of tools. We train an out-come model fϕ, a 2-layer 4-head Transformer over K tool tokens and one query token. It predicts per-tool re-invocation count ˆni, log token total ˆTlog , and success probability ˆp. Self-attention captures cross-tool coupling: compressing one tool can force re-invocation of another. This model enables single-tool counterfactuals. For each tool i, we compare the predicted cost under the chosen ra-tio versus ri:=1 , holding all else fixed. Defining ˆC(s, a ) = 
+
+λN
+
+P 
+
+> j
+
+ˆnj + λT · 2 tanh( 12exp ˆTlog  
+
+> Tbase
+
+), the per-tool credit be-comes: credit attr  
+
+> i
+
+= λsave (1 −ri) tok i
+
+> Tbase
+
+| {z }
+
+> tokens saved
+
+−   ˆC(s, a ) − ˆC(s, a ; ri:=1) | {z } 
+
+> downstream cost ∆ ˆCi≥0
+
+.
+
+(7) This signal is bidirectional: when savings exceed downstream cost, the signal encourages stronger compression; when the reverse holds, it discourages compression. 
+
+Algorithm 1 TRACER training loop (condensed) 
+
+Require: Queries Q, compressor C, agent A, token budget 
+
+τ 
+
+> 1:
+
+Phase 0: run A five times per query with ri=1 ; store 
+
+Tbase (q) and the reference timelines  
+
+> 2:
+
+for episode e = 1 , . . . , E do  
+
+> 3:
+
+βe ← 0 if e ≤ 20 , else min {1, (e−20) /10 } 
+
+> 4:
+
+for each compression event t of the rollout do  
+
+> 5:
+
+Build output-instance slots, state st, and the active mask  
+
+> 6:
+
+Sample at,i from the Beta policy (Eq. 4); apply C 
+
+> 7:
+
+Match Npre ,t against the reference timelines; set 
+
+Precall ,t (Eq. 2)  
+
+> 8:
+
+end for  
+
+> 9:
+
+Observe success and session tokens T ; form Rbase 
+
+(Eq. 1) and the advantage A against bq 
+
+> 10:
+
+for each recorded event t do  
+
+> 11:
+
+credit floor (Eq. 6); if βe>0 also credit attr (Eq. 7)  
+
+> 12:
+
+coeff t,i (Eq. 8)  
+
+> 13:
+
+end for  
+
+> 14:
+
+Update θ on the loss of Eq. 5  
+
+> 15:
+
+if e = 20 , or e > 20 and (e−20) mod 5 = 0 then  
+
+> 16:
+
+Refit the outcome model fϕ from the replay buffer  
+
+> 17:
+
+end if  
+
+> 18:
+
+end for  
+
+> 19:
+
+return Frozen πθ∗ ; evaluate with its deterministic mean 
+
+Channel fusion We fuse both channels into the per-tool gradient coefficient: coeff i,t = αA t + credit floor 
+
+> i
+
+| {z }
+
+> measured
+
++ βt credit attr 
+
+> i
+
+| {z }
+
+> attributed
+
+, (8) where α scales the session-level advantage relative to the per-tool signals, and βt controls trust in fϕ. We use a 20-episode warmup with β=0 , followed by a 10-episode linear annealing to β=1 , refreshing fϕ every 5 episodes thereafter. On held-out episodes, fϕ achieves Spearman ρ=0 .72 for per-tool re-invocation prediction and Brier score 0.07 for success prediction, confirming directional reliability. Algorithm 1 summarizes the resulting training loop; the complete event-level algorithm appears in Appendix B. 
+
+## 4 Experiments 
+
+4.1 Setup 
+
+Platform We evaluate on a production data-analysis agent deployed at a large e-commerce company. The agent an-swers business questions using tools for knowledge search, SQL execution, permission checks, table lookup, and date resolution. The agent backbone is Claude Sonnet 4.6 (An-thropic 2025) with a 200K-token context window, held fixed throughout all experiments. Because our policy relies on tool-level features rather than model internals, it does not depend on any particu-lar backbone. We evaluate three compressor backends or-dered by model reliance. Uniform truncation needs no model. Self-Info, a clause-level variant of Selective Context (Li Compressor Strategy Success ↑ Tok. ratio ↓ Save precall ↓ ¯Ntools Cost/succ. ↓                                                                                          
+
+> Truncation Uniform-0.5 0.73 1.026 −3% 0.082 9.3 1.405 Recency 0.77 1.086 −9% 0.071 9.0 1.410 Token-prop. 0.69 1.112 −11% 0.091 9.5 1.612 Tool-type-cond. 0.76 0.841 16% 0.045 8.5 1.107
+> TRACER 0.77 0.694 31% 0.021 7.8 0.901
+> Summarization Uniform-0.5 0.80 0.832 17% 0.105 9.6 1.040 Recency 0.80 1.194 −19% 0.088 9.1 1.493 Token-prop. 0.77 1.231 −23% 0.098 9.4 1.599 Tool-type-cond. 0.79 0.723 28% 0.052 8.8 0.915
+> TRACER 0.81 0.541 46% 0.015 7.2 0.668
+> Self-Info Uniform-0.5 0.62 1.207 −21% 0.128 10.2 1.947 Recency 0.71 1.242 −24% 0.112 10.4 1.749 Token-prop. 0.66 1.187 −19% 0.121 10.0 1.798 Tool-type-cond. 0.70 0.891 11% 0.062 9.1 1.273
+> TRACER 0.75 0.706 29% 0.025 8.1 0.941
+
+Table 1: Main comparison: TRACER vs. fixed and heuristic strategies. Token ratio = T /T keep-all . Cost/succ. = Tok. ratio /
+
+Success. 
+
+Figure 3: TRACER vs. fixed-strategy baselines across three compressors. Panels (a)–(c): token-ratio training curves (5 seeds, 15-episode rolling window, ±1 std). Panels (d)–(f): task success rate with 95% CI. et al. 2023), ranks clauses by self-information scored by Qwen-2.5-0.5B (Team 2024). Summarization uses Qwen-3.7-Max (Team 2025) to condense text semantically. A fourth AGORA-style (Zhang and Sun 2026) step-level compressor is held out to test cross-compressor transfer. 
+
+Queries We collect 120 queries from production logs span-ning three difficulty tiers: 25 simple lookups, 55 multi-step queries combining schema retrieval with SQL, and 40 multi-table permission-gated joins. We split them into 80 training and 40 held-out queries, stratified by difficulty, each with a human-verified answer. Every RL configuration trains for 100 episodes per seed with 5 seeds. Held-out evaluation uses frozen deterministic policies. 
+
+Baselines All strategies share the same compressor back-end. Keep-all serves as the success ceiling and token baseline. Uniform-0.5 applies a constant ratio. Recency decays the ra-tio linearly with age, ri = 0 .1+0 .8( pos i −1) /(N −1) , where pos i indexes invocation order, so the most recent output re-tains 0.9 and the oldest 0.1. Token-proportional penalizes size, ri = 1 − 0.7 size i/ max j size j , so the largest output retains 0.3. Tool-type-conditional assigns a fixed ratio per canonical tool type, tuned by greedy coordinate descent over 
+
+{0.2, 0.3, . . . , 0.9} visiting types in decreasing mean-output-size order for two passes, each coordinate maximizing suc-cess rate minus 0.3 times token ratio on the training queries. It isolates whether tool identity alone suffices without query-conditioned adaptation. 
+
+Configuration The reward weights are 
+
+(λtok , λ recall , λ save ) = (0 .3, 0.2, 0.3) and (λN , λ T , α ) =(0 .1, 0.3, 0.5) , with no event discount ( γseq = 1 ). Retention ratios are requested on [0 .05 , 1.0] with Beta concentration 
+
+κ0 = 8 , so a sampled ratio is ai = 0 .05 + 0 .95˜ ai. Policy and outcome model are trained with Adam at 3 × 10 −4 and 
+
+10 −3 respectively, with the policy gradient norm clipped at 
+
+1. Appendix H lists the full configuration. 
+
+Metrics Method comparisons use the paired Wilcoxon signed-rank test. For attribution experiments, the key met-ric is iso-success token ratio: we compare token ratios only within the success stratum so that savings are never con-founded with task failure. Interquartile mean with stratified bootstrap 95% confidence intervals are also used. The re-call column precall in the result tables is the event-local re-invocation rate rt of Eq. 2 taken without the λrecall factor, averaged first over the events of each evaluation record and then over the set E of valid query–seed records: 
+
+precall = 1
+
+|E| 
+
+X
+
+> e∈E
+
+1
+
+T (e) 
+
+> cT(e)
+> c
+
+X
+
+> t=1
+
+r(e) 
+
+> t
+
+.Statistical details appear in Appendix J. 
+
+4.2 Main Comparison: TRACER vs. Fixed Strategies 
+
+Does learning per-tool retention ratios improve upon fixed compression strategies? 
+
+Table 1 shows that fixed baselines largely fail to reduce to-tal tokens. Under truncation and Self-Info, they increase con-sumption by 3–24% relative to keep-all, with re-invocation rates at precall ≥ 0.07 . Neither temporal proximity nor output size captures downstream importance. These results directly evidence the compression–consequence gap: indiscriminate compression triggers recovery behavior that offsets or ex-ceeds the initial savings. TRACER saves 29–46% of tokens while maintaining task success across all compressors. Summarization benefits most at 46% because it exploits fine-grained retention signals se-mantically; Self-Info saves 29%, truncation 31%, and the AGORA-style backend 34%. Re-invocation rates remain at or below 0.025 across all backends, confirming that the learned policy does not purchase savings through costly recovery. The tool-type-conditional baseline captures part of the inter-tool variance, achieving 11–28% savings. TRACER further reduces tokens by 15–18% beyond this static allo-cation. The residual gap arises because the same tool type requires different retention across queries: an SQL result feeding a downstream multi-step join needs higher reten-tion than one answering a single lookup directly. Query-conditioned adaptation drives the remaining gains. Savings are consistent across difficulty tiers at 32–48%, with a per-difficulty breakdown in Appendix I. Figure 3 visualizes the training dynamics. 
+
+4.3 Ablation: Effect of Attribution 
+
+Does the outcome model improve TRACER’s compres-sion decisions? 
+
+We compare TRACER against an ablated RL-only variant that uses REINFORCE with uniform credit assignment. Both arms share the same policy architecture, reward, and training schedule. The only difference is whether the outcome model provides per-tool directional signals. Table 2 shows that attribution improves task success across all three compressors: by 4.8 pp under summarization, 3.5 pp under Self-Info, and 2.2 pp under truncation. The pooled Wilcoxon test confirms significance at p=0 .008 . The out-come model steers retention toward high-consequence out-puts, helping preserve critical information while reducing unnecessary context. This reallocation also reduces the iso-success token ratio across all three backends: by 3.4% under summarization, 4.1% under Self-Info, and 4.7% under trun-cation. In addition, the re-invocation probability decreases by 13% in aggregate. Figure 4 shows that TRACER converges to lower token ratios and re-invocation rates than RL-only. Under truncation, attribution increases success by 2.2 pp while reducing the iso-success token ratio from 0.728 to 0.694, corresponding to a 4.7% relative reduction. Although positional truncation offers less flexibility than semantic compression, consequence-aware budget allocation can still protect high-consequence outputs while compressing less consequential content more aggressively. Attribution there-fore provides both success protection and additional token savings on this backend. 
+
+4.4 Validation with Interventional Rollouts 
+
+The ablation shows that attribution improves the policy, but not whether the outcome model correctly predicts the conse-quence of changing an individual tool’s retention ratio. We test this directly against actual single-tool interventions. From held-out trajectories we sample compression states 
+
+s together with the frozen policy’s action a = ( r1, . . . , r K ).For each active tool i we replay the agent from the saved snapshot twice: a factual rollout under a, and an intervention rollout that sets ri:=1 while holding all other ratios fixed. Both use the same frozen deterministic policy after the event and share M =3 paired seeds to cancel sampling noise. The measured consequence and its model estimate are 
+
+∆Croll  
+
+> i
+
+= 1
+
+> M
+
+PMm=1 
+
+C(m)(s, a ) − C(m)(s, a ; ri:=1) ,
+
+(9) 
+
+∆ ˆCi = ˆC(s, a ) − ˆC(s, a ; ri:=1) , (10) where a positive value means that fully retaining tool i low-ers expected downstream cost relative to the policy-selected ratio. Table 3 validates the counterfactual estimates: predicted vs. rollout differences yield Spearman ρ = 0 .66 , the attribu-tor recovers 82% of the true top-3 highest-consequence tools, and 84% of predicted credit directions match rollout, con-firming the signal provides informative per-tool gradients. 
+
+4.5 Behavioral Analysis 
+
+Per-tool learned ratios Figure 5 shows the converged ra-tios across tools. Under summarization, execute_sql 
+
+converges to the highest retention at 0.65, while 
+
+resolve_date_range settles at the lowest at 0.48. This ordering aligns with regenerability cost: SQL results carry ir-replaceable numeric data, whereas date lookups return static content that is cheap to regenerate. Under truncation, the spread narrows to 0.52–0.60 because positional truncation cannot exploit fine-grained ratio differences. 
+
+Cross-backbone transfer To test whether the learned re-tention structure depends on the training backbone, we freeze the policy trained on Claude Sonnet 4.6 and evaluate it zero-shot on Qwen-3.7-Max (Team 2025) and GPT-5.5 (OpenAI 2025). Table 4 reports results: Across both unseen backbones, TRACER retains 18–40% savings. GPT-5.5 preserves 78–87% of the training-backbone gains while Qwen-3.7-Max retains 62–76%, consistent with GPT-5.5’s stronger tool-calling compliance. In all reported cases, the frozen TRACER policy achieves positive token savings on the two alternative backbones. These results pro-vide initial evidence that the learned retention policy can transfer across model families without retraining. 
+
+Deployment cost analysis. The one-time training invest-ment (Appendix H) is modest relative to the recurring sav-ings: at production traffic of 1000+ sessions per day, the Compressor Arm Success ↑ Iso-succ. tok. ↓ 95% CI ∆tok precall ↓ ¯Tabs (K) 
+
+Truncation RL-only 74.8% 0.728 [.703, .753] — 0.022 72.8 TRACER 77.0% 0.694 [.685, .704] −4.7% 0.021 69.4 Summarization RL-only 76.2% 0.560 [.551, .569] — 0.018 47.5 TRACER 81.0% 0.541 [.532, .550] −3.4% 0.015 45.9 
+
+Self-Info RL-only 71.5% 0.736 [.722, .750] — 0.028 71.2 TRACER 75.0% 0.706 [.693, .719] −4.1% 0.025 68.3 
+
+Table 2: Ablation of TRACER against the RL-only baseline. Each arm uses 5 seeds 
+
+Figure 4: Attribution ablation, RL-only (blue) vs. TRACER (orange). Columns are per-compressor; each shows token ratio and re-invocation rate precall . 5 seeds, 15-episode rolling window; bands are ±1 std. 
+
+Metric Trunc. Summ. Self-Info Aggr. 
+
+Spearman ρ ↑ 0.64 ±.05 0.73 ±.04 0.61 ±.06 0.66 ±.03 
+
+NMAE ↓ 0.11 ±.02 0.12 ±.01 0.17 ±.02 0.13 ±.01 
+
+Top-3 overlap ↑ 0.80 ±.05 0.86 ±.04 0.81 ±.05 0.82 ±.03 
+
+Sign Acc. ↑ 0.83 ±.04 0.88 ±.03 0.80 ±.04 0.84 ±.02 
+
+Table 3: Validation of the outcome-model counterfactuals against single-tool intervention rollouts on held-out states. Cells are mean ±95% CI .
+
+Figure 5: Converged per-tool retention ratios. Tools are sorted by regenerability cost. per-session token reduction recoups the full training cost within 3–6 weeks, after which the learned policy delivers compounding savings indefinitely (Appendix L). 
+
+4.6 Transfer to an AGORA-Inspired Compressor 
+
+Does a policy learned on one compressor transfer to a structurally different one? 
+
+The three backends above share clause- or position-level granularity. The AGORA-style (Zhang and Sun 2026) step-level compressor is structurally different: it chains clause seg-
+
+Comp. Backbone Succ. ↑ Tok. r. ↓ prec ↓
+
+Truncation Qwen-3.7-Max 0.72 0.78 0.035 GPT-5.5 0.75 0.74 0.026 Summarization Qwen-3.7-Max 0.75 0.65 0.028 GPT-5.5 0.78 0.60 0.020 Self-Info Qwen-3.7-Max 0.69 0.82 0.039 GPT-5.5 0.72 0.77 0.029 
+
+Table 4: Cross-backbone transfer: frozen policy (trained on Claude Sonnet 4.6) evaluated zero-shot on alternative back-bones. mentation, self-information scoring, an always-keep floor for numeric content, and greedy budget fill. To this end, we con-duct experiments on Agora-style compressor to demonstrate the generalizability of TRACER. 
+
+Strategy Success ↑ Tok. ratio ↓ Save 
+
+Uniform-0.25 0.65 1.208 −21% TRACER (zero-shot) 0.62 0.690 31% 
+
+TRACER (on AGORA) 0.65 0.656 34% 
+
+Table 5: Transfer to the AGORA-style compressor. From table 5 we can observe that uniform-0.25 increases total tokens by 21% relative to keep-all: its aggressive budget forces the always-keep floor to dominate, leaving insufficient budget for non-floor clauses and triggering recovery calls. Also, table 5 reports two TRACER variants. The first, trained only on the truncation backend and applied zero-shot, achieves 31% savings at success 0.62. The second, trained directly on the AGORA backend, reaches 34% savings at matched success 0.65 by learning per-tool budgets that co-operate with the floor mechanism. The per-tool importance structure TRACER learns transfers across backends without fine-tuning, and target-specific training recovers the remain-ing gap. 
+
+4.7 Generalization on LOCA-bench 
+
+To further test the generalization, we evaluate TRACER on LOCA-bench (Zeng, Huang, and He 2026), a public benchmark with 15 task environments and deterministic workspace-comparison evaluation. The tool set and task dis-tribution are entirely disjoint from our production training en-vironment. We use the three longest context-window settings (96K, 128K, 256K) where compression pressure is strongest. We train a fresh TRACER policy via 5 rounds of iterative RL over 10 task environments and evaluate on 5 held-out en-vironments. Table 6 reports success rates aggregated across the three context windows.                        
+
+> Compressor Strategy Success ↑Tok. ratio ↓
+> Keep-all 0.37 1.000 Truncation Recency 0.39 0.978 Token-prop 0.40 0.961
+> TRACER 0.44 0.751
+> Summarization Recency 0.41 0.847 Token-prop 0.23 0.938
+> TRACER 0.48 0.806
+> Self-Info Recency 0.35 0.891 Token-prop 0.24 0.922
+> TRACER 0.38 0.815
+
+Table 6: Generalization on LOCA-bench (5 held-out tasks ×
+
+5 seeds × 3 context windows). From table 6 we can know that TRACER outperforms keep-all across all compressor backends. TRACER achieves higher aggregate success than keep-all in the reported long-context settings. Also, TRACER outperforms heuris-tic baselines while achieving token savings in general. Since uniform-0.5 suffers from truncation that is too aggressive and inflexible, it almost never succeeds on LOCA-bench; we therefore omit further discussion of it here. To be more spe-cific, TRACER’s gains concentrate on data-analysis tasks for it preserves data-bearing outputs and compresses aux-iliary ones. It also works well on procedural tasks with strong sequential dependencies because its policy identifies the causally critical nodes in the operation chain and allo-cates context budget to them, allowing the agent to retain a coherent execution spine under severe pressure and complete workflows that other strategies cannot. 
+
+## 5 Conclusion 
+
+We presented TRACER, a reinforcement-learning frame-work that treats context compression as a sequential per-tool decision problem. Our method saves tokens across four compressor backends while preserving task success. A two-channel credit scheme attributes consequences to individ-ual tools through single-tool counterfactuals, lifting success on semantic compressors. The learned policy generalizes to held-out queries, transfers zero-shot across agent backbones and compressor architectures, and achieves 18–25% savings on LOCA-bench. 
+
+## References 
+
+Anthropic. 2025. The Claude Model Family: Claude Opus 4, Claude Sonnet 4. Arjona-Medina, J. A.; Gillhofer, M.; Widrich, M.; Un-terthiner, T.; Brandstetter, J.; and Hochreiter, S. 2019. RUD-DER: Return Decomposition for Delayed Rewards. In Ad-vances in Neural Information Processing Systems .Cao, H.; Yan, N.; Deng, H.; Wang, Z.; Yang, T.; Huo, J.; Zhang, Y.; and Gao, Y. 2026. Tool-Aware Optimization with Entropy Guidance for Efficient Agentic Reinforcement Learning. arXiv:2606.03762. Chen, J.; Wang, Y.; Wang, J.; Xie, X.; Hu, J.; Wang, Q.; and Xu, F. 2025. Understanding Individual Agent Importance in Multi-Agent System via Counterfactual Reasoning. In Pro-ceedings of the AAAI Conference on Artificial Intelligence .Chen, L.; Tang, D.; Shi, X.; Chen, D.; Liu, Q.; Wu, S.; and Wang, L. 2026. Learning When Not to Act: Mit-igating Tool Abuse in Agentic Reinforcement Learning. arXiv:2606.02132. Cheng, X.; He, S.; et al. 2026. Beyond Trajectory-Level At-tribution: Graph-Based Credit Assignment for Agentic Re-inforcement Learning. arXiv:2605.26684. Cui, F.; Zhu, R.; Fang, C.; Li, S.; and Li, J. 2026. Rethinking Agentic Reinforcement Learning In Large Language Models. arXiv:2604.27859. Foerster, J. N.; Farquhar, G.; Afouras, T.; Nardelli, N.; and Whiteson, S. 2018. Counterfactual Multi-Agent Policy Gra-dients. In Proceedings of the AAAI Conference on Artificial Intelligence .Hu, J.; Zhang, W.; Wang, Y.; Hu, Y.; Xiao, B.; Tan, M.; and Du, Q. 2025. Dynamic Compressing Prompts for Efficient Inference of Large Language Models. arXiv:2504.11004. Jiang, H.; Wu, Q.; Lin, C.-Y.; Yang, Y.; and Qiu, L. 2023. LLMLingua: Compressing Prompts for Accelerated Infer-ence of Large Language Models. In Proceedings of EMNLP .Jiang, H.; Wu, Q.; Luo, X.; Li, D.; Lin, C.-Y.; Yang, Y.; and Qiu, L. 2024. LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios via Prompt Compression. In Proceedings of ACL .Kang, M.; Chen, W.-N.; Han, D.; Inan, H. A.; Wutschitz, L.; Chen, Y.; Sim, R.; and Rajmohan, S. 2025. ACON: Optimizing Context Compression for Long-horizon LLM Agents. arXiv:2510.00615. Li, J.; Zhou, P.; et al. 2025. Turn-PPO: Turn-Level Advantage Estimation with PPO for Improved Multi-Turn RL in LLMs. arXiv:2512.17008. Li, M.; Xu, L. H.; Tan, Q.; Ma, L.; Cao, T.; and Liu, Y. 2025. Sculptor: Empowering LLMs with Cognitive Agency via Active Context Management. arXiv:2508.04664. Li, Y.; Dong, B.; Guerin, F.; and Lin, C. 2023. Compressing Context to Enhance Inference Efficiency of Large Language Models. In Proceedings of EMNLP .Li, Y.; Zhou, Q.; Duan, W.; and Chen, L. 2026. When Denser Credit Is Not Enough: Evidence-Calibrated Pol-icy Optimization for Long-Horizon LLM Agent Training. arXiv:2606.05885. Lu, M.; Sun, W.; Du, W.; Ling, Z.; Yao, X.; Liu, K.; and Chen, J. 2025. Scaling LLM Multi-turn RL with End-to-end Summarization-based Context Management. arXiv:2510.06727. Lu, Z.; Lin, Z.; et al. 2026. HISR: Hindsight Information Modulated Segmental Process Rewards for Multi-turn Agen-tic RL. arXiv:2603.18683. OpenAI. 2025. GPT-5.5 System Card. Packer, C.; Wooders, S.; Lin, K.; Fang, V.; Patil, S. G.; Stoica, I.; and Gonzalez, J. E. 2024. MemGPT: Towards LLMs as Operating Systems. In Advances in Neural Information Processing Systems .Pan, Z.; Wu, Q.; Jiang, H.; Xia, M.; Luo, X.; Zhang, J.; Lin, Q.; Rühle, V.; Yang, Y.; Lin, C.-Y.; et al. 2024. LLMLingua-2: Data Distillation for Efficient and Faithful Task-Agnostic Prompt Compression. arXiv:2403.12968. Schick, T.; Dwivedi-Yu, J.; Dessì, R.; Raileanu, R.; Lomeli, M.; Hambro, E.; Zettlemoyer, L.; Cancedda, N.; and Scialom, T. 2024. Toolformer: Language Models Can Teach Them-selves to Use Tools. Advances in Neural Information Pro-cessing Systems .Su, J.; Zeng, X.; et al. 2025. Enhancing Agentic RL with Pro-gressive Reward Shaping and Value-based Sampling Policy Optimization. arXiv:2512.07478. Team, Q. 2024. Qwen2.5: A Party of Foundation Models. arXiv:2412.15115. Team, Q. 2025. Qwen3 Technical Report. arXiv:2505.09388. Verma, N. 2026. Active Context Compression: Autonomous Memory Management in LLM Agents. arXiv:2601.07190. Wang, D.; Li, Q.; et al. 2026. StepPO: Step-Aligned Policy Optimization for Agentic Reinforcement Learning. arXiv:2604.18401. Williams, R. J. 1992. SIMPLE Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning. Machine Learning , 8(3): 229–256. Wolpert, D. H.; and Tumer, K. 2001. Optimal Payoff Func-tions for Members of Collectives. Advances in Complex Systems , 4(2–3): 265–279. Xu, F.; Shi, W.; and Choi, E. 2024. RECOMP: Improving Retrieval-Augmented LLMs with Compression and Selective Augmentation. arXiv:2310.04408. Yao, S.; Zhao, J.; Yu, D.; Du, N.; Shafran, I.; Narasimhan, K.; and Cao, Y. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In Proceedings of ICLR .Yi, L.; Lei, R.; Yao, L.; Xie, Y.; Li, Y.; Zhang, W.; Wei, Z.; Li, Y.; and Nie, J.-Y. 2026. Learning Agent-Compatible Context Management for Long-Horizon Tasks. arXiv:2605.30785. Yuan, H.; Xu, Z.; et al. 2026. Verifiable Process Rewards for Agentic Reasoning. arXiv:2605.10325. Zeng, W.; Huang, Y.; and He, J. 2026. LOCA-bench: Bench-marking Language Agents Under Controllable and Extreme Context Growth. arXiv preprint arXiv:2602.07962 .Zhang, H.; and Sun, Z. 2026. AGORA: Adapter-Grounded Observation-Action Retention for Inference-Free Prompt Compression in LLM Agents. arXiv:2605.26596. Zhang, Z.; Song, K.; Wang, X.; Hu, Y.; Yan, W.; Zhao, C.; Zou, H. P.; et al. 2026. CM 2: Reinforcement Learning with Checklist Rewards for Multi-Turn and Multi-Step Agentic Tool Use. arXiv:2602.12268. Technical Appendix A Score Function of the Beta Policy 
+
+The reference implementation uses amin = 0 .05 , amax =1.0, and κ0 = 8 . Thus ai = 0 .05 + 0 .95˜ ai, where ˜ai ∈ (0 , 1) 
+
+has mean ˜mi = σ(net i), with αi = 8 ˜ mi and βi = 8(1 − ˜mi).The log-density is 
+
+log π(ai | s) = ( αi−1) log ˜ ai + ( βi−1) log(1 −˜ai)
+
+− log B(αi, β i) − log 0 .95 .
+
+Differentiating log B gives digamma terms ∂α log B =
+
+ψ(α) − ψ(α + β) and ∂β log B = ψ(β) − ψ(α + β). Since 
+
+∂α i/∂ ˜mi = κ0 and ∂β i/∂ ˜mi = −κ0, the two ψ(αi + βi)
+
+terms cancel: 
+
+∂ log π∂ ˜mi
+
+= κ0
+
+h
+
+logit(˜ ai) −  ψ(αi) − ψ(βi)i
+
+=: si. (11) Using the Beta log-moment identity E[log X] = ψ(α) −
+
+ψ(α + β) (differentiate the normalizer under the integral), 
+
+E[logit ˜ ai] = ψ(αi)−ψ(βi), so E[si] = 0 . Zero mean makes any constant or action-independent baseline unbiased, and gives gi = E[credit i si] = Cov( credit i, s i), the entry point for Appendix C. At evaluation, the deterministic Beta mean is mapped back to the retention interval, so the applied ratio is ai = 0 .05 + 0 .95 ˜ mi.
+
+## B Full Training Algorithm 
+
+Algorithms 2 and 3 give the event-level training path imple-mented in the supplement. Phase 0 keep-all rollouts estab-lish Tbase but are not inserted into the outcome-model replay buffer. The coevolve arm initializes its outcome model ran-domly and does not accept a pretrained predictor. Eligible policy-rollout events accumulate during the β = 0 warmup; the first fit occurs immediately at the boundary after the 20th completed episode, and later fits occur every five completed episodes. Consequently, ri:=1 in Eq. (7) is a model counter-factual, not a separately observed Phase 0 label. 
+
+## C Gradient-Direction Intuition for Attribution 
+
+This section provides implementation intuition rather than a new theoretical claim. Equation (7) combines two terms with opposing effects. The immediate-saving term λsave (1 −
+
+rreq  
+
+> i
+
+)tok i/T base uses the ratio sampled and requested by the policy; it grows as requested retention decreases and there-fore rewards compression. The counterfactual downstream-cost term is [ ˆC(s, a ) − ˆC(s, a ; rreq  
+
+> i
+
+:=1)] +, so only predicted harm relative to fully retaining tool i is subtracted. Predicted negative cost differences do not create an extra reward. The net credit favors compression for low-consequence outputs and protects outputs with predicted downstream cost. The model is not assumed to provide a formal causal guar-antee. Its usefulness is evaluated empirically by the attribu-tion ablation in Table 2 and the single-tool interventional rollouts in Table 3 of the main paper. 
+
+## D Sequential Semi-MDP Formulation 
+
+With events t = 1 , . . . , T c, the main paper defines the base reward only at the terminal event. No discount factor is spec-ified or needed to restate that objective. The undiscounted base return and normalized advantage used by the shaped surrogate are 
+
+Gbase  
+
+> t
+
+=
+
+> Tc
+
+X
+
+> k=t
+
+Rbase ,k = Rbase ,T c ,At = Gbase  
+
+> t
+
+− bq
+
+σq
+
+,gshaped  
+
+> θ
+
+= E
+
+h X 
+
+> t
+
+X
+
+> i∈active t
+
+coeff i,t ∇θ log πθ (at,i | st)
+
+i
+
+.
+
+Because α rescales At and credit attr  
+
+> i,t
+
+adds model-based shap-ing, gshaped  
+
+> θ
+
+is the expected update direction of Eqs. (5) and (8), not an unbiased estimator of ∇θ J for the task-level ob-jective in Eq. (3). Precall ,t stays event-local and is consumed by the credit at event t; it is not replaced by a session-level count. Reference windows are obtained by replaying the same compression-trigger boundaries over the five keep-all time-lines and matching windows by event order; Npre ,t is their mean call count. The active mask sums log-probabilities over all tools present at the event, so every event is logged sepa-rately. The reference implementation estimates σq from the most recent 20 rewards after at least three observations, with a floor of 0.01 , as specified in Algorithm 2 and Table A2. 
+
+## E Provenance-Based Attribution 
+
+This appendix specifies the provenance upgrade referenced in the main paper. It replaces the proximal time-window proxy with causal source matching: each removed span σ at event t
+
+is tagged with ⟨t, i (σ), ϕ (σ)⟩, where ϕ is a content signature, and a later tool call ρ is matched to an earlier removed span: 
+
+match( ρ) = arg max 
+
+> σ: time( σ)<time( ρ)
+
+sim( ρ, ϕ (σ)) 
+
+if max sim ≥ τprov , else ∅.
+
+The resulting count nprov  
+
+> t,i
+
+sums matched costs and defines a provenance-based penalty and targeted floor: credit floor-prov  
+
+> i
+
+= −P prov recall ,t · nprov 
+
+> t,i
+
+P 
+
+> j
+
+nprov 
+
+> t,j
+
+,
+
+P 
+
+> i
+
+credit floor-prov  
+
+> i
+
+= −P prov recall ,t .
+
+When P 
+
+> j
+
+nprov  
+
+> t,j
+
+> 0, the floor conserves the penalty by con-struction and removes the time-window mixing identified in the main paper. Match precision remains an empirical prop-erty of the signature and threshold, so a deployment should calibrate hit and mismatch rates on labeled calls. The reported experiments and Algorithm 2 retain the measured window-based signal in Eq. (2); provenance is the stated upgrade path rather than a replacement for those reported numbers. Algorithm 2 TRACER: Rollout and Event Recording 
+
+Require: Queries Q, compressor C, agent A, per-run trigger τ on backend-estimated full |ct| 
+
+> 1:
+
+Initialize policy πθ (174 → 128 → 64 → N MLP), random outcome model fϕ, and replay buffer B (capacity 500)  
+
+> 2:
+
+Initialize per-query EMA baselines bq and reward histories Hq 
+
+> 3:
+
+Phase 0: Baseline Collection  
+
+> 4:
+
+for each q ∈ Q do  
+
+> 5:
+
+Run A five times with ri=1 ; set Tbase (q) to mean total tokens and retain reference timelines  
+
+> 6:
+
+end for  
+
+> 7:
+
+Phase 1: Online Training  
+
+> 8:
+
+for episode e = 1 , . . . , E do  
+
+> 9:
+
+Sample query q ∼ Uniform (Q) 
+
+> 10:
+
+βe ← 0 for e ≤ 20 ; otherwise βe ← min {1, (e − 20) /10 } 
+
+> 11:
+
+Initialize event records D ← ∅  
+
+> 12:
+
+Run A on q with the compression policy  
+
+> 13:
+
+for each compression event t = 1 , . . . , T c do  
+
+> 14:
+
+Build ordered output-instance slots, state st, and the active mask  
+
+> 15:
+
+˜mi ← σ(MLP θ (st)i) for each tool slot i 
+
+> 16:
+
+Sample ˜at,i ∼ Beta (8 ˜ mi, 8(1 − ˜mi)) ; request rreq  
+
+> t,i
+
+← 0.05 + 0 .95˜ at,i  
+
+> 17:
+
+Apply C with requested ratios {rreq  
+
+> t,i
+
+} 
+
+> 18:
+
+Observe Npost ,t and matched keep-all count Npre ,t in the same event window  
+
+> 19:
+
+Compute event-local rt with the Eq. (2) zero-reference rule; set Precall ,t ← λrecall rt 
+
+> 20:
+
+Append (st, a t:= rreq  
+
+> t
+
+, r t, P recall ,t , active t, event targets ) to D 
+
+> 21:
+
+end for  
+
+> 22:
+
+if any event-local recall measurement is missing then  
+
+> 23:
+
+Skip the update rather than treating missing recall as zero  
+
+> 24:
+
+end if  
+
+> 25:
+
+Observe success ∈ { 0, 1} and total session tokens T 
+
+> 26:
+
+Precall ← PTc 
+
+> t=1
+
+Precall ,t (Eq. 3)  
+
+> 27:
+
+Rbase ,T c ← success − λtok clamp( T /T base , 0.2, 2) ; Rbase ,k<T c ← 0 (Eq. 1)  
+
+> 28:
+
+σq ← 1 if |H q | < 3, else max(std( Hq [−20 :]) , 0.01)  
+
+> 29:
+
+A ← (Rbase ,T c − bq )/σ q ; update bq with decay 0.9 and append Rbase ,T c to Hq 
+
+> 30:
+
+Pass (e, β e, D, A, T c, T base ) to Algorithm 3  
+
+> 31:
+
+end for  
+
+> 32:
+
+return Frozen policy πθ∗ ; use its deterministic mean for evaluation 
+
+## F Design Considerations and Solutions 
+
+• Bounded action. The Beta policy in Eq. (4) of the main text matches the bounded action support without post-sampling truncation. 
+
+• Smooth downstream cost. The reported ˆC uses 
+
+2 tanh( x/ 2) for its token term. No result for a hard-clamped alternative is reported. 
+
+• Optional inverse-propensity weighting. A stabilized self-normalized inverse-propensity weight could be in-vestigated when action–state dependence is a concern. It is not part of the objective, algorithm, or reported exper-iments, and this appendix makes no identifiability claim for it. 
+
+• Optional provenance matching. The measured proximal-window target can include natural call-count variation. Appendix E describes a possible upgrade, not a component of the reported method. 
+
+## G Feature Definitions 
+
+The released policy state is 
+
+st = [ q1, . . . , q 7; o1,1, . . . , o 16 ,10 ; c1, . . . , c 7] ∈ R174 .
+
+The 16 positions are fixed-width tensor slots for ordered tool-output instances present at the current compression event, not one slot per canonical tool type. Repeated calls to the same tool retain distinct output identifiers, slots, ratios, and gradi-ents. Unused positions are zero-padded and masked. The ref-erence implementation rejects events containing more than 16 eligible outputs rather than silently merging or dropping them. The outcome model reuses the ten dimensions for each output and appends the applied retention ratio as an eleventh dimension. A separate seven-dimensional query token is pro-jected into the same 64-dimensional embedding space. It pre-dicts ˆni, ˆTlog , and the auxiliary success probability ˆp; only 
+
+ˆni and ˆTlog enter ˆC.Algorithm 3 TRACER: Policy and Outcome-Model Updates 
+
+Require: Episode e, attribution weight βe, records D, advantage A, event count Tc, baseline Tbase  
+
+> 1:
+
+for each event record t ∈ D do  
+
+> 2:
+
+At ← γTc−t 
+
+> seq
+
+A = A with γseq = 1  
+
+> 3:
+
+credit floor  
+
+> t,i
+
+← − Precall ,t /|active t| for i ∈ active t (Eq. 6)  
+
+> 4:
+
+credit attr  
+
+> t,i
+
+← 0 
+
+> 5:
+
+if βe > 0 then  
+
+> 6:
+
+ˆC(st, a t) ← λN
+
+P 
+
+> j
+
+ˆnj + 2 λT tanh 
+
+ exp ˆTlog 
+
+> 2Tbase
+
+ 
+
+> 7:
+
+∆ ˆCt,i ← max {0, ˆC(st, a t) − ˆC(st, a t; rreq  
+
+> t,i
+
+:=1) } 
+
+> 8:
+
+credit attr  
+
+> t,i
+
+← λsave (1 − rreq  
+
+> t,i
+
+) tok t,i  
+
+> Tbase
+
+− ∆ ˆCt,i (Eq. 7)  
+
+> 9:
+
+end if  
+
+> 10:
+
+coeff t,i ← αA t + credit floor  
+
+> t,i
+
++ βe credit attr  
+
+> t,i
+
+(Eq. 8)  
+
+> 11:
+
+end for  
+
+> 12:
+
+Policy Update (shaped surrogate):  
+
+> 13:
+
+L ← − T −1
+
+> c
+
+P
+
+> t
+
+P 
+
+> i∈active t
+
+coeff t,i log πθ (at,i | st) 
+
+> 14:
+
+Adam update of θ (LR 3 × 10 −4; gradient norm clipped at 1)  
+
+> 15:
+
+Add eligible event records with propensity and outcomes to B; mark episode e completed  
+
+> 16:
+
+if e = 20 or ( e > 20 and (e − 20) mod 5 = 0 ) then  
+
+> 17:
+
+Update fϕ for 10 steps from batches of 16 using the multi-task loss in Appendix H  
+
+> 18:
+
+At e = 20 , fail the coevolve run if eligible labels are insufficient or the first fit fails  
+
+> 19:
+
+end if  
+
+> 20:
+
+Every 10 episodes, retain the checkpoint with the best rolling-10 mean reward 
+
+## H Reported Baselines and Experimental Configuration 
+
+H.1 Baseline Strategy Formulas 
+
+We restate the baseline definitions from Section 4.1 of the main text. Exact formulas are shown only when the main text specifies them. 
+
+Keep-all. ri = 1 for all tools. Serves as the success ceiling and token baseline ( Tbase ). 
+
+Uniform-0.5. ri = 0 .5 for all tools, regardless of type, size, or position. 
+
+Recency. The ratio decays linearly from the most recent tool output (highest ratio) to the oldest: 
+
+ri = 0 .1 + 0 .8 · pos i − 1
+
+N − 1 ,
+
+where pos i ∈ { 1, . . . , N } is the position of tool i sorted by invocation time (most recent = N ). This yields r = 0 .9 for the most recent and r = 0 .1 for the oldest. For the single-output case N = 1 , the reference implementation uses the midpoint r = 0 .5.
+
+Token-proportional. For output-size estimate size i,
+
+ri = 1 − 0.7 size i
+
+max j size j
+
+.
+
+The largest output receives 0.3; smaller outputs approach 1. 
+
+Tool-type-conditional. The released search uses greedy coordinate descent over {0.2, 0.3, . . . , 0.9}, visiting canon-ical tool types in decreasing mean-output-size order. Each coordinate maximizes success rate minus 0.3 times token ra-tio on training queries while holding other coordinates fixed; the default script runs two passes. 
+
+H.2 Reference Implementation Configuration 
+
+Table A2 records the checked-in defaults used by the refer-ence implementation. These values document the released training path; they are not a per-table run manifest, and command-line or environment overrides must be recorded when regenerating an experiment. The outcome loss is 
+
+Lϕ = MSE(ˆ n, n ) + MSE( ˆTlog , log T )+ 0 .3 BCE(ˆ p, success ) + 0 .5Ω mono ,
+
+with count and token predictions and targets standardized by running statistics. The auxiliary success head is trained by this loss but is omitted from ˆC. The released updater can additionally apply propensity weighting and an EMA anchor; these are implementation stabilizers rather than new terms in the paper objective. 
+
+H.3 Computing Infrastructure and Runtime 
+
+The reference environment used a single Intel Xeon Platinum 8369B server (32 CPU cores, 128 GB RAM) running Alibaba Cloud Linux 3 with kernel 5.10. The software stack was Python 3.12.4, PyTorch 2.3.1, NumPy 1.26.4, SciPy 1.13.0, Flask 3.0.3, and Transformers 4.42.0. The policy and out-come model together contain 102,306 trainable parameters (31,696 and 70,610, respectively), approximately 102K, and run on CPU; external agent and compressor-model calls dom-inate wall-clock cost. Block Dim. Meaning 
+
+Query q1 0.3 log(1 + |q|/2) , a token-length proxy. 
+
+q2 Numeric-constraint indicator. 
+
+q3 Multi-hop/comparison indicator. 
+
+q4–q7 Mutually exclusive retrieval, SQL/aggregation, report, and other intents. Output i oi, 1 Presence flag. 
+
+oi, 2 0.1 log(1 + tok i), output-size feature. 
+
+oi, 3 Output-token share within the current event. 
+
+oi, 4 0.1 log(1 + same-type tokens ) within the event. 
+
+oi, 5 log(1 + same-type ordinal ) for repeated calls. 
+
+oi, 6 Query relevance; fallback static criticality prior high/medium/low = 1 .0/0.5/0.2.
+
+oi, 7 Prefix-available downstream-reuse annotation, else zero. 
+
+oi, 8 Prefix-available redundancy annotation, else zero. 
+
+oi, 9 Normalized event-slot recency, from oldest 0 to newest 1. 
+
+oi, 10 Prefix rework annotation when available, else zero. Context c1–c5 System, instruction/tool-definition, dialogue-history, tool-output, and scratchpad fractions. 
+
+c6 Context pressure relative to compression threshold τ .
+
+c7 Normalized compression-event index. 
+
+Table A1: Reference implementation feature specification. Runtime annotations use only values available in the trajectory prefix; unavailable annotations default to zero or the stated prior. The production agent backbone is Claude Sonnet 4.6 with a 200K-token context window. Truncation is local string slicing, Self-Info uses a local Qwen-2.5-0.5B clause scorer, and summarization uses Qwen-3.7-Max through an API; the AGORA-inspired backend combines step/clause segmenta-tion, self-information scoring, and a numeric-content floor. A rollout takes roughly 30–180 seconds depending on query and backend. A 100-episode, five-seed run for one com-pressor takes about 25–42 hours. The broader experimental campaign was approximately 400 compute-hours and $2,800 in backbone API charges; these figures are operational mea-surements, not controlled efficiency outcomes. 
+
+H.4 Outcome Model Held-Out Accuracy 
+
+Table A3 restates the two held-out metrics reported in Sec-tion 3.4 of the main text. The Spearman result supports the directional ranking used by the counterfactual credit. The success-probability head 
+
+ˆp is an auxiliary prediction head evaluated by the Brier score. It is excluded from the downstream-cost definition 
+
+ˆC(s, a ) = λN
+
+P 
+
+> j
+
+ˆnj + 2 λT tanh 
+
+
+
+exp( ˆTlog )/(2 Tbase )
+
+
+
+in the main paper. 
+
+H.5 LOCA-bench Training Configuration 
+
+Section 4.7 and Table 6 of the main paper report the LOCA-bench experiment. A fresh TRACER policy is trained for five rounds of iterative RL on 10 of the benchmark’s 15 task environments and evaluated on the other 5. Evaluation ag-gregates the 96K, 128K, and 256K context-window settings over 5 seeds. 
+
+## I Difficulty Tiers and Evaluation Boundary 
+
+The full production-query corpus contains 120 queries in three tiers: 
+
+• 25 simple lookups; 
+
+• 55 multi-step queries combining schema retrieval with SQL; and 
+
+• 40 multi-table permission-gated joins. The stratified 80/40 split yields the following held-out composition: Held-out evaluation uses frozen deterministic policies on these 40 queries. The main paper reports the cross-cell range above. 
+
+## J Statistical Procedures and Reporting Boundary 
+
+Each RL configuration trains for 100 episodes per seed with five seeds; this training schedule is not itself the sample size of a held-out hypothesis test. Test sample sizes are deter-mined after aligning the available method records on their observation keys and applying the metric-specific validity filter. No post-hoc power calculation is reported. 
+
+J.1 Reported Recall Statistic 
+
+The uppercase Precall ,t = λrecall rt in Eq. (2) is a training penalty, where the event-local rate is 
+
+r(e) 
+
+> t
+
+= clamp N (e)post ,t − N (e)pre ,t 
+
+N (e)pre ,t 
+
+, 0, 2
+
+!
+
+.
+
+For the set E of valid query–seed evaluation records, the low-ercase table statistic first averages events within each record and then averages the resulting record-level rates: 
+
+precall = 1
+
+|E| 
+
+X
+
+> e∈E
+
+1
+
+T (e) 
+
+> cT(e)
+> c
+
+X
+
+> t=1
+
+r(e) 
+
+> t
+
+.
+
+Zero-reference cases are handled as in Algorithm 2. Thus 
+
+precall is an event-local rate, not a probability or a training penalty: it does not include λrecall and does not sum across events. Training curves apply the stated rolling-window mean to the corresponding record-level rates. Group Setting Value                                                        
+
+> Reward λtok , λ recall , λ save 0.3,0.2,0.3
+> λN, λ T, α 0.1,0.3,0.5
+> γseq 1.0(no event discount) Policy Architecture 174 →128 →64 →16 , ReLU Action interval; κ0[0 .05 ,1.0] ;8.0
+> Optimizer; LR; grad clip Adam; 3×10 −4; 1.0 Baseline EMA decay 0.9
+> Scale estimate Last 20 rewards after 3 samples; floor 0.01
+> Outcome Architecture d= 64 , 2 layers, 4 heads, FF 128, dropout 0.1 Inputs 16 output tokens ×11 dims; one 7-dim query token Optimizer; LR Adam; 10 −3
+> Loss weights (wn, w T, w s)(1 .0,1.0,0.3)
+> Monotonicity weight λmono = 0 .5
+> Batch; replay capacity 16; 500 event records Refresh work 10 gradient steps per refresh EMA anchor Decay 0.995 after warmup Schedule Warmup; annealing; refresh 20 episodes; 10 episodes; at 20 completed episodes, then every 5 Environment Compression threshold Caller-supplied per run; backend-estimated full |ct|
+> Keep-all reference 5 runs per query Training length; seeds 100 episodes; {0,1,2,3,4}
+
+Table A2: Reference implementation defaults.         
+
+> Metric Value Description
+> Spearman ρ(ˆni)0.72 Rank correlation between predicted and actual per-tool re-invocation counts Brier score ( ˆp)0.07 Calibration of success-probability predic-tion
+
+Table A3: Outcome-model held-out metrics reported in the main paper. 
+
+J.2 Confidence Interval Construction 
+
+Method-comparison token summaries use the interquartile mean (IQM) with 10,000 stratified bootstrap resamples. Ob-servations are grouped by difficulty tier; within each resam-ple, observations are sampled with replacement inside each tier while preserving the original tier sizes. The 2.5th and 97.5th percentiles of the bootstrap IQM distribution form the 95% interval. If no stratification variable is supplied, the im-plementation uses a single stratum rather than treating each observation as its own stratum. Table 3 uses a different construction for counterfactual val-idation: each cell center is the metric’s native point estimate, and percentile-bootstrap resampling treats each held-out state as a cluster so that paired interventions from the same state remain together. The reported ± value is the half-width of the resulting 95% interval. These Table 3 intervals are not IQM intervals. 
+
+J.3 Hypothesis Testing 
+
+Method comparisons use a two-sided paired Wilcoxon signed-rank test. Records are aligned on the common ex-plicit observation key—normally (query id , seed , episode )
+
+for training histories and (query id , seed ) for one-shot held-out runs—before testing; unmatched records are not position-ally paired. The pooled attribution-ablation result reported in the main paper is p = 0 .008 . Table 1 has no p-value column, so the appendix does not attribute unreported per-baseline 
+
+p-values to it. Cliff’s δ and Holm–Bonferroni utilities are included for additional analyses but are not retroactively at-tached to the main table. 
+
+Success conditioning. For the attribution experiments, the main paper defines the key token metric as the iso-success token ratio, computed within the success stratum. That con-ditioning should not be silently extended to every token ratio in the paper: the main comparison defines token ratio simply as T /T keep-all .
+
+J.4 Reproducibility of Randomness 
+
+Production-query RL runs use seeds {0, 1, 2, 3, 4}. Each run seeds Python random , NumPy, and PyTorch before query sampling, policy initialization, Beta exploration, and replay-buffer sampling; output names carry the seed suffix. Frozen evaluation uses the deterministic policy mean. The LOCA launcher additionally propagates its selected seed through 
+
+PYTHONHASHSEED . These controls reproduce the released program’s stochastic choices but cannot make remote model or production-backend responses deterministic. Tier Simple Multi-step Multi-table     
+
+> Held-out queries 719 14 Reported saving 32–48% across the reported tier–compressor cells
+
+Table A4: Composition of the held-out production-query split. 
+
+## K Extended Related Work 
+
+Section 2 of the main paper groups related approaches into step/turn-level credit (Wang, Li et al. 2026; Li, Zhou et al. 2025; Li et al. 2026), structural or process-reward decompo-sition (Cheng, He et al. 2026; Lu, Lin et al. 2026; Su, Zeng et al. 2025; Zhang et al. 2026; Yuan, Xu et al. 2026; Cui et al. 2026), and redundant-tool-call penalties (Cao et al. 2026; Chen et al. 2026). These approaches optimize the agent’s ac-tion policy, whereas TRACER freezes that policy and trains the context policy. TRACER draws on counterfactual credit assignment (Fo-erster et al. 2018; Wolpert and Tumer 2001; Arjona-Medina et al. 2019; Chen et al. 2025): it compares the predicted con-sequence of the selected retention ratio with a single-tool fully retained alternative. This is the distinction established by the main paper; no additional claims about the cited meth-ods’ implementations are needed for reproduction. 
+
+## L Cost-Benefit Analysis 
+
+Training adds an up-front cost, whereas token savings recur with use. For a deployment with training cost Ctrain , average keep-all tokens T0, observed token ratio r, token price p, and daily volume V , a simple scenario calculation is 
+
+dbreak-even = Ctrain 
+
+V T 0(1 − r)p .
+
+The point calculation underlying the deployment discussion uses the conservative full-campaign backbone-API expen-diture Ctrain = $2 ,800 , T0 = 85 ,000 tokens, the Summa-rization ratio r = 0 .541 , an input-token price p = $3 /10 6
+
+tokens, and V = 1 ,000 sessions/day. It gives 
+
+∆Tsession = 85 ,000(1 − 0.541) = 39 ,015 tokens ,ssession = 39 ,015 × $3 /10 6 ≈ $0 .117 ,dbreak-even = $2 ,800 /(1 ,000 × $0 .117) 
+
+≈ 24 days ≈ 3.4 weeks .
+
+This point lies within the 3–6 week scenario range stated in the main paper. Holding the other quantities fixed, an effective billed input-token price of approximately $1.7 per million gives a 42-day (six-week) break-even, while $3 per million gives the 24-day point above. Thus the range reflects pricing sensitivity rather than a confidence interval. The calculation credits input-token reduction only. It ex-cludes summarizer-model calls and tokens, Self-Info scorer compute, output-token pricing, CPU/server cost, retries, la-tency, integration and maintenance effort, distribution shift, and any monetary value assigned to a change in task suc-cess. It therefore should not be read as net profit, annual ROI, a guarantee of permanent savings, or evidence that the policy will not degrade. A deployment must recompute the expression from its billed costs and observed traffic. 
+
+## M Released Data, Code, and Reproduction Boundary 
+
+The accompanying code_supplement contains the ref-erence Beta policy, feature construction, outcome model, event-level training loop, policy server, compressor inter-faces, reward and credit functions, statistical utilities, and API-adapter boundary. It also contains protocol scripts for fixed baselines and tool-type grid search, held-out eval-uation, single-output interventions, cross-backbone trans-fer, AGORA-style evaluation, and LOCA-bench evalua-tion; offline unit tests; pinned Python dependencies; and an anonymized query-schema file. The query file preserves the nominal 120-query composi-tion, difficulty labels, and 80/40 split, including the 7/19/14 held-out stratification. Some evaluation targets are deliber-ately redacted or empty. The loaders mark those records unscorable rather than treating them as failures. Thus the file documents schema and split construction but is not a drop-in replacement for the private evaluation set. The supplement does not include the proprietary pro-duction agent, warehouse or knowledge-base contents, raw production prompts and tool outputs, event logs and tra-jectories, trained checkpoints, or the raw matched inputs from which the paper tables were computed. It also does not vendor LOCA-bench or commercial model endpoints. 
+
+api_client.py specifies an integration contract rather than implementing the production backend; evaluation com-mands require the corresponding external backend, check-point, trajectory, or benchmark artifacts and fail when they are absent. Accordingly, the artifact supports source inspection, of-fline semantic tests, and reruns against a separately config-ured compatible backend. It does not support exact end-to-end replay of the production experiments.

@@ -1,0 +1,1429 @@
+Title: Test-time Reinforcement Learning in Imperfect Information Games
+
+URL Source: https://arxiv.org/pdf/2608.30635v1
+
+Published Time: Tue, 01 Sep 2026 02:29:03 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Test-time Reinforcement Learning in Imperfect Information Games 
+
+Ondrej Kubicek 
+
+Czech Technical University in Prague Carnegie Mellon University 
+
+kubicon3@fel.cvut.cz 
+
+Viliam Lisý 
+
+Czech Technical University in Prague Artificial Intelligence Center 
+
+viliam.lisy@fel.cvut.cz 
+
+Tuomas Sandholm 
+
+Carnegie Mellon University Strategy Robot, Inc. Strategic Machine, Inc. Optimized Markets, Inc. 
+
+sandholm@cs.cmu.edu 
+
+## Abstract 
+
+Test-time reasoning has significantly improved performance in domains ranging from games to language models. However, test-time policy changes with formal guarantees on the performance of the resulting strategy remain a challenge in two-player zero-sum imperfect-information games. Existing solutions are limited to tabular methods or single gradient step updates. In this work, we investigate policy-gradient algorithms as a method for scalable test-time reasoning. We extend the concept of gadget game, tabular technique for test-time search, to the reinforcement learning setting. Unlike prior approaches, we represent the gadget game implicitly by modified sampling and neural policy rather then explicitly by constructing it, thereby removing constraints on subgame size. Furthermore, we formally prove that, unlike prior tabular algorithms, regularized policy-gradient algorithms limit possible strategy degradation caused by test-time reasoning, even without the gadget games. Our evaluation across small- and large-scale games confirms that additional test-time training often substantially improves performance relative to the blueprint strategy. 
+
+## 1 Introduction 
+
+Test-time reasoning enables algorithms to allocate limited computation to enhance performance within the context actually encountered during algorithm execution. This paradigm has been crucial to successes in game-playing [1, 2, 3, 4, 5, 6, 7, 8] and it has demonstrated significant gains in large language models [9, 10, 11]. In imperfect-information games, test-time reasoning is challenging. Since players cannot observe the underlying game state, they must reason across a distribution of possible states. An optimal strategy at any given decision depends on the player’s belief over these states, which is itself a function of the strategies employed by all players acting prior to that decision. Having any fixed belief regarding an opponent’s past decisions has been shown to lead to highly exploitable strategies [12, 13, 14]. 
+
+Gadget games were developed to employ additional reasoning in tabular game solving settings. In this work we will focus on Bayesian gadget game , which assumes both players followed some fixed strategy in the past and resolving gadget game that does not require any fixed beliefs about opponents’ strategies. By starting with a blueprint strategy and refining it at each encountered 
+
+> Preprint. arXiv:2608.30635v1 [cs.GT] 31 Aug 2026
+
+decision point, resolving gadget provides a theoretical guarantee that the resulting strategy will be no more exploitable than the blueprint [13, 14, 15]. We call methods with this guarantee “safe” test-time reasoning, and techniques without it “unsafe”. Bayesian gadget game is an unsafe technique. To date, gadget games and test-time reasoning have been largely restricted to tabular approaches. However, policy-gradient algorithms have emerged as a strong non-tabular alternative for game-playing, and were the first to achieve expert-level and then superhuman performance in the large, imperfect-information game Stratego [7, 16]. The superhuman Stratego bot Ataraxos used the “update-equivalence framework”, a test-time reasoning technique that simulates a single policy-gradient step [7, 17]. While this ensures that the strategy’s exploitability strategy does not degrade by more than a certain bound, it also limits potential gains by restricting reasoning to a single update. In this work, we propose methods for test-time reasoning using policy-gradient algorithms that avoid the explicit construction of a gadget game. However, resolving gadget game introduces new actions to the game. We use a small temporary neural network to represent the strategy in these new action nodes. Unlike some prior approaches that used policy gradient during training, and then solved explicitly constructed gadget games using tabular algorithms [18, 19], our method employs the same algorithm for both training and test-time reasoning, significantly reducing design complexity and improving the scalability. To address the challenge of sampling the initial states of the subgame from the distribution required by gadget games, we train an additional transformer in train time. Additionally, we demonstrate that safety guarantees similar to those of the update-equivalence framework can be maintained beyond a single gradient step, provided the regularization policy within the policy-gradient remains constant. This effectively bounds both the potential improvement or degradation of the policy. We evaluate our proposed approaches both in small benchmark games, where exploitability can be precisely computed, and in large-scale games where tabular methods are computationally infeasible. In small games, we verify that simulating gadget games substantially improves weaker blueprints and only negligibly degrades strong blueprints due to sampling noise. In large games, we demonstrate that using test time reasoning against an opponent without it leads to a win rate of over 80% in Battleship. 
+
+## 2 Background 
+
+The two-player zero-sum factored-observation stochastic game (FOSG) is a tuple G =(N , W, w INIT , p, A, T , R1, O). Here, N = (1 , 2, c ) is the set of players, including a chance player 
+
+c, W represents the set of underlying world states, and wINIT ∈ W is the initial state. The player function p : W → 2N identifies which players are active in a given state. A = A1 × A 2 × A c
+
+denotes the set of joint actions, where Ai(w) is the set of legal actions for player i in state w.Transitions between world states are modeled by T : W × A → W and rewards of player 1 by 
+
+R1 : W × A → R. In zero-sum games, the rewards given to player 2 are R2 := −R 1. The observation function O : W × A × W → O provides observations for all players. The observation set O = O0 × O1 × O2 consists of public observations O0 and player-specific private observations 
+
+Oi. Similarly, the observation function can be factored as O = ( O0, O1, O2) [20]. A history h = w0a0 . . . a l−1wl ∈ (WA )∗W is a finite sequence starting in w0 = wINIT and at each timestep t ≤ l − 1 the transitions are consistent with the game rules wt+1 = T (wt, At). We will use H to denote the set of all possible histories in the game. For any 2 histories h, h ′ ∈ H , if h is a prefix of h′, we will use following notation h ⊑ h′. Every history ends with a uniquely identifiable state, so we will sometimes use history instead of the world state, such as R1(h, a ) := R1(wl, a )
+
+and hINIT := wINIT will be the initial history. In imperfect-information games, players cannot observe the world state directly. Instead, histories that are indistinguishable to the player i are grouped into an information set (infoset) si ∈ S i. Moreover, the states that are indistinguishable from the perspective of the outside observer are in the same public state s0 ∈ S 0. A different perspective is that si is a collection of states in which the player i has the same private information, and s0 is a collection of states in which the public information is the same. The sets of all information sets and public states are Si and S0, respectively. We will overload the notation and use H(si) to denote all histories that share the information set, Si(s0) to denote all information sets that share the public state, si(h)
+
+to denote infoset or public state that corresponds to history h. Since the player cannot distinguish states within the same infoset, it must have the same legal actions in every such state. We will use 
+
+Ai(si) := Ai(w), such that si contains w.2A behavioral strategy πi : Si → ∆Ai of player i maps the information set to the probability distribution over legal actions. We will also use πi(si, a i) to denote the probability of playing action ai under strategy πi. The joint strategy profile is then π = ( π1, π 2, π c), where πc is always fixed by the game rules. Consider two histories h, h ′, such that h ⊑ h′. The probability that the history h′ is reached under π, from h is P π (h′|h) = Q
+
+> h⊑h′′ aw ⊑h′
+
+Q 
+
+> i∈N
+
+πi(si(h′′ ), a i). This probability is often called reach. This can be decomposed into individual player contributions 
+
+P πi (h′|h) = Q 
+
+> h⊑h′′ aw ⊑h′
+
+πi(si(h′′ ), a i). We will use a standard notation where −i denotes all players except player i. We also use P π (h) = P π (h|hINIT ).The expected utility for player i under strategy π is uπi (h) =P 
+
+> h⊑h′a
+
+P π (h′|h)Ri(h′, a ) Q 
+
+> j∈N
+
+πj (sj (h′), a j ). The counterfactual utility of the informa-tion set vπi (sj ) =           
+
+> P
+> h∈H (sj)Pπ
+> −j(h)uπi(h)
+> P
+> h∈H (sj)Pπ
+> −j(h)
+
+is the sum of expected utilities across all histories in an infoset, weighted by the probability that those histories are reached assuming player j played to reach them. The counterfactual action utility qπi (sj , a j ) is defined analogously to the counterfactual utility, but for infoset-action pairs. A best response πBR i ∈ BR i(π−i) maximizes utility against fixed opponent strategy πBR i = arg max πi u(πi,π −i) 
+
+> i
+
+(hINIT ). A strategy profile where all players play a best response is a Nash equilibrium π∗, which is a sought-after solution concept in two-player zero-sum games. Exploitability E(πi) = uπi,π BR  
+
+> −i
+> −i
+
+(hINIT ) − uπ∗
+
+> −i
+
+(hINIT ) measure a strategy’s distance from the Nash equilibrium. It is always non-negative, and it is 0 iff the πi is part of the Nash equilibrium. 
+
+2.1 Subgame solving 
+
+A subgame GS is a restriction of the game G, which starts from a collection of states WS , which correspond to histories HS ⊆ H from the original game G. Based on the choice of HS , there are 2 main categories of subgame solving. Common-knowledge subgame solving considers all histories consistent with the public state HS = H(s0) [12, 13, 14, 15, 21, 22]. Knowledge-limited subgame solving (KLSS) considers only a subset of public state histories [6, 17, 23, 24]. Original KLSS “freezes” the strategy at the boundary information sets to equal the probabilities from the blueprint. We use a knowledge-limited unfrozen subgame solving (KLUSS) , which allows both players to optimize their strategies across all states within the subgame [6]. Specifically, we focus on 1-KLUSS, which considers histories consistent with the information set of a player HS = H(si).The subgame in imperfect information games is not a well-defined game, as it does not start in a single state. In order to make it a well defined game, it is necessary to connect the disjointed initial states with some new states and actions. We will call these new states and actions that were not part of the original game as gadget and the resulting game gadget game .
+
+Bayesian gadget game creates a new initial state, where chance plays to all states in WS proportionally to reach probabilities P π (h) of some blueprint strategy π. Although often effective [12, 15, 21, 22, 25], this approach can lead to high exploitability if the opponent does not play the strategy assumed in the blueprint even if π is a Nash equilibrium [13]. Resolving gadget game address this by providing the opponent with a hypothetical choice to modify their previous strategy, ensuring that the resulting solution is not more exploitable than the original blueprint [13, 14, 15]. 
+
+2.2 Policy-gradient algorithms for games 
+
+Policy-gradient algorithms have shown remarkable performance in very large games like Stratego [7, 16]. To ensure convergence in two-player zero-sum games, those methods employ KL regularization with respect to some magnet (regularization) strategy πM . In Regularized Nash Dynamics the regularized rewards are 
+
+RRi (h, a ) = Ri(h, a ) − η log( πi(si(h), a i)
+
+πMi (si(h), a i) ) + η log( π−i(s−i(h), a −i)
+
+πM
+
+> −i
+
+(s−i(h), a −i) ) (1) The corresponding optimization objective for behavioral strategies as defined by [16] is 
+
+πti (si, a i) = arg max 
+
+> πi
+
+X
+
+> ai
+
+πi(si, a i)qπt−1 
+
+> i
+
+(si, a i) − ηD KL (πi, π Mi ) (2) 3A higher regularization strength ( η) forces the strategy to remain closer to the magnet. This regu-larization alters the Nash equilibrium of the game based on the magnet strategy. It has been shown that by either changing the magnet strategy to slowly follow the computed strategy or by annealing the η, these algorithms eventually converge to a Nash equilibrium when used on normal-form or sequence-form strategies. Like prior theoretical results [26, 27], our results in Theorems 2 and 3 apply to normal-form and sequence-form strategies. Still, the regularized policy-gradients exhibit surprisingly strong performance in large-scale games like Stratego even when applied to behavioral strategies [7, 16]. Recently, it has been shown that these convergence guarantees hold even in behavioral strategies settings [28]. 
+
+## 3 Safe imperfect-information subgame solving 
+
+In imperfect-information games, subgame solving is difficult because player strategies are interde-pendent across the entire game. We illustrate this challenge using a modified version of Matching Pennies, in which Player 1 receives a double reward if both players select Tails. This game has a single unique Nash equilibrium if both players play π(H) = 23 .Figure 1a shows the sequential form of this game, where Player 2 acts first without revealing the choice to Player 1. Consider Bayesian gadget game for Player 1’s decision with 2 nodes as illustrated in Figure 1b. The optimal strategy in this subgame depends on the belief p that the opponent played Heads. If p > 23 , Player 1 should always play Heads; If p < 23 , then Tails is optimal. Lastly, if p = 23 ,then regardless of the strategy the Player 1 chooses, it will always have the same expected utility 23 ,which means that any strategy of Player 1 in the Bayesian gadget is optimal. 1H0TH0H2TT
+
+> s1
+> (a) Original game
+
+1H0T
+
+p
+
+0H2T
+
+1 − p
+
+> s1
+> (b) Bayesian gadget game
+
+0.5 T1H0TC1.0 1T0H2TC1.0 
+
+> s1
+> (c) Resolving gadget game
+
+Figure 1: Sequential form of Matching Pennies, where Player 2 acts first and the corresponding subgame and resolving gadget game of Player 1. The danger is that the opponent can choose a different strategy, such as playing H, which makes the different strategies of Player 1 in the real game lead to very different payoffs. Gadget games mitigate this risk by giving an opponent a choice to hypothetically select any strategy in the past. Resolving gadget inserts an additional opponent’s decisions before each root state of the subgame. These new decisions respect the opponent’s information sets and give the opponent a choice to either continue into the subgame or terminate the game for a fixed reward. Crucially, the probability distribution across the root nodes is proportional only to the reach of resolving and the chance player [13]. If the termination reward is the opponent’s counterfactual best response value to some blueprint strategy π, then every equilibrium of this gadget game is guaranteed to be no more exploitable in the full game than the blueprint. Moreover, solutions to gadget games have been empirically shown to often improve the blueprint [2, 3, 13, 15, 22]. 
+
+Theorem 1. [3, 13, 22] Consider a common-knowledge subgame Gs0 of game G starting in public state s0. Let πi be a blueprint strategy and GG,s 0 
+
+> i
+
+be a player i’s resolving gadget game corresponding to the Gs0 , where the terminate values correspond to the best response values to πi. Let π∗ be a Nash equilibrium of GG,s 0 
+
+> i
+
+and π′ 
+
+> i
+
+strategy that plays π∗ 
+
+> i
+
+in a subgame Gs0 and blueprint π everywhere else. Then 
+
+E(π′
+
+> i
+
+) ≤ E (πi)
+
+4In Figure 1c we show the resolving gadget of the Matching Pennies subgame. The initial chance node assigns a probability of reaching the state equivalent to the reach of Player 1 and the chance. Since neither Player 1 nor the chance player has acted, the reach is 1. It is possible to normalize the chance node so that the probabilities sum to 1 without changing the optimal play in that game, but we kept them unnormalized so they reflect the reach. The reward of the terminating action corresponds to the blueprint π1(H) = 0 .5.
+
+3.1 Subgame solving by implicit gadget game 
+
+Prior work bridges subgame solving and policy-gradients by training auxiliary components to explicitly construct subgames, which are then solved using tabular methods, such as CFR [18, 19]. However, this explicit construction of the complete subgame is often not computationally feasible. Instead of explicit construction, we represent the resolving gadget game of player i implicitly by introducing a temporary actor πΨ with weights Ψ. This actor predicts the strategy for the initial gadget decision (terminate or continue). The training in the gadget game proceeds by first sampling the initial state proportionally to the reach of player i and the chance player. Then, it samples the trajectory until the end of the game using the current strategy πθ′ . The q-value of the continue action is the estimated counterfactual value of the sampled initial state. The q-value of the terminate action is the critic’s estimate using the blueprint strategy πθ . These two q-values are then used to compute the policy-gradient update. Lastly, the loss used to train θ′ is scaled by the probability of the continue action to ensure an unbiased update based on the opponent’s gadget decision. Theorem 1 does not depend directly on the solver used, as long as it converges to a Nash equilibrium, and our approach only mirrors the gadget game’s behavior. As a result, our technique is not limited to regularized policy-gradient algorithms and will be compatible with future policy-gradient algorithms that may offer better theoretical guarantees for behavioral strategies. While the “terminate” reward should, in theory, be the counterfactual best response value, we use the critic’s estimate of the value when both players follow the blueprint. Some prior works observed that this approach performs better in practice, because it is less conservative [3]. In nested subgame solving, gadget safety requires that counterfactual values and state samples remain consistent with the strategies used in previous subgames. Consequently, safety is only preserved if each subsequent resolve utilizes the weights derived from the preceding resolve. 
+
+3.2 Subgame solving with a fixed magnet 
+
+The most successful applications of policy-gradients in imperfect-information games typically employ KL regularization, which prevents the strategy from deviating too far from a regularization strategy 
+
+πM , sometimes referred to as a magnet [7, 16, 26, 27]. This regularization offers a distinct form of safety, which is not present in tabular solvers like CFR: the regularization strength η explicitly bounds how far the strategy can shift. 
+
+Theorem 2. Given a game G and 1-strongly convex regularizer ψ with respect to || · || . Let πM be a magnet strategy profile with exploitability ϵ, η > 0 be a regularization weight. When solving a game G with regularized rewards, the Bregman divergence between the Nash strategy profile of the regularized game and the magnet is at most 
+
+Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+) ≤ ϵη
+
+Theorem 3. Given a game G with rewards represented by a matrix R and entropy as a regularizer 
+
+ψ. Let πM be a magnet strategy profile with exploitability ϵ, η > 0 be a regularization weight. When solving a game G with regularized rewards, the exploitability of the Nash strategy profile of the regularized game in the unregularized game G is at most 
+
+E(πη ) ≤ ϵ + ||R|| ∞
+
+r 4ϵη
+
+Proofs are provided in Appendix A. Theorems 2 and 3 describe the maximal possible strategy change for a fixed magnet πM . Specifically, Theorem 3 describes the change in exploitability when the algorithm is used in the entire game. When the fixed magnet is used in a Bayesian subgame, the 5exploitability is bound in that subgame, but when the same strategy is used in the rest of the game, the exploitability can increase beyond this bound. However, in practice, a strong blueprint π often implies low exploitability within each individual Bayesian subgame, and that bounds how much the strategy can change. So when the blueprint is near-optimal, the strategy changes in the subgame are outweighed by the KL penalty. Consequently, even when using the unsafe techniques, the strategy does not converge too far from the magnet. The update-equivalence framework offers a similar perspective by simulating a single step of the policy gradient algorithm at each decision [17]. However, the change in exploitability in the update-equivalence framework is limited by the step size. In contrast, we show that this type of safety is maintained even upon convergence, provided the magnet is fixed. Still, both approaches may increase exploitability in the worst case. Another surprising implication of Theorem 2 is that it bounds the strategy change both in common-knowledge and knowledge-limited subgame solving. This is unlike the safety guaranteed by gadget games, which requires additional constraints to be extended to KLSS [23, 24]. 
+
+## 4 Generating states 
+
+While the previous sections focus on strategy optimization, those methods require sampling states proportional to a specific probability distribution. As strategies are updated during subsequent resolves, this distribution shifts, requiring a belief model that dynamically changes along the strategy. Prior approaches typically relied on explicit state enumeration using game rules [3, 5, 6, 12, 18, 21, 29, 30] or some form of abstraction that could be both trained or predefined [2, 19, 31]. More recently, belief models have been trained to sample states using a fixed strategy and potentially domain-specific knowledge [7, 17]. We propose a general approach: a generative model that learns to sample subgame states conditioned on available information. Our belief model utilizes a decoder-only Transformer [32]. Rather than predicting a state representa-tion directly, the model auto-regressively generates sequences of actions, including chance events, that lead to a state. Each action is represented as a discrete token. To ensure samples are consistent with the current context (information), we prepend either the infoset si (for KLSS), or the public state 
+
+s0 (for common-knowledge) as the initial token. The model then predicts the probability distribution over subsequent actions in the sequence. The training target for the belief model depends on the subgame solving type. When using Bayesian gadget, the model must sample states proportional to P πθ (w|s), the probability of reaching state 
+
+w conditioned on the s, which is either an information set or public state, under strategy πθ. We train this model by sampling trajectories using πθ and applying standard cross-entropy loss to the generated action sequence. For a resolving gadget of player i, the model should sample states proportionally to 
+
+P πθ 
+
+> i
+
+(w|s)P πθ 
+
+> c
+
+(w|s). Since standard trajectory sampling follows full reach P πθ (w|s) =
+
+P πθ 
+
+> 1
+
+(w|s)P πθ 
+
+> 2
+
+(w|s)P πθ 
+
+> c
+
+(w|s), which includes the opponent’s j strategy, we apply the importance sampling correction 1   
+
+> Pπθj(w|s)
+
+to remove bias from the samples of the opponent’s specific strategy. In a nested subgame-solving setting, the strategy is updated at every encountered decision point, while respecting past changes. This means that even the belief model needs to reflect those changes. During subgame solving, we train the belief model using the policy-gradient algorithm, ensuring it reflects changes in the strategy. Failing to do this joint training would result in a belief-strategy mismatch, where the strategy is optimized against an outdated distribution, potentially leading to significant bias in long games. 
+
+## 5 Experiments 
+
+We have evaluated various subgame solving techniques using Regularized Nash Dynamics (RNaD) with Neural Replicator Dynamics as the policy-gradient algorithm. The goal was to assess how these techniques influence exploitability in small-scale games and how they scale to large environments. Detailed information is in Appendix B 65.1 One-shot games 
+
+To empirically verify Theorems 1 and 3, we solved subgames using either the Bayesian or the gadget approach. For Bayesian solving, we compared two configurations: either a moving magnet, where the magnet moves the same way as during full-game training, or a fixed magnet, aligning with constraints in Theorem 3. We tested these on two normal-form games, biased Matching Pennies (Figure 1a) and Rock-Paper-Scissors. We assumed that the players move sequentially in this game, as in the example in Figure 1a, and, as a result, each player has a single subgame. In both cases, the blueprint strategy was close to the Nash equilibrium E(π) < 0.02 , which is the hardest setting for the subgame solving, because any small noise results in performance degradation. Consider a situation where the blueprint assigns a slightly higher probability to playing Paper than to other actions. Then the Bayesian solving would converge to a strategy that mixes between Scissors and Paper, which in turn can be exploited by playing Scissors. Results in Figure 2 confirm that a fixed magnet prevents the strategy from diverging too far from the equilibrium. In contrast, when moving the magnet, the strategy will gradually converge to the best response, which is exploitable in the full game. When using the gadget game, exploitability first increases before stabilizing. This happens because the gadget actor is initialized randomly and must first learn the strategy for the gadget decision. However, after this strategy is learned, the exploitability remains low, though it slightly increases compared to the blueprint. This increase is due to the approximation noise in the critic’s predicted utilities for the gadget’s “terminate” action. 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6 Iterations 1e5 0.025 0.050 0.075 0.100 0.125 0.150 0.175 Exploitability Gadget Bayesian (moving magnet) Bayesian (fixed magnet) 
+
+(a) Biased matching Pennies 0 1 2 3 4 5Iterations 1e4 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35 0.40 Exploitability Gadget Bayesian (moving magnet) Bayesian (fixed magnet) (b) Rock-Paper-Scissors 
+
+Figure 2: Exploitability with 95% confidence intervals in one-shot games, when solving a single subgame with different techniques using the same policy-gradient algorithm as the solver. 
+
+5.2 Small games 
+
+We next evaluated exploitability across full games by applying test-time reasoning at every decision point and then merging all subgame strategies into a single strategy for the whole game. We compared solutions of resolving gadget, common-knowledge Bayesian gadget, KLSS Bayesian gadget, and the Update Equivalence Framework (UEF), the method employed by the superhuman Stratego bot Ataraxos [7]. Since UEF is time-oblivious, we slightly modified it to use the provided time to collect traces, thereby obtaining a better estimate of Q-values for its update. When solving the Bayesian subgames, we kept the magnet fixed to be in line with Theorem 2. Since later reasoning depends on the strategy from earlier subgames, we traversed the game using breadth-first search, and at each subgame we used the weights from the corresponding decision in the previous layer. We tested three standard benchmark games: Imperfect Information Goofspiel played with 5 cards, Leduc hold’em, and Battleship on 2x2 board with single ship of size 2, using three distinct blueprints for each. The first blueprint corresponds to the strategy near initialization of the weights, the second to the middle of the training, which will be the most common type of blueprint in large games, and the third, which is the least exploitable blueprint, to which the Regularized Nash Dynamics converged during training. As shown in Figure 3, all techniques improve upon the blueprint when the blueprint is highly exploitable. Surprisingly, resolving gadget outperform other techniques with these blueprints, which is in contrast to the tabular settings, where Bayesian gadget is often superior [15, 22]. This advantage 70 1 20.00 0.25 0.50 0.75 Exploitability Goofspiel 5 0 1 20.0 0.2 0.4 0.6 Exploitability Battleship 2,[2] 0 1 2Blueprint ID 012Exploitability Leduc Blueprint 2s 5s 10s Gadget Bayesian Bayesian KLSS UEF Figure 3: Exploitability with 95% confidence interval after performing different types of test-time reasoning in every subgame with the same policy-gradient algorithm for a limited time. stems partially from the fixed-magnet constraint in Bayesian gadget and the fact that RNaD naturally encourages non-zero action probabilities, which has recently been shown to converge to stronger equilibria in gadget games [22]. Using the strongest blueprints in Goofspiel and Leduc, the solutions of resolving gadget seem to slightly increase exploitability even with extended train time. We hypothesize that there are two main reasons for this degradation. 1. Since the safety of gadget games is only guaranteed upon convergence, the allocated computation time was insufficient to reach equilibrium in earlier subgames, leading to compounding errors in the merged strategy. 2. The additional test-time training contains noise from several sources: the critic for the “terminate” action, samples from the belief model, and sampling of the trajectories. 
+
+5.3 Large games 
+
+Finally, we evaluated the same techniques in large-scale games where computing exact exploitability is intractable. We measured performance via head-to-head play against a baseline RNaD strategy. Both the subgame solver and the blueprint were allocated equal additional computation time at each decision point. The additional blueprint time was spent on further training the blueprint from the game’s initial state. To ensure that the additional test-time reasoning does not exploit the knowledge of the opponent’s strategy, we have always matched different training seeds. The goal of this experiment is to verify that additional test-time reasoning improves upon the blueprint. We do not try to argue or show that this approach outperforms all prior techniques applicable to the used games. A key implementation detail is that we reset the updated parameters to the blueprint after every playthrough. Early experiments suggested that without resetting, updates in one subgame would “leak” into others via shared neural network parameters, degrading global performance. Making these updates persistent without corrupting the global strategy remains a promising direction for future work. Even in tabular settings, the resolved strategy is used only temporarily and it does not update blueprint. The results in Figure 4 show that all methods outperform UEF. In Battleship, the UEF offered only marginal gains, likely because it is restricted to a single-step update. While Bayesian gadget 8(a) Battleship 7,[4,3,3,2] (b) Battleship 10,[5,4,3,3,2] (c) Goofspiel 10 
+
+Figure 4: Head-to-head average reward with 95% confidence intervals of different subgame solving techniques against the blueprint from different training seeds. is theoretically unsafe, it frequently outperformed the resolving gadget. This may be because resolving gadget weights the loss by the probability of “continue” action in the gadget decision, which effectively acts as a reduced learning rate. While common-knowledge approaches benefited from increased computation, KLSS appears to be hindered by it. Although head-to-head comparisons are not a perfect proxy for exploitability, these experiments demonstrate the potential for scalable test-time reasoning in large domains. 
+
+## 6 Conclusion and discussion 
+
+In this work, we have presented a scalable framework for test-time reasoning in two-player zero-sum imperfect information games using policy-gradient algorithms. By extending the concept of gadget games to the reinforcement learning setting and introducing a generative belief model, we have removed the reliance on explicit subgame construction and tabular solvers. This allows test-time reasoning to scale to games, where subgame states may not be enumerable. Furthermore, because our approach only slightly modifies the core training algorithm, it significantly reduces design complexity compared to hybrid tabular-RL methods. We demonstrated that resolving gadget game can be implicitly represented using a temporary actor that models the gadget’s decision. We also established that KL regularization in modern policy-gradient algorithms serves as an implicit safety anchor, bounding how much the strategy changes even when using nominally unsafe Bayesian techniques. We empirically evaluated these approaches in both small and large games, verifying that even in this setting, the additional test-time reasoning improves the performance over the blueprint. Notably, these techniques often yielded greater performance gains than the Update-equivalence framework (UEF) utilized in the superhuman Stratego bot Ataraxos [7, 17]. We observed that the shared network parameters necessitate resetting weights after each playthrough. This highlights a potential for future research that would enable persistent local updates, allowing agents to retain test-time insights across playthroughs without degrading global strategy. Another promising direction is to combine our approach with depth-limited solving to allow faster gradient updates in long games. Prior work has integrated an approximate imperfect-information value function with policy-gradient algorithms [18, 19]. We intentionally omitted such value functions to isolate the effects of test-time reasoning from the potential noise of value approximation. 9Acknowledgments 
+
+This work is supported by National Science Foundation grant RI-2312342, the Vannevar Bush Faculty Fellowship ONR N00014-23-1-2876, the Czech Science Foundation GA25-18353S, the Grant Agency of the Czech Technical University in Prague (SGS23/184/OHK3/3T/13). The access to the computational infrastructure of the OP VVV funded project CZ.02.1.01/0.0/0.0/16_019/0000765 “Research Center for Informatics” is also gratefully acknowledged. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the author(s) and do not necessarily reflect the views of the funding agencies. 
+
+## References 
+
+[1] David Silver, Thomas Hubert, Julian Schrittwieser, Ioannis Antonoglou, Matthew Lai, Arthur Guez, Marc Lanctot, Laurent Sifre, Dharshan Kumaran, Thore Graepel, Timothy Lillicrap, Karen Simonyan, and Demis Hassabis. A general reinforcement learning algorithm that masters chess, shogi, and Go through self-play. Science , 362(6419):1140–1144, 2018. [2] Noam Brown and Tuomas Sandholm. Superhuman AI for heads-up no-limit poker: Libratus beats top professionals. Science , 359(6374):418–424, 2018. [3] Matej Moravˇ cík, Martin Schmid, Neil Burch, Viliam Lisý, Dustin Morrill, Nolan Bard, Trevor Davis, Kevin Waugh, Michael Johanson, and Michael Bowling. DeepStack: Expert-level artificial intelligence in heads-up no-limit poker. Science , 356(6337):508–513, 2017. [4] Noam Brown and Tuomas Sandholm. Superhuman AI for multiplayer poker. Science , 365 (6456):885–890, 2019. [5] Martin Schmid, Matej Moravˇ cík, Neil Burch, Rudolf Kadlec, Josh Davidson, Kevin Waugh, Nolan Bard, Finbarr Timbers, Marc Lanctot, G. Zacharias Holland, Elnaz Davoodi, Alden Christianson, and Michael Bowling. Student of Games: A unified learning algorithm for both perfect and imperfect information games. Science Advances , 9(46):eadg3256, 2023. [6] Brian Hu Zhang and Tuomas Sandholm. General search techniques without common knowl-edge for imperfect-information games, and application to superhuman Fog-of-War chess. In 
+
+Proceedings of the International Conference on Learning Representations (ICLR) , 2026. [7] Samuel Sokota, Eugene Vinitsky, Hengyuan Hu, J. Zico Kolter, and Gabriele Farina. Superhu-man AI for Stratego Using Self-Play Reinforcement Learning and Test-Time Search. In arXiv preprint , 2025. [8] Meta Fundamental AI Research Diplomacy Team (FAIR)†, Anton Bakhtin, Noam Brown, Emily Dinan, Gabriele Farina, Colin Flaherty, Daniel Fried, Andrew Goff, Jonathan Gray, Hengyuan Hu, Athul Paul Jacob, Mojtaba Komeili, Karthik Konath, Minae Kwon, Adam Lerer, Mike Lewis, Alexander H. Miller, Sasha Mitts, Adithya Renduchintala, Stephen Roller, Dirk Rowe, Weiyan Shi, Joe Spisak, Alexander Wei, David Wu, Hugh Zhang, and Markus Zijlstra. Human-level play in the game of Diplomacy by combining language models with strategic reasoning. Science , 378(6624):1067–1074, 2022. [9] Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc V. Le, Denny Zhou, and Xinyun Chen. Large Language Models as Optimizers. In Proceedings of the International Conference on Learning Representations (ICLR) , 2024. [10] Takeshi Kojima, Shixiang Shane Gu, Machel Reid, Yutaka Matsuo, and Yusuke Iwasawa. Large language models are zero-shot reasoners. In Advances in Neural Information Processing Systems (NeurIPS) , 2022. [11] Charlie Victor Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling LLM Test-Time Com-pute Optimally Can be More Effective than Scaling Parameters for Reasoning. In Proceedings of the International Conference on Learning Representations (ICLR) , 2025. [12] Andrew Gilpin and Tuomas Sandholm. A competitive Texas Hold’em poker player via auto-mated abstraction and real-time equilibrium computation. In Proceedings of the 21st National Conference on Artificial Intelligence (AAAI) , 2006. [13] Neil Burch, Michael Johanson, and Michael Bowling. Solving imperfect information games using decomposition. In Proceedings of the Twenty-Eighth AAAI Conference on Artificial Intelligence , 2014. 10 [14] Matej Moravˇ cík, Martin Schmid, Karel Ha, Milan Hladik, and Stephen Gaukrodger. Refining subgames in large imperfect information games. In Proceedings of the AAAI Conference on Artificial Intelligence , 2016. [15] Noam Brown and Tuomas Sandholm. Safe and Nested Subgame Solving for Imperfect-Information Games. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. [16] Julien Perolat, Bart De Vylder, Daniel Hennes, Eugene Tarassov, Florian Strub, Vincent de Boer, Paul Muller, Jerome T. Connor, Neil Burch, Thomas Anthony, Stephen McAleer, Romuald Elie, Sarah H. Cen, Zhe Wang, Audrunas Gruslys, Aleksandra Malysheva, Mina Khan, Sherjil Ozair, Finbarr Timbers, Toby Pohlen, Tom Eccles, Mark Rowland, Marc Lanctot, Jean-Baptiste Lespiau, Bilal Piot, Shayegan Omidshafiei, Edward Lockhart, Laurent Sifre, Nathalie Beauguerlange, Remi Munos, David Silver, Satinder Singh, Demis Hassabis, and Karl Tuyls. Mastering the game of Stratego with model-free multiagent reinforcement learning. 
+
+Science , 378(6623):990–996, 2022. [17] Samuel Sokota, Gabriele Farina, David J. Wu, Hengyuan Hu, Kevin A. Wang, J. Zico Kolter, and Noam Brown. The Update-Equivalence Framework for Decision-Time Planning. In 
+
+Proceedings of the International Conference on Learning Representations (ICLR) , 2024. [18] Ondˇ rej Kubíˇ cek, Neil Burch, and Viliam Lisý. Look-ahead search on top of policy networks in imperfect information games. In Proceedings of the Thirty-Third International Joint Conference on Artificial Intelligence (IJCAI) , 2024. [19] Ondˇ rej Kubíˇ cek and Viliam Lisý. Look-ahead Reasoning with a Learned Model in Imperfect In-formation Games. In Proceedings of the International Conference on Learning Representations (ICLR) , 2026. [20] Vojtˇ ech Kovaˇ rík, Martin Schmid, Neil Burch, Michael Bowling, and Viliam Lisý. Rethinking formal models of partially observable multiagent decision making. Artificial Intelligence , 303: 103645, 2022. [21] Sam Ganzfried and Tuomas Sandholm. Endgame Solving in Large Imperfect-Information Games. In Proceedings of the 2015 International Conference on Autonomous Agents and Multiagent Systems (AAMAS) , 2015. [22] Ondˇ rej Kubíˇ cek, Viliam Lisý, and Tuomas Sandholm. Equilibrium Refinements Improve Subgame Solving in Imperfect-Information Games. In arXiv preprint , 2026. [23] Brian Hu Zhang and Tuomas Sandholm. Subgame solving without common knowledge. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2021. [24] Weiming Liu, Haobo Fu, Qiang Fu, and Yang Wei. Opponent-limited online search for imperfect information games. In Proceedings of the 40th International Conference on Machine Learning (ICML) , 2023. [25] Andrew Gilpin and Tuomas Sandholm. Better automated abstraction techniques for imperfect information games, with application to Texas Hold’em poker. In Proceedings of the 6th International Joint Conference on Autonomous Agents and Multiagent Systems (AAMAS) , 2007. [26] Julien Perolat, Remi Munos, Jean-Baptiste Lespiau, Shayegan Omidshafiei, Mark Rowland, Pedro Ortega, Neil Burch, Thomas Anthony, David Balduzzi, Bart De Vylder, Georgios Piliouras, Marc Lanctot, and Karl Tuyls. From Poincaré Recurrence to Convergence in Imperfect Information Games: Finding Equilibrium via Regularization. In Proceedings of the 38th International Conference on Machine Learning (ICML) , 2021. [27] Samuel Sokota, Ryan D’Orazio, J. Zico Kolter, Nicolas Loizou, Marc Lanctot, Ioannis Mitliagkas, Noam Brown, and Christian Kroer. A Unified Approach to Reinforcement Learn-ing, Quantal Response Equilibria, and Two-Player Zero-Sum Games. In Proceedings of the International Conference on Learning Representations (ICLR) , 2023. [28] Fivos Kalogiannis and Gabriele Farina. Policy gradient methods converge globally in imperfect-information extensive-form games. Advances in Neural Information Processing Systems , 38: 29162–29224, 2026. [29] Noam Brown, Tuomas Sandholm, and Brandon Amos. Depth-limited solving for imperfect-information games. In Advances in Neural Information Processing Systems (NeurIPS) , 2018. 11 [30] Noam Brown, Anton Bakhtin, Adam Lerer, and Qucheng Gong. Combining Deep Reinforce-ment Learning and Search for Imperfect-Information Games. In H. Larochelle, M. Ranzato, R. Hadsell, M. F. Balcan, and H. Lin, editors, Advances in Neural Information Processing Systems (NeurIPS) , 2020. [31] Christopher Solinas, Radovan Haluska, David Sychrovsky, Finbarr Timbers, Nolan Bard, Michael Buro, Martin Schmid, Nathan R. Sturtevant, and Michael Bowling. Neural Bayesian Filtering. In arXiv preprint , 2025. [32] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is All you Need. In Advances in Neural Information Processing Systems (NeurIPS) , 2017. [33] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Yash Katariya, Chris Leary, Dougal Maclaurin, George Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. JAX: Composable transformations of Python+NumPy programs, 2018. [34] Jonathan Heek, Anselm Levskaya, Avital Oliver, Marvin Ritter, Bertrand Rondepierre, Andreas Steiner, and Marc van Zee. Flax: A neural network library and ecosystem for JAX, 2024. [35] DeepMind, Igor Babuschkin, Kate Baumli, Alison Bell, Surya Bhupatiraju, Jake Bruce, Peter Buchlovsky, David Budden, Trevor Cai, Aidan Clark, Ivo Danihelka, Antoine Dedieu, Claudio Fantacci, Jonathan Godwin, Chris Jones, Ross Hemsley, Tom Hennigan, Matteo Hessel, Shaobo Hou, Steven Kapturowski, Thomas Keck, Iurii Kemaev, Michael King, Markus Kunesch, Lena Martens, Hamza Merzic, Vladimir Mikulik, Tamara Norman, George Papamakarios, John Quan, Roman Ring, Francisco Ruiz, Alvaro Sanchez, Laurent Sartran, Rosalia Schneider, Eren Sezener, Stephen Spencer, Srivatsan Srinivasan, Miloš Stanojevi´ c, Wojciech Stokowiec, Luyu Wang, Guangyao Zhou, and Fabio Viola. The DeepMind JAX Ecosystem, 2020. 12 A Proofs 
+
+Theorem 2. Given a game G and 1-strongly convex regularizer ψ with respect to || · || . Let πM be a magnet strategy profile with exploitability ϵ, η > 0 be a regularization weight. When solving a game G with regularized rewards, the Bregman divergence between the Nash strategy profile of the regularized game and the magnet is at most 
+
+Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+) ≤ ϵη
+
+We will follow the Magnetic Mirror Descent approach, which defines the regularization with respect to the Bregman divergence B, which is more general than the KL divergence. We will denote R as the reward matrix corresponding to Equation (1). The strategies used throughout this proof refer to either the normal-form strategies or the sequence-form strategies, not the behavioral strategies. When using the fixed magnet πM = ( πM 
+
+> 1
+
+, π M 
+
+> 2
+
+), the regularized objective can then be written of as 
+
+V (π1, π 2) = πT 
+
+> 1
+
+Rπ2 − ηB ψ (π1, π M 
+
+> 1
+
+) + ηB ψ (π2, π M 
+
+> 2
+
+) (3) For the remainder of this section, we will not denote the transposition of the strategy vector of player 1, when it is multiplied with the reward matrix, which will simplify the notation, but we will still treat it as transposed vector. and the solution of such regularized game is 
+
+max 
+
+> π1
+
+min 
+
+> π2
+
+V (π1, π 2) (4) The fixed point solution πη 
+
+> 1
+
+, π η 
+
+> 2
+
+of this minmax problem satisfies these conditions for each π1 and π2
+
+⟨∇ π1 V (πη 
+
+> 1
+
+, π η 
+
+> 2
+
+), π 1 − πη 
+
+> 1
+
+⟩ ≤ 0 (5) 
+
+−⟨∇ π2 V (πη 
+
+> 1
+
+, π η 
+
+> 2
+
+), π 2 − πη 
+
+> 2
+
+⟩ ≤ 0 (6) We can compute the gradient in Equation (5) 
+
+∇π1 V (π1, π 2) = Rπ2 − η∇π1 Bψ (π1, π M 
+
+> 1
+
+) = Rπ2 − η∇ψ(π1) + η∇ψ(πM 
+
+> 1
+
+) (7) 
+
+⟨∇ π1 V (πη 
+
+> 1
+
+, π η 
+
+> 2
+
+), π 1 − πη 
+
+> 1
+
+⟩ = ⟨R πη 
+
+> 2
+
+− η∇ψ(πη 
+
+> 1
+
+) + η∇ψ(πM 
+
+> 1
+
+), π 1 − πη 
+
+> 1
+
+⟩
+
+= ⟨R πη 
+
+> 2
+
+, π 1 − πη 
+
+> 1
+
+⟩ − η⟨∇ ψ(πη 
+
+> 1
+
+) − ∇ ψ(πM 
+
+> 1
+
+), π 1 − πη 
+
+> 1
+
+⟩ (8) We will use the Bregman three-point property Bψ (x, z ) = Bψ (x, y ) + Bψ (y, z ) + ⟨∇ ψ(y) −∇ψ(z), x − y⟩
+
+Bψ (π1, π M 
+
+> 1
+
+) = Bψ (π1, π η 
+
+> 1
+
+) + Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + ⟨∇ ψ(πη 
+
+> 1
+
+) − ∇ ψ(πM 
+
+> 1
+
+), π 1 − πη 
+
+> 1
+
+⟩⟨∇ ψ(πη 
+
+> 1
+
+) − ∇ ψ(πM 
+
+> 1
+
+), π 1 − πη 
+
+> 1
+
+⟩ = Bψ (π1, π M 
+
+> 1
+
+) − Bψ (π1, π η 
+
+> 1
+
+) − Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) (9) 
+
+⟨∇ π1 V (πη 
+
+> 1
+
+, π η 
+
+> 2
+
+), π 1 − πη 
+
+> 1
+
+⟩ == ⟨R πη 
+
+> 2
+
+, π 1 − πη 
+
+> 1
+
+⟩ − η(Bψ (π1, π M 
+
+> 1
+
+) − Bψ (π1, π η 
+
+> 1
+
+) − Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+)) ≤ 0 (10) 
+
+⇒ π1Rπη 
+
+> 2
+
+− πη 
+
+> 1
+
+Rπη 
+
+> 2
+
+≤ η(Bψ (π1, π M 
+
+> 1
+
+) − Bψ (π1, π η 
+
+> 1
+
+) − Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+)) (11) Similarly, we will derive for the second constraint 
+
+− ⟨∇ π2 V (πη 
+
+> 1
+
+, π η 
+
+> 2
+
+), π 2 − πη 
+
+> 2
+
+⟩
+
+= −⟨ πη 
+
+> 1
+
+R, π 2 − πη 
+
+> 2
+
+⟩ − η⟨∇ ψ(πη 
+
+> 2
+
+) − ∇ ψ(πM 
+
+> 2
+
+), π 2 − πη 
+
+> 2
+
+⟩
+
+= −⟨ πη 
+
+> 1
+
+R, π 2 − πη 
+
+> 2
+
+⟩ − η(Bψ (π2, π M 
+
+> 2
+
+) − Bψ (π2, π η 
+
+> 2
+
+) − Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+)) ≤ 0 (12) 
+
+⇒ − πη 
+
+> 1
+
+Rπ2 + πη 
+
+> 1
+
+Rπη 
+
+> 2
+
+≤ η(Bψ (π2, π M 
+
+> 2
+
+) − Bψ (π2, π η 
+
+> 2
+
+) − Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+)) (13) We can now sum those 2 inequalities 
+
+π1Rπη 
+
+> 2
+
+− πη 
+
+> 1
+
+Rπ2 ≤ η Bψ (π1, π M 
+
+> 1
+
+) + Bψ (π2, π M 
+
+> 2
+
+)+ 
+
+− Bψ (π1, π η 
+
+> 1
+
+) − Bψ (π2, π η 
+
+> 2
+
+) − Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) − Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+) (14) 13 The Equation (14) holds for every π = ( π1, π 2), so it has to holds even for π = πM and Bx,x = 0 
+
+πM 
+
+> 1
+
+Rπη 
+
+> 2
+
+− πη 
+
+> 1
+
+RπM 
+
+> 2
+
+≤ η  − Bψ (πM 
+
+> 1
+
+, π η 
+
+> 1
+
+) − Bψ (πM 
+
+> 2
+
+, π η 
+
+> 2
+
+) − Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) − Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+) (15) 
+
+Bψ (πM 
+
+> 1
+
+, π η 
+
+> 1
+
+) + Bψ (πM 
+
+> 2
+
+, π η 
+
+> 2
+
+) + Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+)
+
+≤ 1
+
+η (πη 
+
+> 1
+
+RπM 
+
+> 2
+
+− πM 
+
+> 1
+
+Rπη 
+
+> 2
+
+)
+
+≤ 1
+
+η (max 
+
+> π1
+
+π1RπM 
+
+> 2
+
+− min 
+
+> π2
+
+πM 
+
+> 1
+
+Rπ2) = E(πM )
+
+η (16) We know that the Bregman divergence is always non-negative, which allows us to get a bound on the resulting KL diergence for the strategy profile 
+
+Bψ (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + Bψ (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+) ≤ E(πM )
+
+η (17) 
+
+Theorem 3. Given a game G with rewards represented by a matrix R and entropy as a regularizer 
+
+ψ. Let πM be a magnet strategy profile with exploitability ϵ, η > 0 be a regularization weight. When solving a game G with regularized rewards, the exploitability of the Nash strategy profile of the regularized game in the unregularized game G is at most 
+
+E(πη ) ≤ ϵ + ||R|| ∞
+
+r 4ϵη
+
+Proof. Exploitability of the πη is 
+
+E(πη ) = πBR  
+
+> 1
+
+Rπη 
+
+> 2
+
+− πη 
+
+> 1
+
+RπBR 
+
+> 2
+
+= πBR  
+
+> 1
+
+Rπη 
+
+> 2
+
+− πη 
+
+> 1
+
+RπBR  
+
+> 2
+
++ πBR  
+
+> 1
+
+RπM 
+
+> 2
+
+− πBR  
+
+> 1
+
+RπM 
+
+> 2
+
++ πM 
+
+> 1
+
+RπBR  
+
+> 2
+
+− πM 
+
+> 1
+
+RπBR 
+
+> 2
+
+= πBR  
+
+> 1
+
+Rπη 
+
+> 2
+
+− πBR  
+
+> 1
+
+RπM 
+
+> 2
+
++ πBR  
+
+> 1
+
+RπM 
+
+> 2
+
+− πM 
+
+> 1
+
+RπBR  
+
+> 2
+
++ πM 
+
+> 1
+
+RπBR  
+
+> 2
+
+− πη 
+
+> 1
+
+RπBR 
+
+> 2
+
+= πBR  
+
+> 1
+
+R(πη 
+
+> 2
+
+− πM 
+
+> 2
+
+) + ( πBR  
+
+> 1
+
+RπM 
+
+> 2
+
+− πM 
+
+> 1
+
+RπBR  
+
+> 2
+
+) + ( πM 
+
+> 1
+
+− πη 
+
+> 1
+
+)RπBR  
+
+> 2
+
+(18) We can now use following bound for middle terms 
+
+πBR  
+
+> 1
+
+RπM 
+
+> 2
+
+− πM 
+
+> 1
+
+RπBR  
+
+> 2
+
+≤ max 
+
+> π1
+
+π1RπM 
+
+> 2
+
+− min 
+
+> π2
+
+πM 
+
+> 1
+
+Rπ2 = E(πM ) (19) We can bound the other two terms by first using Hölder’s inequality and then Pinkser’s inequality 
+
+πBR  
+
+> 1
+
+R(πη 
+
+> 2
+
+− πM 
+
+> 2
+
+) ≤ | πBR  
+
+> 1
+
+R(πη 
+
+> 2
+
+− πM 
+
+> 2
+
+)|≤ || πBR  
+
+> 1
+
+R|| ∞|(πη 
+
+> 2
+
+− πM 
+
+> 2
+
+)|≤ ||R|| ∞|(πη 
+
+> 2
+
+− πM 
+
+> 2
+
+)|≤ ||R|| ∞
+
+q
+
+2DKL (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+) (20) 
+
+(πM 
+
+> 1
+
+− πη 
+
+> 1
+
+)RπBR  
+
+> 2
+
+≤ ||R|| ∞
+
+q
+
+2DKL (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) (21) We can further use inequality √x + √y ≤ √2√x + y
+
+E(πη ) ≤ E (πM ) + ||R|| ∞
+
+q
+
+2DKL (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + ||R|| ∞
+
+q
+
+2DKL (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) (22) 
+
+≤ E (πM ) + ||R|| ∞
+
+q
+
+2 · (2 DKL (πη 
+
+> 1
+
+, π M 
+
+> 1
+
+) + 2 DKL (πη 
+
+> 2
+
+, π M 
+
+> 2
+
+)) (23) Since the used regularizer ψ is entropy, we can use Equation (17) to show 
+
+E(πη ) ≤ E (πM ) + ||R|| ∞
+
+s
+
+4E(πM )
+
+η (24) 14 B Experimental details 
+
+The codebase for this paper is written in Python 3.13, with libraries from the Jax ecosystem [33, 34, 35]. Every experiment run used a single core of an AMD EPYC 7543 with 16 GB of RAM and a single Nvidia A100. 
+
+B.1 Game rules Biased Matching Pennies Biased Matching Pennies is a one-shot game, in which players choose a side of a coin, either Heads or Tails. If the choices match, Player 1 wins; otherwise, Player 2 wins. In this version, the rewards are doubled if both choose Tails. The normal-form representation of this game is in Table 1a. In our experiments, we treat this as a sequential game in which Player 2 acts first, followed by Player 1, who did not observe Player 2’s choice. 
+
+Rock-Paper-Scissors Rock-Paper-Scissors is a one-shot game where each player selects one of three actions: Rock, Paper, or Scissors. An identical choice results in a draw, rock defeats scissors, paper defeats rock, and scissors defeats paper. The normal-form representation is in Table 1b. As with Matching Pennies, we implement this sequentially, with Player 2 acting first and Player 1 acting with no knowledge of the opponent’s selection. Table 1: Normal-form representation of the games used in Section 5.1 
+
+> (a) Biased Matching Pennies
+
+P2 H TH 1 0
+
+P1 T 0 2
+
+> (b) Rock-Paper-Scissors
+
+P2 R P SR 0 −1 1
+
+P1 P 1 0 −1
+
+S −1 1 0
+
+Battleship Battleship S, L is a two-player game which is played on two private S × S grids. Each player has a set of ships L of varying lengths (width is always 1). In the first phase of the game, players secretly place their ships on their respective grids, so that no ship can be placed in the 8-neighborhood of any other ship. Then, in the second phase, players take turns firing shots at the opponent’s board, receiving only feedback on whether the ship was hit or not. When all segments of a ship are hit, the ship is publicly declared sunken. The game concludes when one player sinks all of the opponent’s ships. An example of notation used in the paper is Battleship 7, [4 , 3, 3, 2] , which is played on 7 × 7 grids with ships of sizes 4, 3, 3, 2. 
+
+Goofspiel Imperfect Information Goofspiel X is a card game, where each player has cards valued from 1 to X, each only once. In each of the X rounds, a prize card from the dealer’s deck is revealed. Players submit a secret bid using one card from their hand, and the player with the highest bid wins points equal to the value of the prize card. In the event of a tie, no points are awarded. Bids are not publicly revealed, only the outcome of the round. In our version, the dealer’s deck is not random, but it contains prize cards in descending order from X to 1. 
+
+Leduc Hold ’em Leduc Hold ’em is a simplified poker variant played with 6 cards (2 Jacks, 2 Queens, 2 Kings). At the beginning of the game, each player is dealt a single card. The game then progresses through 2 betting rounds. After the first round, the public card is revealed. Each betting round can consist of at most 2 raises. If any player has the same card as the public one, they win. The player with the higher-ranked card wins, where the ranking order is: Jack < Queen < King. 
+
+B.2 Subgame solving 
+
+To show that additional training using the gadget game is a minor change to the training algorithm, we provide pseudocode for this approach in Algorithm 1, highlighting the modifications in red. This pseudocode also shows how the Bayesian unsafe approach is used, as it differs from the blueprint 15 training only in sampling world states using the belief model rather than starting from the initial state. 
+
+Algorithm 1 Subgame Solving 
+
+Require: Blueprint parameters θ, resolving player i, opponent j, information set si 
+
+> 1:
+
+All techniques, Gadget  
+
+> 2:
+
+Ψ ← Initialize gadget actor parameters  
+
+> 3:
+
+θ′ ← θ 
+
+> 4:
+
+s0 ← s0(si) 
+
+> 5:
+
+while Available budget do  
+
+> 6:
+
+Sample a w world state using the belief model Initial state in the training  
+
+> 7:
+
+Sample trajectory τ from w using πθ′ 
+
+> 8:
+
+Estimate counterfactual values vπθ′
+
+> k, target
+
+, q πθ′ 
+
+> k, target
+
+for each player k in every encountered infoset in the trajectory τ 
+
+> 9:
+
+qterm ← vj,θ (sj (w)) Blueprint critic value  
+
+> 10:
+
+qcont ← vπθ′
+
+> j, target
+
+(sj (w)) Target value  
+
+> 11:
+
+Update Ψ with policy-gradient loss using (qterm , q cont ) at sj (w) 
+
+> 12:
+
+pcont ← πj, Ψ(sj (w), cont)  
+
+> 13:
+
+Update θ′ with actor and critic losses scaled by pcont  
+
+> 14:
+
+end while  
+
+> 15:
+
+return θ′
+
+B.3 Belief model 
+
+We have conducted an additional experiment to verify the quality of the samples from the trained belief models used in Section 5.2. We have extracted the reaches from the trained blueprint for each possible state, and we have also extracted the probability distributions from the transformer’s logits. We then compared those two distributions using Jensen-Shannon divergence, and we show the mean and maximum of those divergences from each public state in Figure 5. Surprisingly, the belief model trained for the gadget game, which uses importance sampling correction, sometimes produces more accurate samples even with the added variance. This mostly happens with stronger blueprints in Goofspiel 5, where public states later in the game contain hundreds of states. The likely cause is that, in Bayesian solving, the reaches are closer to zero than in the gadget game, which makes them harder to predict correctly due to the variance introduced by the sampling itself. 
+
+B.4 Choice of the gadget 
+
+In this paper, we have used the resolving gadget game, but there is another type of gadget game 
+
+max-margin gadget game , which further improves upon the resolving gadget game by maximizing the minimal improvement in the subgame [14]. Recent work has shown that the resolving gadget game may contain stronger equilibria than the max-margin [22]. In this work, we did not use the max-margin because it switches the order of gadget decision. In a resolving gadget game, the chance first decides the state and only then does the opponent select its belief. In max-margin, the opponent selects its belief, and only then is the particular state selected. This means that the opponent needs to decide belief across all of its information sets at the root of the subgame Gs . However, in large games, it is not known a priori how many information sets there are at the root of the subgame. Simulating the max-margin gadget would require this knowledge or having a way to add new actions to the network on the fly. On the other hand, the resolving gadget only adds a decision with 2 actions, so the neural network can easily simulate it. Consider a situation in which the opponent reaches a part of the subgame only through suboptimal play. It gives you the “gift” in utility you can get in that subgame. Reach max-margin subgame solving redistributes this gift to allow more gains in the parts of the subgame that can be reached in optimal play [15]. The gifts can be combined with any gadget game. However, in this work, we did not explore this combination with our simulation and leave this for future research. 16 0 1 2Blueprint ID Gadget Bayesian Type                                   
+
+> 0.001 0.004 0.008 0.001 0.004 0.011
+> Mean JS divergence Goofspiel 5
+> 012Blueprint ID Gadget Bayesian
+> 0.003 0.000 0.000 0.000 0.000 0.000
+> Mean JS divergence Battleship 2,[2]
+> 012Blueprint ID Gadget Bayesian
+> 0.002 0.003 0.005 0.003 0.003 0.004
+> Mean JS divergence Leduc
+> 012Blueprint ID Gadget Bayesian Type
+> 0.025 0.022 0.052 0.018 0.043 0.068
+> Max JS divergence Goofspiel 5
+> 012Blueprint ID Gadget Bayesian
+> 0.008 0.009 0.010 0.001 0.002 0.014
+> Max JS divergence Battleship 2,[2]
+> 012Blueprint ID Gadget Bayesian
+> 0.004 0.005 0.005 0.005 0.005 0.020
+> Max JS divergence Leduc
+> 0.0025 0.0050 0.0075 0.0100 0.0125 0.0150
+> 0.0025 0.0050 0.0075 0.0100 0.0125 0.0150
+> 0.0025 0.0050 0.0075 0.0100 0.0125 0.0150
+> 0.02 0.04 0.06 0.08 0.10
+> 0.02 0.04 0.06 0.08 0.10
+> 0.02 0.04 0.06 0.08 0.10
+
+Figure 5: Mean and maximum of Jensen-Shannon divergence between the actual blueprint reaches and the samples from the belief model across each public state in the game. 
+
+B.5 Hyperparameters 
+
+We have used two sets of hyperparameters, one set for small experiments in Sections 5.1 and 5.2 and the second set for large experiments Section 5.3. Both are in Table 2 Table 2: Hyperparameters in all experiments 
+
+Parameter Small Large 
+
+RNaD regularization η 0.2 0.2
+
+RNaD regularization policy change 2000 20000 
+
+NeuRD β clip 2 2
+
+NeuRD avantage clip 5 5
+
+MLP hidden sizes 256 1024 
+
+MLP hidden layers 2 2
+
+Belief transformer heads 2 4
+
+Belief transformer layers 4 8
+
+Belief transformer dense size 128 256 
+
+Activation function GELU GELU Normalization function RMSNorm RMSNorm Batch size 64 256 Strategy learning rate 3 · 10 −4 1 · 10 −4
+
+Belief learning rate 1 · 10 −3 1 · 10 −3
+
+Gadget learning rate 1 · 10 −3 1 · 10 −3
+
+Optimizer ADAM ADAM ADAM β1, β 2 0.99 , 0.999 0.99 , 0.999 
+
+V-trace λ 0.95 0.95 
+
+Discount Factor γ 1.0 1.0
+
+B.6 Computational resources One-shot games For each game in this category, we trained five independent blueprint strategies and their corresponding belief models. Subsequently, test-time reasoning was run for each blueprint. The total computational time for these experiments was less than 24 GPU-hours per game. 17 Small games For each game, we utilized a single training run and selected three checkpoints representing different stages of strategy convergence. For each checkpoint, we trained three distinct belief models: the first is used for Bayesian solving, and samples states conditioned on the public state based on the probability of reaching those states when following the blueprint. The second is used for gadget games and also samples states conditioned on the public state, but it is unbiased with respect to the opponent’s strategy. The third is used for KLSS and UEF, and it samples states conditioned on the information state. The initial training phase required approximately 12 GPU-hours per game. For the evaluation phase, we allocated 2, 5, or 10 seconds of training time per decision point across five different seeds. A single evaluation run was completed in under 6 hours. This makes the total time for this experiment 3 · (12 + 5 · 6 · 3) = 306 GPU-hours. 
+
+Large games We trained five independent blueprint strategies for each large-scale game, each requiring 72 GPU-hours. This was followed by an additional 72 GPU-hours per blueprint to train the three belief model variants. Finally, the head-to-head evaluations lasted approximately 100 hours per configuration. The total computational time is estimated to be at most 3·(5 ·(72+72 ·3)+2 ·4·100) = 6720 GPU-hours. The games played in that time-frame for each bar in Figure 4 are in Table 3 Game Time Playthroughs Battleship 7 10 s ~1500 
+
+30 s ~500 
+
+Battleship 10 10 s ~800 
+
+30 s ~300 
+
+Goofspiel 10 10 s ~1500 
+
+30 s ~1300 
+
+Table 3: Amount of playthroughs used for each bar in Figure 4. 
+
+## C Additional Experiments 
+
+We provide several additional experiments to accompany the main results from the paper 
+
+C.1 Effect of magnet strength in unsafe resolving 
+
+To verify the effects of the bounded strategy change from Theorem 2, we conducted the same experiment as in Section 5.2 in Rock-paper-scissors, by using the varied strengths of magnets to solve the same subgame. We show the results of this experiment in Figure 6. The blueprints used have a small bias towards one action, making the optimal Bayesian subgame solution a pure strategy that is fully exploitable. The magnet then prevents the strategy from changing too much, and, as expected, the lower the magnet regularization, the closer the algorithm converges to the best response. 0 20 40 60 80 100 120 checkpoint index 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 exploitability (Nash gap / 2) 
+
+> RPS exploitability vs. training, by magnet coefficient
+> =0.01
+> =0.02
+> =0.05
+> =0.1
+> =0.2
+> =0.5
+> =1
+
+Figure 6: Exploitability in Rock-paper-scissors, when solving a single subgame using Bayesian subgames with fixed magnet, for varying strengths of the magnet. 18 10 s 30 s Search time 0.00 0.25 0.50 0.75 Average reward Blueprint Gadget Bayesian Bayesian KLSS UEF (a) Random opponent 10 s 30 s Search time 1.0    
+
+> 0.5
+> 0.0 Average reward Blueprint Gadget Bayesian Bayesian KLSS UEF
+
+(b) Heuristic opponent 
+
+Figure 7: Head-to-head average reward with 95% confidence intervals of blueprint and different subgame solving techniques against the different types of opponents in Battleship 7,[4,3,3,2]. 
+
+C.2 Head-to-head performance against other opponents 
+
+In addition to the experiments in Section 5.3, we also matched all the subgame-solving techniques and blueprints used against two types of players in Battleship 7,[4,3,3,2]. First, being a uniform random player, which picks an action at random, and second, being a strong heuristic player that uses strategies often employed by strong human players. The heuristic player randomly positions its ships. Then, during the shooting phase, it always shoots a checkboard pattern based on the smallest opponent’s ship. When the ship is found, the player tries to sink it as quickly as possible, then continues with the checkboard pattern shooting. We show the results with 95% confidence intervals in Figure 7. The results are in line with those from Section 5.3, where Gadget and both Bayesian approaches significantly improve upon the blueprint, but the performance improvement among them is inconclusive. Although UEF also improves over the blueprint, the gains are smaller than those of the other methods. 
+
+## D LLM usage 
+
+We have used Claude Sonnet 4.6 (with Claude Code) and Cursor Composer 2 during the implementa-tional part of our work. We have used Claude Sonnet 4.6 and Gemini 3 during the writing of this paper. These models were not used to introduce novel ideas into the paper, but to refine the writing. Besides that, the models were used as a help in constructing the proofs in the paper. All outputs from those models have been double-checked before inclusion in the final version. 19
