@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-31</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 17 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>11</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 21:50:18 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 00:36:20 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读6篇、速读11篇，聚焦机器人策略与规划前沿；最值得关注的是推理延迟下的通用机器人微调（9.0）与贝叶斯流网络离线轨迹规划（9.0），社会导航与自然语言推理也具亮点；建议优先精读这两篇高分工作，并留意速读中的具身智能与记忆机制新思路。</p>
+<p>今日17篇AI论文速递，聚焦智能体长程技能与GUI推理，精读6篇中两篇9.0高分领跑。</p>
+<p>最值得关注：SKILL.state以可扩展方式攻克长程技能，WM-R1用强化学习让GUI智能体结合世界模型推理，均为9.0分高价值方向。</p>
+<p>建议普通读者优先精读这两篇高分论文，速读可先扫一眼弱模型引导探索的8.0分工作，再按兴趣深入。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,7 +83,7 @@
     <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning to Act While Waiting: RL Finetuning of Generalist Robot Policies Under Inference Latency">Learning to Act While Waiting: RL Finetuning of Generalist Robot Policies Under Inference Latency</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Flow Networks for Offline Trajectory Planning">Bayesian Flow Networks for Offline Trajectory Planning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Verify Smarter, Evolve Further: Efficient Harness Evolution through Behavior-Aware Verification">Verify Smarter, Evolve Further: Efficient Harness Evolution through Behavior-Aware Verification</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SKILL.state: Scalable Long-Horizon Agent Skills">SKILL.state: Scalable Long-Horizon Agent Skills</span></li><li><span class="dpr-home-dashboard-paper-title" title="WM-R1: Training GUI Agents to Reason and leverage World Models with Reinforcement Learning">WM-R1: Training GUI Agents to Reason and leverage World Models with Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="ReToolSQL: Agentic Reinforcement Learning for Robust Text-to-SQL">ReToolSQL: Agentic Reinforcement Learning for Robust Text-to-SQL</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>6</strong></span></div>
 </section>
@@ -94,7 +96,7 @@
     <strong class="dpr-home-dashboard-count">11 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="StarHarness: Evolving Harnesses with Stratified Search for Enterprise Environments">StarHarness: Evolving Harnesses with Stratified Search for Enterprise Environments</span></li><li><span class="dpr-home-dashboard-paper-title" title="Advantage-Driven Explicit Memory for Social Navigation">Advantage-Driven Explicit Memory for Social Navigation</span></li><li><span class="dpr-home-dashboard-paper-title" title="$R^3$: Training Robots to Reason in Natural Language via Reinforcement Learning">$R^3$: Training Robots to Reason in Natural Language via Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Boosting LLM Exploration via Weak-Model Guidance in RLVR">Boosting LLM Exploration via Weak-Model Guidance in RLVR</span></li><li><span class="dpr-home-dashboard-paper-title" title="Iron: Intent-Aligned and Retrospective Dual Learning Framework for Enhancing Generalist Virtual Agents">Iron: Intent-Aligned and Retrospective Dual Learning Framework for Enhancing Generalist Virtual Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Evidence Shapes Collaboration: Knowledge-Conditioned Topology Generation for Multi-Agent Systems">When Evidence Shapes Collaboration: Knowledge-Conditioned Topology Generation for Multi-Agent Systems</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agentic-rl <strong>11</strong></span></div>
 </section>

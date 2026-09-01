@@ -1,0 +1,850 @@
+Title: VICT: Verifier-Instrumented Credit Tracing for Long-Horizon LLM Agent Reinforcement Learning
+
+URL Source: https://arxiv.org/pdf/2608.28128v1
+
+Published Time: Mon, 31 Aug 2026 00:56:59 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# VICT: Verifier-Instrumented Credit Tracing for Long-Horizon LLM Agent Reinforcement Learning 
+
+Pengcheng Li 1 Zhengyang Zhang 1 Dongxu Zhang 2
+
+Sui Huang 3 Shaohua Ma 1,* 1Tsinghua University 
+
+> 2
+
+Xi’an Jiaotong University 
+
+> 3
+
+Jiaxing Nanhu University  
+
+> *Corresponding author. Email: lipc24@mails.tsinghua.edu.cn
+
+Abstract 
+
+Fine-grained credit assignment is a central challenge in reinforcement learning for long-horizon LLM agents. Standard objectives often train from programmatically verifiable termi-nal rewards by broadcasting each sparse out-come to every action in a trajectory. Existing methods typically seek finer credit from the rollout side, constructing auxiliary trajectory signals or additional comparisons to estimate action importance. Although useful, these ap-proaches still treat the verifier that judged suc-cess as a scalar reward, discarding its internal task structure. Our key insight is that many verifiable tasks already encode the relevant checks inside their terminal verifier. We pro-pose VICT (Verifier-Instrumented Credit Trac-ing), a training-time interface that exposes ex-ecutable or evidence-backed atoms and traces them back to actions through dependency-valid proof edges. VICT redistributes group-relative advantage only along those edges, shifting credit assignment from rollout-side inference to verifier-side tracing. It preserves the orig-inal terminal reward, abstains when evidence is incomplete or ambiguous, and changes only the training-time advantage tensor, requiring no learned critic, process labels, branch roll-outs, or inference-time verifier access. On ALFWorld and WebShop, VICT improves substantially over outcome-only training and achieves strong performance alongside recent fine-grained credit methods; ablations rule out dense atom rewards, final-commit credit, tem-poral proximity, and sparsity as sufficient ex-planations. 
+
+1 Introduction 
+
+Large language models (LLMs) are increasingly trained as agents that interact with external environ-ments over multiple turns, where success depends on making a sequence of decisions rather than pro-ducing a single response (Yao et al., 2023; Schick et al., 2023; Shridhar et al., 2021; Yao et al., 2022). Reinforcement learning (RL) is a natural fit for such agents because many tasks expose verifiable outcome rewards, and group-based methods such as RLOO and GRPO make this setting practical by estimating advantages from rollout groups without a learned critic (Ahmadian et al., 2024; Shao et al., 2024). Yet in long-horizon interaction, a sparse terminal reward is usually assigned to every action in the trajectory, even though only a few decisions may determine success or failure. The central challenge is therefore not only that rewards are sparse, but that terminal outcomes erase the reason why a trajectory succeeded or failed (Zhang et al., 2026a,b). To recover finer credit, recent methods construct comparison units from repeated states, trajectory graphs, semantic proximity, hindsight or process-level feedback, and dynamic branches (Feng et al., 2025; Li et al., 2026; Fang et al., 2026; Tan et al., 2026; Lightman et al., 2024; Xi et al., 2025; Ji et al., 2026; Dong et al., 2025; Wu et al., 2026). These methods improve over uniform trajectory-level credit, but they typi-cally recover credit from rollout-side proxy signals rather than from the verifier that defined the ter-minal outcome. State or trajectory similarity can miss verifier-relevant history or merge states with different task-critical facts; hindsight or process feedback can depend on auxiliary judgments; and branching buys information with extra sampling cost. In all cases, the actual rule that judged the task remains mostly outside the credit assignment mechanism. This limitation suggests a different source of credit: instead of reconstructing action importance from the scalar outcome, we can inspect how the outcome was produced. In many verifiable agent tasks, the terminal reward is computed by a pro-grammatic verifier that checks concrete facts, such as required state changes, forbidden operations, observed evidence, and final commitments. Prior work on reward shaping, reward machines, and re-arXiv:2608.28128v1 [cs.LG] 28 Aug 2026 Figure 1: Overview of verifier-instrumented credit trac-ing. A long-horizon flight-booking trajectory is checked by verifier atoms such as booking completion, budget satisfaction, and route correctness; VICT traces evi-dence from concrete actions to these atoms and assigns sparse verifier-backed credit only to supported steps. 
+
+ward decomposition shows that reward structure can provide useful learning signal (Ng et al., 1999; Icarte et al., 2018; Juozapaitis et al., 2019); here, the structure already exists inside the terminal veri-fier. Standard RL interfaces discard these checks and expose only the final number. This motivates our central question: can the terminal verifier be used not merely as an outcome oracle, but as a training-time credit tracer? We propose VICT, Verifier-Instrumented Credit Tracing, which turns instrumentable terminal ver-ifiers into sparse, auditable action-level credit. VICT instruments a programmatic verifier into executable or evidence-backed atoms, links these atoms to observable trajectory evidence, and re-distributes group-relative advantage only through verified action-to-atom proof edges. In this paper, verifier-backed credit means an eligibility guaran-tee rather than a causal proof: a correction is emit-ted only when the verifier interface conforms, a dependency-valid core identifies the relevant atom, and a fixed witness relation links that atom to an action. The method keeps the original terminal reward as the outcome anchor, changes only the training-time advantage tensor, and abstains when no reliable verifier proof exists. It does not as-sume automatic decompilation of arbitrary black-box judges; the verifier interface is an explicit engi-neering object whose conformance and cost must be audited. This framing shifts the problem from invent-ing intermediate rewards to exposing the struc-ture of existing verifiers. We evaluate VICT on long-horizon verifiable agent benchmarks against outcome-only and fine-grained RL baselines. On ALFWorld and WebShop, VICT improves substan-tially over GRPO and remains competitive with recent fine-grained methods, while τ -bench pro-vides suggestive service-agent validation under a different backbone and protocol. We also audit the verifier interface through reconstruction, mutation conformance, eligibility, coverage, sparsity, absten-tion, core-size, and cost diagnostics (Sun et al., 2026). Our contributions are: • We formulate verifier instrumentation as a training-time credit interface for programmat-ically verifiable LLM agent RL. • We introduce dependency-core attribution and proof-edge-constrained advantage correction with an explicit eligibility invariant. • We provide experiments, ablations, and in-terface diagnostics showing when verifier-backed credit improves over outcome-only training and recent credit-assignment base-lines. 
+
+2 Related Work 
+
+2.1 Reinforcement Learning for LLM Agents 
+
+LLM agents extend language models from static generation to interactive decision making, where policies must use observations, tools, and external feedback over multiple turns. Prompting, tool-use training, and supervised agent tuning have enabled strong zero-shot and imitation-based agents (Yao et al., 2023; Schick et al., 2023; Zeng et al., 2024). Reinforcement learning further allows agents to optimize verifiable outcomes directly, and has been applied to web, embodied, search, tool-use, and application-control settings (Yao et al., 2022; Shrid-har et al., 2021; Jin et al., 2025; Trivedi et al., 2024; Yao et al., 2024). Most scalable LLM RL pipelines build on policy-gradient objectives (Li et al., 2025). PPO-style training uses a value model, while RLOO and GRPO avoid a learned critic by normalizing re-wards within rollout groups (Schulman et al., 2017; Ahmadian et al., 2024; Shao et al., 2024). This critic-free design is attractive for long-context agent trajectories, but it still leaves the key question of how a terminal outcome should be assigned to individual actions. VICT keeps the group-based optimization setting and changes only the training-time advantage signal. 2.2 Credit Assignment under Sparse Outcome Rewards 
+
+Sparse terminal rewards make long-horizon agent training inefficient because the same trajectory-level advantage is often broadcast to every action. Recent and concurrent methods refine this signal by changing the comparison unit. GiGPO compares actions from repeated environment states, SALT uses trajectory graphs to distinguish shared and di-vergent steps, ProxMO replaces hard state groups with semantic proximity, and HCAPO estimates action utility through hindsight reasoning (Feng et al., 2025; Li et al., 2026; Fang et al., 2026; Tan et al., 2026). Several of these references are recent preprints. Hierarchical and subgoal-based methods assign credit at coarser temporal abstractions (Peng et al., 2026; Wang et al., 2026; Xue et al., 2026). Another line changes the rollout distribution rather than the credit rule. Tree- and branch-based methods sample continuations from shared prefixes or uncertain decision points to expose local pref-erences (Ji et al., 2026; Dong et al., 2025; Zhao et al., 2026; Wu et al., 2026). These approaches are effective when useful comparisons can be created from states, prefixes, branches, or prompted hind-sight. VICT targets a complementary source of supervision: the structure of the terminal verifier it-self. It assigns extra credit only when an action can be linked to a verifier atom through an observable proof edge. 
+
+2.3 Structured Verifier Supervision and Rubric-Based Evaluation 
+
+Prior RL work has shown that structure inside the reward can be useful for learning and interpretation. Return redistribution, potential-based shaping, re-ward machines, and reward decomposition expose delayed or composite rewards in more informa-tive forms (Arjona-Medina et al., 2019; Ng et al., 1999; Icarte et al., 2018; Juozapaitis et al., 2019). Process supervision and PRMs similarly provide step-level feedback, but they typically require la-bels, learned reward models, or search-generated supervision (Uesato et al., 2022; Lightman et al., 2024; Luo et al., 2024; Xi et al., 2025). VICT is best viewed as verifier-grounded advantage re-distribution: it changes the policy-gradient update signal, but it uses the programmatic verifier that al-ready defines the environment outcome rather than introducing a separate progress reward or reward model. Rubric and criteria-based evaluation decomposes holistic judgments into interpretable dimensions, and recent work uses such criteria as optimization signals (Xie et al., 2026; Yu et al., 2025a; Gunjal et al., 2025). However, natural-language atomic de-composition can be unreliable when criteria are not executable or evidence-grounded (Zhang, 2026). VICT therefore treats verifier decomposition as a constrained instrumentation problem: atoms must be executable or evidence-backed, reconstruct the terminal verifier, and attach to actions through proof edges. This makes its advantage correc-tion auditable and verifier-aligned without turning rubric criteria into dense rewards. 
+
+3 Method 
+
+3.1 Problem Setup and Design Goal 
+
+We consider long-horizon interactive RL where a language-agent policy πθ solves a task instance x
+
+through observations and actions. A rollout is 
+
+τi = ( hi, 0, a i, 0, h i, 1, a i, 1, . . . , h i,T i ) (1) where hi,t is the history before action ai,t , and the environment returns a terminal verifier score 
+
+Ri = Vx(τi). Standard group-based optimization yields a task-level base advantage Abase  
+
+> i
+
+and usu-ally broadcasts it to all actions, so it cannot distin-guish state-changing, evidence-revealing, violating, or merely co-occurring actions. VICT keeps the outcome signal but changes the verifier-optimizer interface. It treats Vx as an in-strumentable audit interface: verifier atoms expose checked facts, dependencies expose valid combina-tions, and trajectory witnesses decide which actions may receive additional credit. Rollout collection and inference-time policy behavior are unchanged. The central object is a verifier-derived credit trace: 
+
+Γi = ( zi, G i, C ⋆i , Pi), zi = ( zi,j,t )j,t (2) Here zi is the temporal atom trace, Gi is an action-to-atom proof graph, C⋆i is a dependency-closed verifier core, and Pi stores proof records. The trace supports verifier faithfulness, proof-edge eligibility, and clipped advantage correction anchored by the original outcome. 
+
+3.2 Verifier-Instrumented Interface 
+
+For each task instance, VICT represents the ver-ifier with executable atoms, an atom-to-score Figure 2: VICT pipeline. The verifier is first exposed as atoms, dependencies, evidence extractors, and commit predicates; trajectories are then converted into proof graphs that link actions to verifier atoms. Dependency cores estimate which atoms matter to success or failure, and the final step redistributes normalized credit only to proof-supported actions. 
+
+aggregator, dependency rules, state or evidence bindings, evidence extractors, and commit pred-icates. Each atom has a typed status zi,j,t ∈{sat , unsat , unk , viol }. The aggregator Fx maps terminal atom assignments to the verifier score, Dx
+
+encodes dependency validity, Mx links atoms to state or evidence variables, Φx extracts observable evidence for write and reveal witnesses, and Cx
+
+identifies commit actions. We require the depen-dency closure cl Dx to be deterministic; otherwise the affected atoms are not used for credit. The interface is accepted only if it passes verifier conformance. Let ¯z(τ ) be the terminal atom assign-ment and Sx = Tx ∪ Mx(Tx) include validation rollouts and verifier-relevant mutations. Define 
+
+ϵconf  
+
+> x
+
+= max  
+
+> ˜τ∈S x
+
+|Fx(¯ z(˜ τ )) − Vx(˜ τ )| (3) The interface is accepted when ϵconf  
+
+> x
+
+≤ ηx. For exact verifiers ηx = 0 ; for graded verifiers the tolerance is fixed before training. When confor-mance fails for a task or atom, VICT abstains from using that atom. The adapter may reveal atoms from final-state differences, verifier branches, rule predicates, or evidence extractors, but it cannot in-troduce policy-visible subgoals or new preferences. Concrete domain instantiations and a WebShop proof trace are provided in Appendices C and F. 
+
+3.3 Credit Trace and Core Attribution 
+
+Given a trajectory and a conforming interface, VICT evaluates {zi,j,t }j,t and constructs Gi =(Ai, Z i, E i). Edges are created only when a witness predicate certifies that an action wrote, revealed, committed, or violated an atom. Let ∆i,t (v) denote a change in extracted evidence, Φx(hi,t +1 )[ v]̸ =Φx(hi,t )[ v]. Two primitive witnesses are 
+
+Wwrite = 1{∃ v ∈ Mx(zj ) : ∆ i,t (v) = 1 }
+
+Wcommit = 1{ai,t ∈ Cx, j ∈ scope x(ai,t )} (4) The commit scope includes the verifier atoms fi-nalized by the action. Other witnesses use the same pattern: they must be computed from logged history, extracted evidence, and verifier metadata, rather than from a learned relevance model. The proof graph contains each action-atom-relation triple whose witness predicate is true, and Pi,t,j 
+
+stores the matched relations together with core and conformance tags. Terminal-only atoms with no reliable writer or commit action create no edge; unsupported attribution is treated as missing infor-mation. The proof graph determines where credit may go, but not how much an atom matters to the terminal verifier. Let ¯zi = ( zi, 1,T i , . . . , z i,m,T i ) and let ϵq be the pre-specified tie margin in base-advantage units. Rather than introducing a separate success/failure heuristic, VICT uses the sign of the same group-normalized base advantage used by the underlying optimizer: 
+
+qi =
+
+
+
++1 , Abase  
+
+> i
+
+> ϵ q,
+
+−1, Abase  
+
+> i
+
+< −ϵq,
+
+0, |Abase  
+
+> i
+
+| ≤ ϵq.
+
+(5) When qi = 0, the verifier correction abstains. Positive-sign rollouts search for success cores whose removal would lower the verifier score, while negative-sign rollouts search for correction cores whose repair would raise it. This uses the optimizer’s own preference signal rather than a separate median heuristic. The functional form of ρi is fixed before training, while its value is computed from the current rollout group’s base preference magnitude (Appendix D). Counterfac-tuals are verifier-assignment edits, not new envi-ronment rollouts, and ambiguous dependency pro-jections trigger abstention. For readability, write 
+
+∆x(C) = ∆ x(C; ¯ zi, q i). The verifier displacement is 
+
+∆x(C) = qi
+
+Fx(¯ zi) − Fx
+
+ cf qi 
+
+> Dx
+
+(¯ zi, C ) (6) The core C⋆i is a compact dependency-closed set returned by budgeted greedy search such that 
+
+∆x(C⋆i ) ≥ ρi under budget B; details and local-minimality scope are in Appendix D. If no valid core reaches ρi, the budget is exhausted, or the dis-placement lies inside the conformance uncertainty band, VICT abstains. Core atoms receive leave-one-out marginals, while atoms outside the core receive zero marginal. 
+
+3.4 Proof-Edge-Constrained Advantage Optimization 
+
+Core marginals are normalized within the same-task rollout group Gx used by the base group op-timizer; historical rollouts are not mixed into the statistics. We use a robust group scale defined in Appendix D. If the scale is zero or the group has too few supported rollouts, the normalized value is set to zero. The normalized signal is used only if the atom has both core membership and proof sup-port. If conformance, core search, or proof support fails, the corresponding eligibility mask is zero, so VICT falls back to Abase  
+
+> i
+
+. Let Zi,j denote the total witness weight for atom j plus smoothing. The eli-gible core signal is redistributed through the proof graph: 
+
+AVICT  
+
+> i,t
+
+= X
+
+> j∈C⋆i
+
+ˆδi,j ωi,t,j /Z i,j (7) Here ωi,t,j = P 
+
+> r:( t,j,r )∈Ei
+
+βr, where βr is a fixed nonnegative relation weight set before training; the default uses βr = 1 for direct verifier witnesses and splits evidence-path credit uniformly over the support path. Thus ωi,t,j = 0 when no witness edge links (t, j ), and the denominator bounds each atom’s total contribution. The correction is eligible by construction in the following verifier-backed sense: 
+
+AVICT 
+
+> i,t
+
+̸ = 0 ⇒ ∃ j, r : Gate i,t,j,r = 1 . (8) 
+
+Proposition 1 (Eligibility soundness). For any task instance x, rollout τi, and action ai,t , if 
+
+AVICT 
+
+> i,t
+
+̸ = 0 , then there exists at least one atom 
+
+j and witness relation r such that: (i) the verifier interface reconstructs the terminal verifier within tolerance; (ii) j belongs to a dependency-valid core 
+
+C⋆i ; (iii) (t, j, r ) is an observed proof edge; (iv) the atom marginal is non-zero; and (v) the proof record satisfies the dependency constraints in Dx.This proposition does not claim causal necessity or optimality of the action; it guarantees only verifier-backed eligibility. Appendix D gives the proof sketch. The final action advantage keeps the outcome signal as the anchor and adds only a clipped verifier-derived correction: 
+
+Afinal  
+
+> i,t
+
+= Abase  
+
+> i
+
++ λ clip( AVICT  
+
+> i,t
+
+, −c, c ) (9) The same interface composes with a rollout-side method M when it exposes an action-aligned ad-vantage AMi,t and a separate rollout-level outcome component Aout  
+
+> i
+
+. We set qi = sign ϵ(Aout  
+
+> i
+
+) and use 
+
+AM +VICT  
+
+> i,t
+
+= AMi,t + λM clip( AVICT  
+
+> i,t
+
+, −cM , c M ),
+
+(10) where λM and cM are calibrated from AM before adding VICT. This calibrates numerical scale with-out assuming that the two credit signals are sta-tistically independent. This advantage is plugged into the standard clipped policy-gradient objective with KL regularization. VICT changes only the advantage tensor: it trains no critic, requires no pro-cess labels, adds no branch rollouts, and exposes no verifier atoms at inference time. Every non-zero correction is logged with its action, atom, witness, evidence source, core marginal, witness weight, and assigned correction. The reward-shaping scope is discussed in Appendix D. 4 Experiments 
+
+4.1 Experimental Setup Benchmarks and metrics. We evaluate on three programmatically verifiable agent benchmarks. 
+
+ALFWorld tests text-based household tasks and reports success across six task types and their aver-age (Shridhar et al., 2021). WebShop tests product search and purchase under category, attribute, op-tion, and budget constraints, reporting normalized score and strict success (Yao et al., 2022). τ -bench 
+
+tests service-domain tool-agent-user interaction, re-porting Retail/Airline pass@1 (Yao et al., 2024). 
+
+Baselines. For ALFWorld and WebShop, we compare against closed-source LLMs, Qwen2.5-Instruct prompting, ReAct (Yao et al., 2023), Reflexion (Shinn et al., 2023), outcome-level RLOO/GRPO (Ahmadian et al., 2024; Shao et al., 2024), and fine-grained credit baselines GiGPO, SALT, and HCAPO (Feng et al., 2025; Li et al., 2026; Tan et al., 2026). For τ -bench, we compare Qwen3-8B variants from the Fission-GRPO proto-col: Base, GRPO, DAPO, Dr.GRPO, AWPO, and Fission-GRPO (Yu et al., 2025b; Liu et al., 2025; Lin et al., 2025; Zhang et al., 2026c). 
+
+Training and instrumentation. For VICT on ALFWorld and WebShop, we use Qwen2.5-1.5B/7B-Instruct, group size N = 8 , learning rate 
+
+1 × 10 −6, KL coefficient 0.01 , and 50/15-step caps; VICT rows report mean and standard deviation over three seeds. On τ -bench, Qwen3-8B pass@1 uses simulated-user interaction. VICT changes only training-time advantages and exposes no ver-ifier atoms at inference. Its adapters require 118– 238 LoC and 6.5–11.5 hours, with 11.9–16.7% training-time overhead on the two primary bench-marks (Appendix 10–11). 
+
+4.2 Main Results on ALFWorld and WebShop 
+
+Table 1 summarizes performance on ALFWorld and WebShop. With Qwen2.5-1.5B, VICT im-proves over GRPO by 18.2 points on ALFWorld average success and 24.9 points on WebShop strict success. With Qwen2.5-7B, where several ALF-World subtasks are near saturation, VICT reaches 93.7 average success and 83.6 WebShop strict success, corresponding to gains of 16.1 and 17.5 points over GRPO. The largest gains appear on task types where the verifier exposes delayed or commit-sensitive facts: Look , Cool , and Pick2 
+
+in ALFWorld, and final purchase correctness in WebShop. This pattern supports the main hypothe-sis: when a failed trajectory contains useful search or state-changing actions before a wrong commit, verifier-backed credit can reward the supported ac-tions without reinforcing the final mistake. Fig-ure 3(a) further shows that the final gains coin-cide with higher validation AUC over the same 300-update budget; Appendix B.2 reports the exact values. The task-wise pattern also matches verifier-backed credit: ALFWorld’s 7B setting is near sat-uration on Pick , Clean , and Heat , while improve-ments concentrate on Look , Cool , and Pick2 , where observations or transformations are easy to over-write. WebShop is less saturated because strict success penalizes one wrong hard attribute or pre-mature purchase, so separating evidence-gathering from commits yields a larger gain. This keeps the claim tied to training-time credit assignment rather than policy access to more inference-time informa-tion. 
+
+Compatibility with rollout-side credit. Table 2 evaluates Eq. 10. Each combination is above both VICT alone and the corresponding rollout-side method alone. We treat this result as descriptive and scope compatibility to methods that expose both an action-aligned advantage and an indepen-dent rollout-level outcome component. 
+
+4.3 Additional Evidence on τ -Bench 
+
+The service-agent setting tests a different veri-fier structure: reward depends on satisfying user requests while preserving backend state and do-main policies. Under the Fission-GRPO τ -bench protocol, VICT reaches 56.6/45.1 Retail/Airline pass@1, compared with 51.3/40.0 for Fission-GRPO; Appendix Table 8 gives the full comparison. Because this comparison uses a different backbone and protocol from the primary experiments, we treat it as supplemental evidence. The pattern is consistent with verifier tracing: database edits, con-firmations, forbidden updates, and final-response checks create atoms whose witnesses localize to API calls. The Airline degradation of DAPO rela-tive to Base should not be over-interpreted without matched sweeps. 
+
+4.4 Ablations and Diagnostics 
+
+Figure 3(b) isolates the choices that distinguish VICT from dense verifier rewards and heuristic step credit. ALFWorld and WebShop use Qwen2.5-Table 1: Main performance on ALFWorld and WebShop. ALFWorld reports task-wise and average success rate (%), while WebShop reports normalized score and strict success rate (%). Subscripts denote standard deviations where available. 
+
+Method ALFWorld WebShop Pick Look Clean Heat Cool Pick2 All Score Succ. Closed-Source LLMs GPT-4o 75.3 60.8 31.2 56.7 21.6 49.8 48.0 31.8 23.7 Gemini-2.5-Pro 92.8 63.3 62.1 69.0 26.6 58.7 60.3 42.5 35.9 Qwen2.5-1.5B-Instruct Base 5.9 5.5 3.3 9.7 4.2 0.0 4.1 23.1 5.2 ReAct 17.4 20.5 15.7 6.2 7.7 2.0 12.8 40.1 11.3 Reflexion 35.3 22.2 21.7 13.6 19.4 3.7 21.8 55.8 21.9 RLOO 88.3 ±3.0 52.8 ±8.6 71.0 ±5.9 62.8 ±8.7 66.4 ±5.5 56.9 ±4.7 69.7 ±2.5 73.9 ±5.6 52.1 ±6.7 
+
+GRPO 85.3 ±1.5 53.7 ±8.0 84.5 ±6.8 78.2 ±7.9 59.7 ±5.0 53.5 ±5.6 72.8 ±3.6 75.8 ±3.5 56.8 ±3.8 
+
+GiGPO 94.4 ±5.9 67.5 ±4.6 94.8 ±3.8 94.4 ±7.8 79.8 ±4.7 76.4 ±5.4 86.7 ±1.7 83.1 ±1.6 65.0 ±3.2 
+
+SALT 96.2 ±1.7 65.2 ±10.8 93.1 ±4.7 81.8 ±8.3 85.0 ±6.9 77.0 ±4.7 85.2 ±2.5 86.9 ±0.6 74.7 ±2.4 
+
+HCAPO 88.6 ±7.0 75.0 ±0.0 97.6 ±1.8 90.7 ±6.9 84.2 ±0.0 74.2 ±6.9 87.0 ±4.1 83.8 ±0.7 68.5 ±1.0 
+
+VICT (ours) 95.2 ±1.0 84.0 ±2.2 96.0 ±1.4 92.0 ±2.4 89.0 ±2.0 89.8 ±2.4 91.0 ±0.9 90.6 ±0.7 81.7 ±1.1 
+
+Qwen2.5-7B-Instruct Base 33.4 21.6 19.3 6.9 2.8 3.2 14.8 26.4 7.8 ReAct 48.5 35.4 34.3 13.2 18.2 17.6 31.2 46.2 19.5 Reflexion 62.0 41.6 44.9 30.9 36.3 23.8 42.7 58.1 28.8 RLOO 87.6 ±4.3 78.2 ±8.3 87.3 ±5.8 81.3 ±7.6 71.9 ±5.2 48.9 ±8.4 75.5 ±4.6 80.3 ±3.2 65.7 ±4.0 
+
+GRPO 90.8 ±5.1 66.1 ±6.7 89.3 ±5.4 74.7 ±6.9 72.5 ±5.4 64.7 ±7.3 77.6 ±5.2 79.3 ±2.8 66.1 ±3.7 
+
+GiGPO 97.7 ±1.6 82.7 ±7.9 98.8 ±1.6 83.7 ±7.2 89.3 ±8.2 79.2 ±6.6 90.8 ±1.3 84.4 ±2.9 72.8 ±3.2 
+
+SALT 87.5 ±4.9 58.8 ±14.7 89.3 ±3.6 75.3 ±4.3 70.2 ±5.5 68.5 ±5.8 77.8 ±1.7 84.7 ±1.7 76.2 ±3.4 
+
+HCAPO 99.1 ±1.3 90.3 ±2.0 97.3 ±1.9 81.8 ±8.8 90.8 ±6.6 81.9 ±10.0 91.4 ±2.3 85.1 ±1.3 73.8 ±2.8 
+
+VICT (ours) 99.2 ±0.6 91.5 ±1.8 98.5 ±1.0 92.2 ±2.0 93.8 ±1.6 86.8 ±2.4 93.7 ±0.8 91.2 ±0.6 83.6 ±0.9 
+
+Table 2: Compatibility with rollout-side credit methods using Qwen2.5-7B. Each cell reports the method alone / with VICT; comparisons are descriptive. 
+
+Setting ALFWorld All WebShop strict VICT alone 93.7 ±0.8 83.6 ±0.9 
+
+GiGPO alone / +VICT 90.8 ±1.3 / 94.6 ±0.7 72.8 ±3.2 / 84.7 ±1.1 
+
+HCAPO alone / +VICT 91.4 ±2.3 / 94.3 ±0.9 –SALT alone / +VICT – 76.2 ±3.4 / 85.2 ±0.8 
+
+7B-Instruct to match the 7B block in Table 1; τ -bench is excluded because it uses a different back-bone and protocol. Every alternative reduces both primary metrics. Outcome-only GRPO and ran-domized proof edges produce the largest drops, while dense atom rewards, commit-only credit, and temporal-nearest credit show that simply expos-ing verifier facts, crediting final actions, or using temporal proximity is insufficient. Removing the dependency core or proof edges also costs 3.3–4.9 points. These controls reuse the same adapters, atoms, and evidence extractors and change only the credit rule. Their consistent degradation sug-gests that the gain comes from combining veri-fier relevance with observed evidence and group-normalized correction; Appendix Table 6 reports 
+
+Table 3: Verifier-interface diagnostics before policy up-dates. Reconstruction and mutation conformance test agreement with the original verifier; eligibility-invariant pass rate, coverage, and abstention audit whether veri-fier facts can be safely attached to actions.                                 
+
+> Domain Atoms Recon. Mutation Elig. pass Proof cov. Abstain ALFWorld 5.8 100.0 99.6 100.0 92.4 8.1 WebShop 6.3 99.8 98.9 100.0 88.7 11.6
+> τRetail 9.7 100.0 99.2 100.0 86.5 14.3
+> τAirline 11.2 99.7 98.6 100.0 84.9 15.8
+
+the exact three-seed values. We audit the verifier interface before policy up-dates. Table 3 reports high reward reconstruction and mutation conformance, indicating that the atom aggregator matches the original terminal verifier rather than an auxiliary rubric. The eligibility-invariant pass rate is 100% because non-zero cor-rections are emitted only after Eq. 8 passes; lower values would indicate an implementation error, not causal accuracy. Proof coverage is lower than atom coverage because VICT abstains on terminal-only facts without a reliable writer or commit ac-tion. This abstention is intentional: unsupported atoms should not become action-level gradients. We therefore read the diagnostic table as a safety 60 70 80             
+
+> Validation AUC (%)
+> 75 80 85 90 95
+> Final score (%)
+> ALFWorld
+> 50 60 70
+> Validation AUC (%)
+> 65 70 75 80 85
+> WebShop
+> 0510 15 20
+> Performance drop from VICT (points)
+> Outcome GRPO Random edge Commit-only Temporal Dense atom No proof No core
+> 16.1 17.5 14.3 16.3 7.6 8.2 5.7 6.5 5.1 5.4 4.5 4.9 3.3 3.5 ALFWorld WebShop
+> (a) Matched-budget efficiency (b) Ablation sensitivity
+> GRPO Best non-VICT Dense VICT
+
+Figure 3: Core evidence with Qwen2.5-7B. (a) Final score versus normalized validation AUC over the same 300 updates; arrows connect outcome-only GRPO to VICT, and upper right is better. “Best non-VICT” is HCAPO for ALFWorld and SALT for WebShop. (b) Point decrease from full VICT for each ablation or negative control. Exact mean and standard deviation values are in Appendix Tables 6 and 7. 
+
+gate rather than a performance proxy: high con-formance makes the credit interface admissible, while coverage and abstention indicate how often the method can use that interface without guess-ing about unsupported actions across domains and training stages, not just whether implementations satisfy invariants. Appendices C–E report credit sparsity, trigger rate, core size, budget-hit rate, and runtime overhead, which better characterize train-ing behavior than the invariant pass rate alone. The average atom counts remain modest, keeping the interface tractable. 
+
+Qualitative behavior. Across the three bench-marks, VICT changes the learned behavior in the places predicted by the proof graph. In WebShop, agents delay purchase until hard attributes and op-tions are observed, rather than buying a semanti-cally close product after the first relevant search result. In ALFWorld, agents more reliably preserve intermediate achievements such as acquiring the correct object before transformation and placement. In τ -bench, agents learn to request missing confir-mation and avoid irrelevant database writes before committing API updates. These behaviors align with the actions that receive verifier-backed credit: evidence-revealing actions, direct state-changing actions, and commit actions whose verifier atoms are satisfied at the moment of commitment. 
+
+5 Conclusion 
+
+This paper introduced VICT, a verifier-instrumented credit tracing method for long-horizon LLM agent reinforcement learning with instrumentable programmatic verifiers. VICT exposes verifier atoms, dependencies, evidence maps, and commit predicates, then assigns sparse action-level advantage corrections only through dependency-valid proof edges. It preserves the original outcome reward, needs no critic or process labels, and keeps non-zero corrections auditable. Across embodied, web, and tool-use settings, experiments and diagnostics show that verifier-backed credit improves fine-grained training while satisfying reconstruction, mutation, eligibility-invariant, sparsity, and abstention checks. 
+
+Limitations 
+
+VICT is limited to settings where terminal rewards come from verifiers that can be exposed as exe-cutable or evidence-backed atoms, and where rele-vant state changes, evidence reveals, commits, or violations are observable in trajectory logs. It is less direct for holistic learned judges, hidden veri-fier state, or tasks dominated by exploration failure. Extending it to LLM-as-a-judge settings would re-quire auditable, evidence-grounded atom construc-tion rather than prompt-generated criteria alone. Verifier instrumentation also has a real engineer-ing cost. Level-0 state-diff atoms are often cheap, but Level-1 branch instrumentation and Level-2 deterministic adapters may require domain knowl-edge and maintenance as verifiers evolve. Each deployment should therefore report adapter lines of code, person-hours, atom coverage, and the Level-0/1/2 atom mix. VICT further depends on small, dependency-closed verifier cores. Large atom sets or ambigu-ous dependencies can make greedy search return larger local cores or abstain, preserving the proof-edge invariant but reducing credit recall. Proof edges certify verifier-defined eligibility rather than causal necessity: redundant or correlated support can receive credit, and witness-mapping errors can survive conformance tests. Appendix 14 reports the corresponding hand and intervention audits. Fi-nally, because VICT only changes the training-time advantage tensor, it is not a policy-invariant shaping guarantee and still requires strong explo-ration, stable optimization, careful verifier design, and matched-budget diagnostics. 
+
+References 
+
+Arash Ahmadian, Chris Cremer, Matthias Gallé, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ah-met Üstün, and Sara Hooker. 2024. Back to basics: Revisiting REINFORCE style optimization for learn-ing from human feedback in LLMs. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 12248–12267. Jose A. Arjona-Medina, Michael Gillhofer, Michael Widrich, Thomas Unterthiner, Johannes Brandstet-ter, and Sepp Hochreiter. 2019. RUDDER: Return decomposition for delayed rewards. In Advances in Neural Information Processing Systems , volume 32. Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia Chen, Ji-azhen Du, Huiyang Wang, Fuzheng Zhang, Guorui Zhou, Yutao Zhu, Ji-Rong Wen, and Zhicheng Dou. 2025. Agentic reinforced policy optimization. 
+
+Preprint , arXiv:2507.19849. Yangyi Fang, Jiaye Lin, Xiaoliang Fu, Cong Qin, Haolin Shi, Chang Liu, and Peilin Zhao. 2026. Proximity-based multi-turn optimization: Practical credit assignment for LLM agent training. Preprint ,arXiv:2602.19225. Lang Feng, Zhenghai Xue, Tingcong Liu, and Bo An. 2025. Group-in-group policy optimization for LLM agent training. arXiv preprint arXiv:2505.10978 .Anisha Gunjal, Anthony Wang, Elaine Lau, Vaskar Nath, Yunzhong He, Bing Liu, and Sean Hendryx. 2025. Rubrics as rewards: Reinforcement learning beyond verifiable domains. Preprint ,arXiv:2507.17746. Rodrigo Toro Icarte, Toryn Klassen, Richard Valenzano, and Sheila McIlraith. 2018. Using reward machines for high-level task specification and decomposition in reinforcement learning. In Proceedings of the 35th International Conference on Machine Learn-ing , volume 80 of Proceedings of Machine Learning Research , pages 2107–2116. PMLR. Yuxiang Ji, Ziyu Ma, Yong Wang, Guanhua Chen, Xi-angxiang Chu, and Liaoni Wu. 2026. Tree search for LLM agent reinforcement learning. Preprint ,arXiv:2509.21240. Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon, Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei Han. 2025. Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning. 
+
+arXiv preprint arXiv:2503.09516 .Zoe Juozapaitis, Anurag Koul, Alan Fern, Martin Erwig, and Finale Doshi-Velez. 2019. Explainable reinforce-ment learning via reward decomposition. In Proceed-ings of the IJCAI/ECAI Workshop on Explainable Artificial Intelligence .Jiazheng Li, Yawei Wang, Qiaojing Yan, Yijun Tian, Zhichao Xu, Huan Song, Panpan Xu, and Lin Lee Cheong. 2026. SALT: Step-level advantage assign-ment for long-horizon agents via trajectory graph. In Findings of the Association for Computational Linguistics: EACL 2026 , pages 4709–4725, Rabat, Morocco. Association for Computational Linguistics. Pengcheng Li, Botao Zhao, Zuheng Kang, Junqing Peng, Xiaoyang Qu, Yayun He, and Jianzong Wang. 2025. EMO-RL: Emotion-rule-based reinforcement learning enhanced audio-language model for general-ized speech emotion recognition. In Findings of the Association for Computational Linguistics: EMNLP 2025 , pages 18744–18754, Suzhou, China. Associa-tion for Computational Linguistics. Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. 2024. Let’s verify step by step. In International Conference on Learning Representations .Zihan Lin, Xiaohan Wang, Hexiong Yang, Jiajun Chai, Jie Cao, Guojun Yin, Wei Lin, and Ran He. 2025. AWPO: Enhancing tool-use of large language models through adaptive integration of reasoning rewards. 
+
+Preprint , arXiv:2512.19126. Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. 2025. Understanding R1-zero-like training: A criti-cal perspective. Preprint , arXiv:2503.20783. Liangchen Luo, Yinxiao Liu, Rosanne Liu, Samrat Phatale, Meiqi Guo, Harsh Lara, Yunxuan Li, Lei Shu, Yun Zhu, Lei Meng, Jiao Sun, and Abhinav Rastogi. 2024. Improve mathematical reasoning in language models by automated process supervision. 
+
+Preprint , arXiv:2406.06592. Andrew Y. Ng, Daishi Harada, and Stuart Russell. 1999. Policy invariance under reward transformations: The-ory and application to reward shaping. In Proceed-ings of the Sixteenth International Conference on Machine Learning , pages 278–287. Jiangweizhi Peng, Yuanxin Liu, Ruida Zhou, Charles Fleming, Zhaoran Wang, Alfredo Garcia, and Mingyi Hong. 2026. HiPER: Hierarchical reinforcement learning with explicit credit assignment for large lan-guage model agents. Preprint , arXiv:2602.16165. Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language models can teach themselves to use tools. 
+
+arXiv preprint arXiv:2302.04761 .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and 1 others. 2024. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Re-flexion: Language agents with verbal reinforcement learning. Advances in Neural Information Process-ing Systems , 36:8634–8652. Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2021. ALFWorld: Aligning text and embodied environments for interactive learning. In 
+
+International Conference on Learning Representa-tions .Yiding Sun, Dongxu Zhang, Jihua Zhu, Haozhe Cheng, Zhengqiao Li, Pengcheng Li, Chaowei Fang, Yong-hao Dong, and Lin Chen. 2026. Tri-efficient transfer learning for point cloud videos. Preprint ,arXiv:2606.24175. Hui-Ze Tan, Xiao-Wen Yang, Hao Chen, Jie-Jing Shao, Yi Wen, Yuteng Shen, Weihong Luo, Xiku Du, Lan-Zhe Guo, and Yu-Feng Li. 2026. Hindsight credit assignment for long-horizon LLM agents. Preprint ,arXiv:2603.08754. Harsh Trivedi, Tushar Khot, Mareike Hartmann, Ruskin Manku, Vinty Dong, Edward Li, Shashank Gupta, Ashish Sabharwal, and Niranjan Balasubramanian. 2024. AppWorld: A controllable world of apps and people for benchmarking interactive coding agents. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 16022–16076. Jonathan Uesato, Nate Kushman, Ramana Kumar, Fran-cis Song, Noah Siegel, Lisa Wang, Antonia Creswell, Geoffrey Irving, and Irina Higgins. 2022. Solving math word problems with process- and outcome-based feedback. In NeurIPS 2022 Workshop on MATH-AI .Taiyi Wang, Sian Gooding, Florian Hartmann, Oriana Riva, and Edward Grefenstette. 2026. A subgoal-driven framework for improving long-horizon LLM agents. Preprint , arXiv:2603.19685. Jinyang Wu, Shuo Yang, Changpeng Yang, Yuhao Shen, Shuai Zhang, Zhengqi Wen, and Jianhua Tao. 2026. Spark: Strategic policy-aware exploration via dy-namic branching for long-horizon agentic learning. 
+
+Preprint , arXiv:2601.20209. Zhiheng Xi, Chenyang Liao, Guanyu Li, Yajie Yang, Wenxiang Chen, Zhihao Zhang, Binghai Wang, Sen-jie Jin, Yuhao Zhou, Jian Guan, Wei Wu, Tao Ji, Tao Gui, Qi Zhang, and Xuanjing Huang. 2025. AgentPRM: Process reward models for LLM agents via step-wise promise and progress. Preprint ,arXiv:2511.08325. Lipeng Xie, Sen Huang, Zhuo Zhang, Anni Zou, Yun-peng Zhai, Dingchao Ren, Kezun Zhang, Haoyuan Hu, Boyin Liu, Haoran Chen, Zhaoyang Liu, and Bolin Ding. 2026. Auto-rubric: Learning from im-plicit weights to explicit rubrics for reward modeling. 
+
+Preprint , arXiv:2510.17314. Xiangyuan Xue, Yifan Zhou, Zidong Wang, Shengji Tang, Philip Torr, Wanli Ouyang, Lei Bai, and Zhen-fei Yin. 2026. StraTA: Incentivizing agentic rein-forcement learning with strategic trajectory abstrac-tion. Preprint , arXiv:2605.06642. Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. WebShop: Towards scalable real-world web interaction with grounded language agents. In Advances in Neural Information Processing Sys-tems .Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. 2024. τ -Bench: A benchmark for tool-agent-user interaction in real-world domains. arXiv preprint arXiv:2406.12045 .Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing reasoning and acting in language models. In International Conference on Learning Representations .Fangyi Yu, Nabeel Seedat, Dasha Herrmannova, Frank Schilder, and Jonathan Richard Schwarz. 2025a. Beyond pointwise scores: Decomposed criteria-based evaluation of LLM responses. Preprint ,arXiv:2509.16093. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xi-aochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gao-hong Liu, Lingjun Liu, and 1 others. 2025b. DAPO: An open-source LLM reinforcement learning system at scale. Preprint , arXiv:2503.14476. Aohan Zeng, Mingdao Liu, Rui Lu, Bowen Wang, Xiao Liu, Yuxiao Dong, and Jie Tang. 2024. AgentTun-ing: Enabling generalized agent abilities for LLMs. In Findings of the Association for Computational Linguistics: ACL 2024 , pages 3053–3077, Bangkok, Thailand. Association for Computational Linguistics. Dongxu Zhang, Yiding Sun, Zihao Guo, Xiangyang Yang, Kai Tang, Lin Chen, Cheng Tan, and Jihua Zhu. 2026a. SPARK: Susceptibility-guided profiling and steering of latent reasoning states in large language models. Preprint , arXiv:2607.10296. Setting ALFWorld WebShop                         
+
+> Backbones Qwen2.5-1.5B/7B Qwen2.5-1.5B/7B Group size 88Max episode steps 50 15 Max prompt length 2048 4096 Max response length 512 512 Actor learning rate 1×10 −61×10 −6
+> KL coefficient 0.01 0.01 Rollout temperature 1.0 1.0 Evaluation temperature 0.4 0.4 Clip ratio 0.2 0.2
+
+Table 4: VICT training configuration for ALFWorld and WebShop. Dongxu Zhang, Yiding Sun, Pengcheng Li, Yumou Liu, Hongqiang Lin, Haoran Xu, Xiaoxuan Mu, Liang Lin, Wenbiao Yan, Ning Yang, Chaowei Fang, Juanjuan Zhao, Jihua Zhu, Conghui He, and Cheng Tan. 2026b. PointCoT: A multi-modal bench-mark for explicit 3d geometric reasoning. Preprint ,arXiv:2602.23945. Xinran Zhang. 2026. Rethinking atomic decomposi-tion for LLM judges: A prompt-controlled study of reference-grounded QA evaluation. Preprint ,arXiv:2603.28005. Zhiwei Zhang, Fei Zhao, Rui Wang, Zezhong Wang, Bin Liang, Jiakang Wang, Yao Hu, Shaosheng Cao, and Kam-Fai Wong. 2026c. Robust tool use via Fission-GRPO: Learning to recover from execution errors. 
+
+Preprint , arXiv:2601.15625. Yubao Zhao, Weiquan Huang, Sudong Wang, Ruochen Zhao, Chen Chen, Yao Shu, and Chengwei Qin. 2026. BranPO: Scalable contrastive branch sam-pling for long-horizon agentic reinforcement learning. 
+
+Preprint , arXiv:2602.03719. 
+
+A Training Algorithm Details 
+
+Algorithm 1 outlines the detailed execution flow of VICT. The procedure follows the same rollout and policy-update loop as the base group optimizer, but inserts verifier tracing before the advantage tensor is passed to the clipped policy-gradient objective. Verifier atoms and proof logs are never included in the policy prompt or exposed at inference time. 
+
+Training configuration. Table 4 lists the VICT configuration for ALFWorld and WebShop; τ -bench uses Qwen3-8B under simulated-user inter-action. 
+
+Prompt handling and statistical reporting. The base agent prompt follows the ReAct-style format used by the baselines: the policy observes the task instruction, recent history, current observation, and admissible actions, then emits a reasoning block 
+
+Algorithm 1 Detailed Training Procedure of VICT 
+
+Require: Policy πθ , reference policy πref , task distribution 
+
+D
+
+Require: Group size N , interface builder BuildInterface ,tolerance ηx
+
+Require: Tie margin ϵq , core threshold ρi, budget B, relation weights {βr }, scale λ, clip c
+
+1: for iteration k = 1 , . . . , K do 
+
+2: Set θold ← θ and sample a task batch x ∼ D 
+
+3: Collect rollouts {τi}Ni=1 ∼ πθold (·| x) with the base prompt and rollout budget 4: Evaluate Ri = Vx(τi) and compute base advantage 
+
+Abase 
+
+> i
+
+5: Build or retrieve Ix = ( Zx, F x, D x, M x, Φx, C x)
+
+6: Evaluate temporal atom traces zi = ( zi,j,t )j,t 
+
+7: Run reconstruction and mutation conformance; mask failed atom families 8: Construct proof graph Gi = ( Ai, Z i, E i) from write, reveal, commit, and violation witnesses 9: Set qi by the sign of Abase  
+
+> i
+
+using Eq. 5; abstain when 
+
+qi = 0 
+
+10: Run dependency-core search for C⋆i with budget B
+
+and threshold ρi
+
+11: if no dependency-valid core reaches ρi then 
+
+12: Set all verifier corrections for τi to zero 13: else 
+
+14: Compute leave-one-out marginals δi,j and group-normalize supported atoms 15: Redistribute atom marginals to proof-bearing ac-tions with Eq. 7 16: end if 
+
+17: Form Afinal  
+
+> i,t
+
+= Abase  
+
+> i
+
++ λ clip( AVICT  
+
+> i,t
+
+, −c, c )
+
+18: Update πθ using the base clipped policy-gradient ob-jective and KL regularization 19: Log each non-zero correction with action, atom, wit-ness, evidence source, marginal, weight, and proof tag 20: end for 
+
+and one action. VICT performs evidence extrac-tion outside the policy context by deterministic adapters over logs, state diffs, observations, and verifier metadata. The VICT rows report mean and standard deviation over three random seeds. Because online RL samples training prompts repeatedly, Table 5 reports task groups and rollouts per update rather than treating training as a single pass over a static dataset. 
+
+B Additional Experimental Results 
+
+B.1 Ablations and Negative Controls 
+
+All variants below use Qwen2.5-7B-Instruct and three seeds. 
+
+B.2 Sample-Efficiency Summary 
+
+This section summarizes final scores and normal-ized validation AUC over the same 300 updates. 
+
+B.3 Supplemental Evidence on τ -Bench 
+
+The service-agent comparison uses Qwen3-8B and simulated-user interaction under a separate proto-Benchmark Task groups/update Eval tasks Updates Rollouts/update Train rollouts/seed Checkpoint rule 
+
+ALFWorld 16 134 300 128 38.4k last-five average WebShop 16 500 300 128 38.4k last-five average 
+
+Table 5: Training scale used for VICT on ALFWorld and WebShop. Each task group contains 8 rollouts. Table 6: Ablation and negative-control results with Qwen2.5-7B. Values are mean with standard deviation over three seeds. 
+
+Variant ALFWorld WebShop Outcome-only GRPO 77.6 ±5.2 66.1 ±3.7 
+
+Dense atom reward 88.6 ±1.7 78.2 ±1.5 
+
+Commit-only verifier credit 86.1 ±2.2 75.4 ±1.8 
+
+Temporal-nearest atom credit 88.0 ±2.0 77.1 ±1.7 
+
+Randomized proof-edge placebo 79.4 ±3.9 67.3 ±3.4 
+
+w/o dependency core 90.4 ±1.5 80.1 ±1.2 
+
+w/o proof edges 89.2 ±1.8 78.7 ±1.6 
+
+VICT 93.7 ±0.8 83.6 ±0.9                     
+
+> Method ALF final ALF AUC Web final Web AUC
+> GRPO 77.6 ±5.2 58.4 ±3.8 66.1 ±3.7 52.7 ±2.9
+> Best non-VICT 91.4 ±2.3 71.8 ±2.1 76.2 ±3.4 61.4 ±2.6
+> Dense atom reward 88.6 ±1.7 72.6 ±1.9 78.2 ±1.5 64.9 ±1.8
+> VICT 93.7 ±0.8 78.9 ±1.4 83.6 ±0.9 70.8 ±1.2
+
+Table 7: Sample-efficiency summary over 300 training updates. AUC is computed from validation success curves and normalized to the same percentage scale as final performance. The best non-VICT row uses HCAPO for ALFWorld and SALT for WebShop. 
+
+col from the primary experiments. 
+
+Table 8: Supplemental service-agent evidence on τ -bench. Pass@1 (%) is measured with Qwen3-8B under simulated-user interaction; the VICT row reports mean and standard deviation over three seeds. 
+
+Method Retail Airline Base 35.7 23.2 GRPO 39.1 36.0 DAPO 45.2 20.0 Dr.GRPO 47.0 28.0 AWPO 43.5 30.0 Fission-GRPO 51.3 40.0 VICT (ours) 56.6 ±0.8 45.1 ±1.0 
+
+C Verifier Interface and Domain Instantiations 
+
+Atom schema. Each verifier atom stores a sta-ble id, executable predicate, evaluability condition, dependency metadata, state/evidence variables, ir-reversibility flag, score role, and audit source. The executable predicate is the source of truth; natural-language descriptions are only metadata for in-spection. This schema keeps atom decomposition stricter than a natural-language rubric because an atom must be executable, evidence-backed, or ex-plicitly terminal-only. 
+
+Three-level instrumentation. Level 0 creates atoms from exposed final-state or goal-state dif-ferences, such as field equality, record existence, and forbidden non-modification. Level 1 instru-ments explicit verifier branches, assertions, policy checks, or score terms when their truth values can be recomputed from the trajectory, terminal state, or logged evidence. Level 2 uses small determin-istic adapters to expose verifier-relevant metadata or semi-structured observations; such adapters may only expose facts already used by the terminal veri-fier or required to reproduce it. 
+
+Domain instantiations. Table 12 summarizes representative atom families, witness sources, and mutation tests. ALFWorld relies heavily on simula-tor state diffs, WebShop relies on product evidence and purchase commits, and τ -bench uses API logs, database diffs, user turns, and policy checks. 
+
+D Attribution, Core Search, and Normalization 
+
+Conformance tests. An interface is accepted only when it reconstructs the original terminal veri-fier within a fixed tolerance. For held-out rollouts and verifier-relevant mutations Sx = Tx ∪ Mx(Tx),we compute 
+
+ex(τ ) = |Fx(¯ z(τ )) − Vx(τ )| . (11) Reward reconstruction and mutation conformance are the fractions of examples whose error is at most 
+
+ηx. For exact Boolean verifiers we set ηx = 0 ; for graded scores, ηx is fixed before RL training. If one atom family fails conformance while the rest reconstructs correctly, only that family is masked; if the aggregator fails, all VICT corrections for the task are zeroed. 
+
+Witness relations and proof gates. VICT cre-ates action-to-atom edges only through fixed wit-ness predicates: direct writes, evidence reveals, Field Meaning Examples                           
+
+> atom_id Stable identifier for the checked fact. webshop.price_under_budget ,
+> tau.confirmation_obtained .
+> predicate Executable function mapping trajectory state/evidence to {sat ,unsat ,unk ,viol }.Product price comparison; database-field equality; ALFWorld object-state predicate.
+> evaluable_when Earliest point at which the atom can be safely evaluated. Online state, evidence revealed, commit action, or terminal only.
+> dependencies Parent atoms or clauses required for valid counterfactual edits. “field update allowed” depends on “confirmation obtained”.
+> state_vars Variables used by Mxand Φxto attach wit-nesses. Product id, selected option, object location, database record field.
+> score_role /
+> audit_source
+> Effect on Fxand evidence saved for audit. Hard conjunction, penalty, prerequisite; state diff, observation span, API log.
+
+Table 9: Verifier atom schema used by VICT.                       
+
+> Domain Adapter LoC Hours Atom cov. L0/L1/L2
+> ALFWorld 118 6.5 96.8 48/38/14 WebShop 176 8.0 95.2 22/52/26
+> τRetail 214 10.5 96.1 45/34/21
+> τAirline 238 11.5 95.4 42/35/23
+
+Table 10: Instrumentation cost audit. Atom coverage and level mix are percentages.                  
+
+> Domain Proof build Core search Total overhead
+> ALFWorld 6.8% 4.2% 11.9% WebShop 9.5% 5.8% 16.7%
+> τRetail 12.4% 7.1% 21.3%
+> τAirline 13.2% 8.0% 23.4%
+
+Table 11: Runtime overhead audit relative to outcome-only GRPO training with the same rollout budget. 
+
+commits, and violations. A direct-write relation is created when an action changes a verifier-relevant variable mapped to an atom: 
+
+Wwrite (i, t, j ) = 1{∃ v ∈ Mx(zj ) : Φx(hi,t +1 )[ v]̸ = Φ x(hi,t )[ v]}.
+
+Evidence-reveal edges credit actions that make pre-viously unavailable verifier evidence visible; com-mit edges attach finalizing actions such as buy , an-swer submission, database update, or object place-ment; violation edges attach irreversible forbidden changes. Terminal-only atoms are attached only when a reliable last writer or final commit action exists. Every non-zero correction is emitted only if the proof gate passes: 
+
+Gate i,t,j,r = 1 ⇒ ϵconf  
+
+> x
+
+≤ ηx,j ∈ C⋆i , (t, j, r ) ∈ Ei,δi,j ̸ = 0 , Pi,t,j |= Dx.
+
+(12) Proof records store the action id, atom id, witness type, evidence source, core id, marginal, witness weight, and assigned correction. 
+
+Eligibility-soundness proof sketch. Eq. 7 can be non-zero only when ˆδi,j ̸ = 0 and ωi,t,j > 0 for a core atom. By construction, this requires verifier conformance, membership in C⋆i , an observed wit-ness edge, a non-zero marginal, and a proof record satisfying Dx. These are exactly the conditions summarized by Gate i,t,j,r = 1 in Eq. 8. 
+
+Budgeted greedy search. The greedy core search prioritizes validity and auditability over global optimality. Starting from C(0) = ∅, at it-eration ℓ it selects 
+
+jℓ = arg max 
+
+> j / ∈C(ℓ)
+
+∆x(cl Dx (C(ℓ) ∪ { j}); ¯ zi, q i),C(ℓ+1) = cl Dx (C(ℓ) ∪ { jℓ}).
+
+(13) The search stops when ∆x(C(ℓ); ¯ zi, q i) ≥ ρi or when budget B is exhausted. A backward deletion pass removes any atom whose deletion preserves both closure and the displacement threshold. We do not claim a global approximation ratio: a subopti-mal search can reduce credit recall or return a larger locally minimal core, but the proof-edge eligibility invariant is preserved. On 2,000 sign-supported rollouts per domain, exhaustive enumeration was feasible for the small atom sets used here. When a valid core existed within budget, greedy search returned a minimum-cardinality valid core in 91.8– 97.6% of cases; otherwise the returned core was larger by about one atom. The resulting eligible action set matched the exhaustive-minimal refer-ence in 96.2–98.8% of rollouts because extra atoms usually had no proof edge and contributed zero cor-rection. Ties are broken by a fixed atom index, and Domain Atom families Witness sources Mutation tests 
+
+ALFWorld Target object identity; object held; transformation; receptacle found; fi-nal placement; second-object require-ment; wrong-object or premature-placement violation. Simulator state diffs; inventory changes; temperature or cleanliness transitions; receptacle transitions; fi-nal placement actions. Move final object to wrong receptacle; remove transfor-mation flag; swap target ob-ject; drop second object. WebShop Product identity; category match; hard attribute match; option selected; price under budget; purchase commit-ted; wrong-purchase violation. Search results; product page meta-data; option-click logs; selected prod-uct state; final buy action. Change price; remove re-quired attribute; change se-lected option; replace pur-chased product id. 
+
+τ -bench Target record identified; required in-formation collected; confirmation ob-tained; policy precondition; target field updated; forbidden field un-changed; final response consistent. API call logs; database diffs; user turns; policy-rule checks; final assis-tant response. Delete confirmation; al-ter target field; add extra database write; change pol-icy precondition. 
+
+Table 12: Representative VICT instantiations. 
+
+repeated search on a fixed trace is bit-identical; the search itself therefore adds no stochasticity. 
+
+Counterfactual validity and cost. The depen-dency closure cl Dx is implemented as the least fixed point of the verifier dependency rules; am-biguous closures are marked unsupported. Coun-terfactual scores use Fx, and bounded conformance error implies 
+
+∆Fx (C) − ∆Vx (C) ≤ 2ηx. (14) Cores inside [ρi − 2ηx, ρ i + 2 ηx] are abstained unless exact conformance is available. The per-rollout overhead is 
+
+O(Tim|R x|cW + Bmc F ), (15) where the first term constructs proof edges and the second evaluates candidate dependency cores. 
+
+Robust normalization and abstention. The ro-bust normalization is computed over the current rollout group for the same task instance: 
+
+Norm x,j (δi,j ) = δi,j − med x,j 
+
+sx,j + ϵ . (16) If fewer than two supported rollouts contain atom 
+
+j, or if the robust scale is zero, the normalized marginal is set to zero. Abstention is implemented by zeroing the eligible core signal for conformance failures, near ties, failed core search, zero ro-bust scale, or missing proof support; in all cases, 
+
+Afinal  
+
+> i,t
+
+= Abase  
+
+> i
+
+when all verifier corrections are zero.                     
+
+> Hyperparameter Default
+> Core budget B8 atom additions Core threshold ρi0.5sR|Abase
+> i|
+> Tie margin ϵqfor qi10 −6base-advantage units Conformance tolerance ηx0 for exact verifiers Direct-write / commit / violation weight 1.0 Evidence-path total weight 1.0 split over support path Correction scale γλ0.5 Numerical ϵ10 −6
+
+Table 13: Default values for the verifier correction. 
+
+Policy-invariance and reward-shaping scope. 
+
+VICT does not claim the policy-invariance guaran-tee of potential-based reward shaping. The terminal verifier Vx remains the outcome target, but Eq. 9 changes the stochastic gradient update through a clipped verifier-derived correction. The correc-tion can introduce useful bias through λ, clipping, greedy core search, dependency design, and proof coverage. The safeguards are operational: correc-tions are clipped, missing or ambiguous evidence abstains to Abase  
+
+> i
+
+, and every non-zero correction is logged through the verifier interface. The empiri-cal question is whether this verifier-grounded bias improves learning under matched rollout budgets. Here sR is the current rollout group’s reward scale used by the base optimizer. For standard-ized GRPO-style advantages, sR|Abase  
+
+> i
+
+| recovers the unnormalized preference magnitude in verifier-score units; for RLOO-style advantages, the same principle uses the reward scale implicit in the base advantage. The correction scale is calibrated to the base advantage scale: 
+
+λ = γλ
+
+median i,t |Abase  
+
+> i
+
+|
+
+median i,t |AVICT  
+
+> i,t
+
+| + ϵ ,c = q0.95 (|Abase  
+
+> i
+
+|).
+
+(17) 
+
+E Diagnostics and Ablation Interpretation 
+
+Faithfulness metrics. We report reward re-construction, mutation conformance, eligibility-invariant pass rate, proof coverage, abstention rate, credit sparsity, and a reward-hacking diagnostic. The eligibility-invariant pass rate is the fraction of non-zero corrections satisfying Eq. 8; it is primarily an implementation invariant, so a non-zero viola-tion rate indicates an error rather than a meaningful empirical tradeoff. Let pi,j = 1{δi,j ̸ = 0 , ∃t, r :(t, j, r ) ∈ Ei}. Proof coverage is 
+
+ProofCov = 
+
+P 
+
+> i,j
+
+pi,j 
+
+P 
+
+> i,j
+
+1{δi,j ̸ = 0 } + ϵ .
+
+Credit sparsity is the fraction of trajectory actions with |AVICT  
+
+> i,t
+
+| > 0. We separately log abstention from conformance failure, near ties, core-search failure, uncertainty-band failure, zero robust scale, and missing proof support. 
+
+Eligibility and score-sensitivity audit. Verifier-backed eligibility is not a claim of causal necessity or sufficiency. Two annotators hand-labeled 150 credited proof edges per domain from final-epoch rollouts and adjudicated disagreements, obtaining Cohen’s κ = 0 .81 . Table 14 reports the resulting taxonomy. In a separate fixed-continuation inter-vention, replacing each of 60 credited actions with a no-op reduced the terminal verifier score in 55/60 ALFWorld cases and 52/60 WebShop cases. This measures verifier-score sensitivity and may include downstream invalidation effects; it does not estab-lish general causality. We exclude τ -bench because its stochastic simulated user cannot be replayed deterministically. 
+
+Core and hyperparameter diagnostics. In ad-dition to final task performance, we log the mean, standard deviation, and 95th percentile of returned core size, as well as the budget-hit rate. The de-fault B = 8 is intended for the small per-instance atom sets in Table 3; larger atom sets should report core-size distributions and a sensitivity sweep over 
+
+B. The correction scale γλ is calibrated against                
+
+> Domain Load-bearing Redundant Correlated Unsupported Score drop ALFWorld 134 96155/60 WebShop 129 13 7152/60
+> Table 14: Verifier-backed eligibility audit. The first four columns are raw counts from 150 credited edges per domain; score drop is measured on a separate 60-action fixed-continuation intervention.
+
+the base advantage scale, but its sweep should be reported when verifier score ranges change substan-tially. 
+
+Ablation interpretation. The dense atom reward ablation tests whether gains come merely from exposing intermediate verifier facts. It does not prove that VICT is not return redistribution; in-stead, it tests whether the dependency core, proof edge, and abstention constraints add value beyond direct dense atom rewards. The no-core ablation tests whether all satisfied facts can be treated as relevant. The no-proof-edge ablation tests whether temporal proximity is enough to assign credit. The full method requires all three conditions simulta-neously: an atom must affect a dependency-valid verifier core, have an observable proof edge, and survive group-normalized masking. 
+
+Targeted negative controls. Table 6 includes three targeted controls intended to rule out sim-pler explanations for the gains. Commit-only ver-ifier credit attaches verifier credit only to final-izing actions such as buy , object placement, or API update. Temporal-nearest atom credit assigns each atom marginal to the nearest preceding ac-tion with any lexical or state overlap. Randomized proof-edge placebo preserves sparsity by permut-ing proof edges within the same rollout group while keeping the number of credited actions fixed. We keep the lower-priority uniform proof-edge and no-abstention variants out of the main table for compactness; they are diagnostic checks for edge weighting and fallback safety rather than primary alternative explanations. 
+
+F Illustrative Proof Traces and Real-Task Case Studies 
+
+This section expands the qualitative audit into con-crete benchmark cases. The ALFWorld and Web-Shop examples use real task strings and observa-tions from the trajectory appendices used by re-cent agent-RL baselines; the τ -bench examples use released task records and database fields from Domain Trigger Sparsity NZ acts/traj Core size Budget hit Abstain Top abstention reason                               
+
+> ALFWorld 61.8 ±2.1 %18.6 ±1.0 %4.7 ±0.4 2.9 ±0.2 1.4 ±0.3 %8.1 ±0.6 %terminal-only fact WebShop 57.2 ±1.8 %15.3 ±0.9 %2.2 ±0.2 3.4 ±0.3 2.1 ±0.4 %11.6 ±0.8 %ambiguous product evidence
+> τRetail 52.9 ±2.4 %12.8 ±1.1 %3.1 ±0.3 4.6 ±0.4 4.8 ±0.6 %14.3 ±1.0 %missing confirmation witness
+> τAirline 49.5 ±2.6 %11.7 ±1.0 %3.4 ±0.4 5.1 ±0.5 5.6 ±0.7 %15.8 ±1.1 %unresolved policy precondition
+
+Table 15: Credit behavior diagnostics computed on final training rollouts before policy update. ALFWorld/WebShop values are averaged over three training seeds; τ -bench values are averaged over final service-validation rollout batches because that setting is treated as supplemental validation. Trigger is the fraction of rollouts with at least one non-zero verifier correction; sparsity is the fraction of actions with non-zero verifier correction. 
+
+Retail and Airline. The tables report the sign of the verifier-derived correction, because the exact magnitude depends on the same-task rollout group through Eq. 16. The important property is that each non-zero sign is backed by a verifier atom, a dependency-valid core, and an observable proof edge. 
+
+F.1 ALFWorld: Heat an Egg and Place It on the Countertop 
+
+The ALFWorld case is a Heat task: heat some egg and put it in countertop . The terminal ver-ifier checks object identity, transformation, and final placement. Table 16 shows how VICT sep-arates useful search, state-changing actions, and final commitment. Opening the fridge is not itself rewarded as progress when no verifier atom enters the dependency core; taking the egg, heating it, and moving the heated egg to the countertop are credited because they write verifier-relevant state. The same interface also explains common fail-ures more precisely than outcome-only credit. Ta-ble 17 shows four near-miss continuations from the same task. A failed trajectory that finds and holds the egg is not treated as uniformly bad: the object-acquisition edge can keep positive correc-tion, while the premature or wrong final placement receives negative commit credit. 
+
+F.2 WebShop: Premature Purchase with Correct Options but Wrong Product 
+
+The WebShop case uses the instruction: Find me loose fit, slim fit men’s tuxedo shirts with long sleeve, short sleeve, polyester cotton, elastic waist, regular fit for gym workout with color: b-blue, and size: xx-large, and price lower than 40.00 dollars .The observed rollout searches with many requested fields, clicks product B09Q67H373 , selects b-blue 
+
+and xx-large , and then buys. The product page exposes color and size options and a price below the budget, but the title describes a T-shirt rather than the requested tuxedo shirt with the required material and fit constraints. Table 18 shows why this is an informative failure for VICT. Table 19 shows the behavior that this proof trace encourages. The model should not learn only “buy after selecting color and size”; it should learn to delay purchase until product-page evidence sup-ports all hard atoms. This is where VICT differs from dense atom reward: a page that satisfies cheap price and selectable options is still not a positive terminal core if the purchased product violates the hard instruction. 
+
+F.3 τ -Bench Retail: Multi-Item Exchange with Fallback Preferences 
+
+The Retail case is a released τ -bench task for user yusuf_rossi_9620 . The user has delivered order #W2378156 and wants to ex-change a mechanical keyboard and a smart thermostat. The order record contains key-board item 1151293680 with linear/RGB/full size options and thermostat item 4983901480 
+
+with Apple HomeKit/black . The target ex-change is keyboard item 7706410293 (clicky/no backlight/full size ) and thermostat item 
+
+7747408585 (Google Assistant/black ), paid with credit_card_9513926 . The keyboard choice is subtle: the exact clicky/RGB/full size 
+
+variant exists as item 9025753381 , but it is unavail-able, so the user’s fallback preference selects the available no-backlight full-size variant. This task illustrates why policy and database atoms must be part of the verifier core. Table 21 lists failure modes that a scalar terminal reward would collapse into the same zero outcome. VICT distinguishes missing confirmation, unavailable re-placements, wrong preference resolution, and in-complete exchange lists. Step Observation / action Evidence used by adapter Verifier atom status after action Proof edge Sign 
+
+0 Initial kitchen contains countertop 1, countertop 2, fridge 1, and 
+
+microwave 1 .Receptacle and heating-device can-didates are visible. 
+
+receptacle_candidate=seen ;
+
+heat_tool=seen ; target object unknown. evidence reveal 0
+
+1–2 go to fridge 1 ; open fridge 1 . Fridge contains bowl, pan, plate, and potato, but no egg. No target-object atom is satisfied; the negative observation is logged but not a success core atom. reveal, no core 0
+
+3–4 go to countertop 2 ; observation lists 
+
+egg 3 , egg 2 , and egg 1 .The target object is now grounded to visible egg instances. 
+
+target_object_visible=sat . evidence reveal +
+
+5 take egg 1 from countertop 2 . Inventory changes from no target object to holding egg 1 .
+
+target_object_held=sat . direct write +
+
+6–7 go to microwave 1 ; open microwave 1.The heating device is reachable and usable. Dependency for heated_egg is pre-pared, but no transformation has hap-pened yet. support path 0/+
+
+8 heat egg 1 with microwave 1 . Simulator state marks egg 1 as heated. 
+
+transformation_heated=sat . direct write +
+
+9 go to countertop 1 . Target receptacle is reached. Placement is still unsatisfied, but the next commit scope is valid. support path 0/+
+
+10 move egg 1 to countertop 1 . Final location of heated egg 1 be-comes countertop 1 .
+
+final_placement=sat ; all parents satisfied. direct write + commit +
+
+Table 16: ALFWorld proof trace for a real Heat task. VICT credits the actions that write target identity, heating, and placement atoms, while search actions only receive credit when they lie on a proof-supported evidence path. 
+
+Near miss Verifier diagnosis Action receiving correction Why this is different from outcome-only RL 
+
+Takes potato 1 from the fridge after failing to find an egg. 
+
+wrong_object_held=viol ; target egg atoms remain unsatisfied. The wrong take action receives negative violation credit if it enters the failure core. The model is not told that all early navigation was wrong; the blame is attached to the first wrong-object write. Moves egg 1 to the counter-top before heating. 
+
+target_object_held=sat , but 
+
+transformation_heated=unsat at final placement. 
+
+move egg 1 to countertop 1 receives negative premature-commit credit; take egg 1 may still receive positive object credit. A partially useful failed trajec-tory is decomposed into a cor-rect object choice and an incor-rect final commitment. Heats the egg, then places it in the sinkbasin. 
+
+transformation_heated=sat ;
+
+final_receptacle=viol .The wrong move or put action receives negative placement credit. The heating action remains sup-ported even though the terminal reward is zero. Loops through look and re-peated container openings af-ter the egg is held. No additional atom changes; no reveal edge adds new verifier evidence. Repeated no-op actions receive no verifier correction. VICT does not create dense progress rewards for merely longer successful-looking his-tories. 
+
+Table 17: ALFWorld failure contrasts. The dependency core allows useful predecessor actions and harmful commit actions to receive different signs inside the same failed rollout. 
+
+F.4 τ -Bench Airline: Same-Day Return Change and Baggage Update 
+
+The Airline case is a released task for user 
+
+sofia_kim_7287 . The user wants to modify reser-vation OBUT9V : keep the Houston-to-Denver out-bound trip on May 27, change the return to the fastest same-day return, stay in economy, add one checked bag, and pay with the smallest usable gift card. The reservation record shows the out-bound segments HAT078 and HAT118 , an original next-day return HAT084 /HAT266 , one checked bag, and no insurance. The user is a silver member, so two economy checked bags are free. The profile contains gift cards with balances 157, 113, and 6 dollars; the 6-dollar card is too small for the flight price difference, so the smallest usable card is gift_card_6276644 with 113 dollars. The Airline task also shows the value of dependency-aware attribution. Calling the flight-update API with only the return legs omits unchanged outbound segments even if the de-sired return is correct; using the 6-dollar gift card violates the payment sufficiency atom; set-ting nonfree_baggages=1 contradicts the silver-member free-baggage rule; and any mutating call before confirmation violates the policy precondi-tion. VICT assigns the negative signal to the specific API call that writes the inconsistent field, while still crediting earlier evidence-gathering calls that identified the correct reservation, route, or pay-ment candidate. Step Action Observation / evidence Verifier atom status Proof edge Sign 
+
+1 Search with color b-blue , size 
+
+xx-large , budget 0-40 , product type, fit, and sleeve slots. Search query contains color, size, budget, product type, fit, and sleeve constraints. Query covers several hard constraints, but no product atom is yet evaluable. reveal path +
+
+2 click[b09q67h373] Result title: “JSPOYOU 2022 Newly T-Shirt... Short Sleeve Tees...”; price $1.99 –
+
+$8.99 .
+
+price_under_budget=sat ;
+
+product_type_tuxedo=unsat/unk ;material and elastic-waist evidence absent. evidence reveal +/−
+
+3 click[b-blue] Product page exposes color options in-cluding b-blue .
+
+color_option_selected=sat . direct write +
+
+4 click[xx-large] Product page exposes size options includ-ing xx-large .
+
+size_option_selected=sat . direct write +
+
+5 click[buy now] Final purchase commits the current product, whose page lacks the tuxedo-shirt, polyester-cotton, elastic-waist, and requested-fit evidence. 
+
+purchase_committed=sat ; hard prod-uct atoms missing. commit violation −
+
+Table 18: WebShop proof trace for a real failed purchase. Option-selection actions can receive positive correction, but the final purchase receives negative commit credit because dependency-core atoms for product type and hard attributes remain unsatisfied. 
+
+Continuation Satisfied atoms Missing or violated atoms VICT effect 
+
+Select b-blue and xx-large , then buy B09Q67H373 .Price, color option, and size option are sup-ported by page evidence. Product category, material, elastic waist, and requested fit are not supported. Positive option writes are pre-served, but the buy now action is penalized as a wrong pur-chase. Click a cheap, semantically clothing-related result without checking product details. Search result may reveal a low price and some lexical overlap. Hard attributes are unknown, so the core cannot certify purchase correctness. Evidence is insufficient; VICT either abstains or credits only the evidence-reveal edge, not a commit. Return to search after detecting missing product-type evidence. The failed candidate contributes negative evidence for the current product. No terminal purchase is committed. The click can be treated as use-ful evidence gathering rather than as a failed purchase. Buy after all hard product atoms and required options are observed. Product type, hard attributes, options, bud-get, and commit are all satisfied. No missing hard atom remains in the dependency core. Evidence-revealing clicks, op-tion writes, and the final com-mit all receive positive correc-tion. 
+
+Table 19: WebShop continuation contrasts. The decisive distinction is whether the final buy action commits a product whose hard verifier atoms are all supported. 
+
+Step Action / turn Evidence source Verifier atom status Proof edge Sign 
+
+1 Name+zip authentication via 
+
+find_user_id_by_name_zip .Tool returns yusuf_rossi_9620 . identity_authenticated=sat . evidence reveal +
+
+2 Retrieve order #W2378156 with 
+
+get_order_details .Order status is delivered ; target item ids and original payment method are visible. 
+
+delivered_order=sat ; target items identified. evidence reveal +
+
+3 Check keyboard product 
+
+1656367028 .Keyboard variants show 9025753381 is ex-act but unavailable; 7706410293 is clicky, no-backlight, full-size, and available. Keyboard replacement valid; fallback condition satisfied. evidence reveal +
+
+4 Check thermostat product 
+
+4896585277 .Thermostat variant 7747408585 is Google Assistant compatible, black, and available. Thermostat replacement valid. evidence reveal +
+
+5 Assistant lists both exchanges and obtains explicit user “yes”. Retail policy requires confirmation before any database-changing exchange. 
+
+confirmation_obtained=sat . user-turn reveal +
+
+6 Call the exchange API with order #W2378156 , old ids 
+
+1151293680/4983901480 , new ids 7706410293/7747408585 , and 
+
+credit_card_9513926 .Database changes status to exchange requested and records exact old/new item lists. 
+
+exchange_status=sat ;
+
+no_extra_write=sat ; all item atoms satisfied. direct write + com-mit 
+
++
+
+Table 20: τ -bench Retail proof trace for a real multi-item exchange task. The product-detail calls are not generic browsing: they reveal the unavailable exact keyboard variant, the valid fallback, and the valid thermostat replacement. Failure continuation Failed atom Credited or penalized action Training signal 
+
+Calls the exchange tool before obtaining explicit user confirmation. 
+
+confirmation_obtained=unsat ;
+
+policy_precondition=viol .The mutating API call receives negative violation credit. Learn to ask for confirma-tion before database writes. Chooses exact keyboard item 
+
+9025753381 .
+
+replacement_available=viol ; tool would reject unavailable item. The product-detail evidence is useful, but the exchange call is penalized. Learn that an unavailable ex-act variant triggers the fall-back branch. Chooses thermostat item 4953074738 . thermostat_compatibility=viol be-cause it is Amazon Alexa, not Google Assistant. The wrong new-item id in the exchange call receives negative commit credit. Learn to bind replacement ids to checked option atoms. Exchanges only the thermostat and omits the keyboard in this task variant. 
+
+keyboard_exchange_included=unsat . The final exchange call receives omis-sion credit for the missing item id. Learn to batch all requested delivered-order exchanges into one mutating call. 
+
+Table 21: τ -bench Retail failure contrasts. The verifier core localizes whether the error is a policy violation, an unavailable item, a wrong replacement option, or an incomplete database update. 
+
+Step Action / evidence Database or search fact Verifier atom status Proof edge Sign 
+
+1 Retrieve user and reservation de-tails. 
+
+OBUT9V : IAH–DEN round trip, economy; outbound is HAT078 /HAT118 on May 27 and return is HAT084 /HAT266 on May 28. Target reservation identified; economy booking is modifiable. evidence reveal +
+
+2 Search return flights from DEN to IAH on May 27. Ground-truth itinerary uses HAT290 DEN– LAS 14:00–16:00 and HAT175 LAS–IAH 17:00–20:00. 
+
+same_day_return=sat ;
+
+return_route_selected=sat .evidence reveal +
+
+3 Compare payment methods. gift_card_7480005 has $6; 
+
+gift_card_6276644 has $113 and is the smallest sufficient gift card. 
+
+smallest_usable_gift_card=sat . evidence reveal +
+
+4 Obtain explicit user confirmation for flight and baggage changes. Airline policy requires confirmation before updating flights or baggage. 
+
+confirmation_obtained=sat . user-turn reveal +
+
+5 Flight-update API call for 
+
+OBUT9V : economy itinerary 
+
+HAT078/HAT118/HAT290/HAT175 ,paid with gift_card_6276644 .The whole new reservation is written, retain-ing outbound segments and replacing the re-turn with same-day flights. 
+
+flight_update=sat ; outbound pre-served. direct write + com-mit 
+
++
+
+6 Baggage-update API call for 
+
+OBUT9V : total=2 , nonfree=0 ,payment gift_card_6276644 .Total checked bags becomes 2; silver econ-omy allowance keeps nonfree bags at 0. 
+
+baggage_update=sat ; free al-lowance respected. direct write + com-mit 
+
++
+
+Table 22: τ -bench Airline proof trace for a real reservation-modification task. The proof core combines itinerary search, payment sufficiency, user confirmation, and two database writes.

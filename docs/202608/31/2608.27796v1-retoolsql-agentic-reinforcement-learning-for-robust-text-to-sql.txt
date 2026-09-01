@@ -1,0 +1,437 @@
+Title: ReToolSQL: Agentic Reinforcement Learning for Robust Text-to-SQL
+
+URL Source: https://arxiv.org/pdf/2608.27796v1
+
+Published Time: Mon, 31 Aug 2026 00:21:18 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# ReToolSQL: Agentic Reinforcement Learning for Robust Text-to-SQL 
+
+Pratik Kakkar ∗
+
+, Chandra Dhir ∗, Ravi Shankar, Pareekshit Reddy Gaddam, Anup Shirgaonkar JPMorganChase 
+
+# Abstract 
+
+Recent work has shown that reinforcement learning from execution feedback can substantially improve text-to-SQL performance, often enabling smaller models to match or exceed much larger systems. However, most existing approaches treat SQL generation as a single-turn task, limiting the model’s ability to recover from errors through iterative refinement. We present ReToolSQL , a two-stage training framework for text-to-SQL that combines (i) a supervised warm-start on rejection-sampled reasoning traces with (ii) agentic reinforcement fine-tuning (RFT) over multi-turn tool-use trajectories. The key insight is that the two stages act on complementary axes, the supervised fine-tuning (SFT) on verified privileged-teacher traces expands the set of solvable questions (raising pass@ k coverage on the hardest cases), while RFT converts that expanded capability into higher single-pass accuracy by teaching the model when to verify, what evidence to retrieve, and how to repair faulty SQL from execution feedback. Applied to Gemma 4 instruction-tuned (31B), RFT alone achieves 73.66% execution accuracy (EX) on the BIRD-SQL development benchmark (74.12% EX with self-consistency). Initializing RFT from the SFT checkpoint (SFT →RFT) yields our strongest model at 74.32% EX single-pass and 74.77% EX with self-consistency. At the time of writing, this ranked first on the BIRD single-model development-set leaderboard. The approach uses composite rewards anchored on execution correctness, requires no human annotation beyond the benchmark itself, and operates within a single dense 31B model, showing that a properly designed SFT →RFT pipeline over tool-use trajectories is a practical path toward robust enterprise-grade text-to-SQL. 
+
+Keywords: Text-to-SQL, BIRD-SQL, Reinforcement Learning from Execution Feedback, GRPO, Agentic Tool Use, Self-Consistency Decoding 
+
+# 1 Introduction 
+
+Text-to-SQL is a promising interface for natural-language data access, but robust deployment remains difficult in realistic settings where schemas are large, values are noisy, and correctness depends on execution rather than surface-form similarity. Benchmarks such as BIRD (Li et al., 2023) highlight this challenge by evaluating systems through execution accuracy (EX) on complex cross-domain databases, exposing persistent failures in schema linking, value grounding, and numerical or temporal reasoning. Although recent instruction-tuned large language models can generate correct SQL for many questions, they remain brittle as a single incorrect join, literal, or aggregation often causes failure, and single-pass generation offers no mechanism for recovery. 
+
+> ∗
+
+Corresponding authors: pratik.kakkar@jpmchase.com , chandra.dhir@jpmchase.com 
+
+Disclaimer: This paper was prepared for informational purposes and is not a product of the Research Department of JPMorganChase. JPMorganChase makes no representation, warranty or undertaking whatsoever and disclaims all liability for the completeness, accuracy or reliability of the information contained herein. This document is not intended as investment research or investment advice, or a recommendation, offer or solicitation for the purchase or sale of any security, financial instrument, financial product or service, or to be used in any way for evaluating the merits of participating in any transaction, and shall not constitute a solicitation under any jurisdiction or to any person, if such solicitation under such jurisdiction or to such person would be unlawful. arXiv:2608.27796v1 [cs.AI] 28 Aug 2026 Policy       
+
+> Model GRPO Rewards
+> Rn1Rn2
+> R22
+> R31
+> R13R12R11
+> R32
+> R21R23
+> R34R33
+> R14
+> R35
+> Rewards
+> ….
+> ….
+> Format
+> Execution
+> Non-Null
+> Length
+> Schema
+> DAPO Filter Semantic Search Pre-Execute Profile columns
+> Database Tools B1BnB3
+> Question
+> Advantage
+
+# ReToolSQL Training Architecture Figure 1: High-level overview of ReToolSQL . A natural-language question and enriched schema are processed by the Gemma 4 31B policy, which interacts with database tools across multiple turns to produce verified SQL. In the training loop, B1, B 2, . . . denote the prompt groups sampled per training step (each containing G=16 multi-turn trajectories for a single question), and R1, R 2, . . . the trajectory-level composite rewards R = ∑ 
+
+> k
+
+wkRk (Section 3.8) that yield the group-relative advantages driving the GRPO update. Groups with zero reward variance (std = 0) are discarded by dynamic sampling (Section 3.5), as they contribute no gradient signal. Recent work shows that reinforcement learning from execution feedback can substantially improve text-to-SQL performance, often allowing relatively smaller models to rival much larger systems (Yao et al., 2026; Shao et al., 2024). Yet most existing methods still treat SQL generation as a single-turn act: the model proposes one query, receives a terminal reward, and is not explicitly trained to use execution feedback as part of an iterative reasoning process. At the same time, many of the strongest systems rely on increasingly heavyweight pipelines with multiple generators, selectors, or orchestration stages (Pourreza et al., 2025; Liu et al., 2026; Talaei et al., 2024), improving accuracy at the cost of inference-time complexity. This motivates a central question: can a single dense model learn to propose, verify, and repair its own SQL through tool interaction while retaining a simple serving architecture? 
+
+We address this question with ReToolSQL , a text-to-SQL system trained with agentic reinforcement learning over multi-turn tool-use trajectories (Figure 1). Our approach adapts the tool-integrated RL recipe of ReTool (Feng et al., 2026), which teaches an LLM when and how to invoke a code interpreter for mathematical reasoning, to the task of natural-language-to-SQL generation. In place of the code interpreter, we equip the policy with a suite of read-only database tools (a sandboxed SQL executor, a column profiler, and a BM25 value search) and add schema-linking reward terms, so that tool use is grounded in real database evidence specific to text-to-SQL. Instead of treating database execution as a post-hoc filter, ReToolSQL 
+
+places these read-only tools directly inside the training environment and learns from their execution feedback: the policy can execute candidate SQL, inspect runtime feedback, profile uncertain columns, and search stored values before committing to a final answer. Training uses a GRPO-style objective (Shao et al., 2024) over complete propose–verify–repair trajectories with a composite reward anchored on execution correctness and schema-linking signals. As a result, the policy learns not only to produce SQL, but also when to verify, what 
+
+evidence to retrieve, and how to revise a faulty draft in response to the database feedback. 
+
+Re inforcement-learned Tool -use for SQL .
+
+2Applied to Gemma 4 instruction-tuned (31B), agentic RL alone achieves 73.66% execution accuracy on the BIRD-SQL development set (74.12% with self-consistency). Initializing RL from a supervised fine-tuning (SFT) checkpoint trained on rejection-sampled reasoning traces (a two-stage SFT →RFT pipeline) yields our strongest model at 74.32% single-pass and 74.77% with self-consistency, improving over both individual stages. The SFT warm-start expands pass@16 coverage on hard questions, and agentic RL converts that expanded coverage into higher single-pass accuracy. Together, these results show that a carefully designed SFT →RFT pipeline over tool-use trajectories is a practical path toward robust, enterprise-grade text-to-SQL within a single dense model. 
+
+Contributions. 
+
+1. We formulate text-to-SQL as a tool-augmented sequential decision problem and introduce a verification-first reinforcement learning setup with execution-grounded tool use, DAPO-style dynamic sampling, and a composite reward (Section 3). 2. We propose a two-stage SFT →RFT pipeline: a supervised warm-start on execution-verified, rejection-sampled privileged-teacher traces followed by agentic RL, and show that the SFT expands pass@ k coverage on hard questions while RL improves the single-pass accuracy (Section 5). 3. We show that a single dense 31B model ranks #1 on the BIRD-SQL single-model dev leaderboard, competitive with substantially more complex pipeline based systems, and provide extensive ablations over model scale, entropy preservation, and inference-time scaling dynamics (Sections 5, 6). 
+
+# 2 Related Work 
+
+Our approach sits at the intersection of four lines of work: LLM-based text-to-SQL, pipeline-based test-time scaling, reinforcement learning with verifiable rewards (RLVR), and agentic tool use for execution-grounded generation. 
+
+2.1 LLM-Based Text-to-SQL 
+
+Text-to-SQL has evolved from grammar constrained sequence-to-sequence models on Spider (Yu et al., 2018) to instruction-tuned LLMs evaluated on BIRD (Li et al., 2023). BIRD is particularly challenging because it spans 12,751 question–SQL pairs over 95 large, noisy databases across more than 37 domains and evaluates systems by execution accuracy, set equality between predicted and gold query outputs, rather than by string or tree similarity. This shifts the problem from surface-form matching toward schema linking, value grounding, and numeric or temporal fidelity. Prompt-based decomposition methods such as DIN-SQL (Pourreza and Rafiei, 2023) address this difficulty by separating linking from generation, while representation-focused work such as M-Schema serialization (Liu et al., 2026) improves schema encoding by exposing types, value exemplars, and foreign-key structure. Our context builder follows this latter perspective by injecting column meanings, cardinalities, value ranges, and representative values so that linking decisions are grounded in evidence rather than names alone. 
+
+2.2 Pipelines, Candidate Selection, and Test-Time Scaling 
+
+Recent BIRD leaders rely heavily on orchestrated pipelines that generate many candidates and then select among them. CHESS (Talaei et al., 2024) deploys four specialized agents; information retrieval, schema selection, candidate generation, and unit testing achieving 71.1% EX on BIRD test with open-source models. CHASE-SQL (Pourreza et al., 2025) combines divide-and-conquer prompting, execution-plan reasoning, and instance-aware few-shot synthesis with a learned pairwise selector (73.0% EX). XiYan-SQL (Liu et al., 2026) couples M-Schema with a multi-generator ensemble and candidate selection (75.63% EX), while Agentar-Scale-SQL (Wang et al., 2025) further expands this paradigm through iterative refinement and tournament-style selection, reaching 81.67% EX on BIRD test. AgentNLQ (Bogdanov et al., 2026) likewise employs a multi-agent orchestrator that plans, reflects, and self-corrects over a semantically enriched schema augmented with user-provided business rules, reporting 78.1% semantic accuracy on BIRD. These results demonstrate that test-time compute is a strong lever for performance, but they also increase serving cost and system complexity. By contrast, our approach internalizes proposal, verification, and repair within a single dense policy, reducing test-time scaling to execution-based self-consistency (Wang et al., 2022) instead of a learned selector over heterogeneous generators. 32.3 Reinforcement Learning with Verifiable Rewards 
+
+RLVR has emerged as a practical framework for eliciting reasoning in LLMs. GRPO (Shao et al., 2024) removes the value network of classical actor-critic RL by estimating advantages from reward statistics over groups of sampled completions. DeepSeek-R1 (Guo et al., 2025) shows that verifiable terminal rewards alone can induce long-horizon reasoning. DAPO (Yu et al., 2026) introduces stabilizers such as asymmetric clipping, dynamic sampling to discard homogeneous prompt groups, and soft overlength penalties to prevent entropy collapse. Closest to our setting, Arctic-Text2SQL-R1 (Yao et al., 2026) trains a 7B model with GRPO under a binary execution-match reward and outperforms many much larger systems on BIRD. We build on this line of work in three ways: (i) we apply DAPO-style dynamic sampling to filter prompt groups that provide no learning signal, (ii) we use a composite, binary-heavy reward that retains schema-linking signal when execution rewards collapse to uniform values within a group, and (iii) we collect reward over multi-turn agentic trajectories rather than single-shot generations, so that the model is optimized for the entire propose–verify–repair cycle. 
+
+2.4 Agentic Tool Use and Execution Grounding 
+
+ReAct (Yao et al., 2023) established the value of interleaving reasoning with tool actions, and subsequent work on multi-turn tool agents (Chen et al., 2023) showed that fine-tuning on agentic trajectories can substantially improve tool reliability. Most closely related, ReTool (Feng et al., 2026) trains an LLM with outcome-driven RL to interleave real-time code execution with reasoning and to learn when and how to invoke tools from execution feedback, pairing a cold-start supervised stage with subsequent RL. We adopt the same two-stage recipe, a supervised warm-start followed by reinforcement learning, but target database tools and execution-grounded SQL instead of a code interpreter for mathematical reasoning. In the database setting, the relevant tools include a sandboxed SQL executor, a column profiler, and a lexical value-search mechanism. Prior text-to-SQL systems typically use execution only as a post-hoc filter or for offline data curation. We instead place tools directly inside the RL environment and reward their effective use during training. This enables the model to learn a verification-first policy: it drafts a query, executes it, and inspects errors or output shape. When ambiguities remain, it profiles columns to resolve type or scale issues and searches stored values with BM25 (Robertson and Zaragoza, 2009) to repair literal mismatches. All of this happens before the model produces the final SQL. The key distinction of our method compared to pipeline systems is that tool proficiency emerges from gradient updates on complete trajectories, as opposed to being a property of the prompt or an external orchestration layer. ReToolSQL thus combines agentic tool use during RL training, GRPO with dynamic sampling, a composite schema-aware reward, and execution-based self-consistency decoding within a single dense 31B model. 
+
+# 3 Methodology 
+
+We formulate text-to-SQL as a tool-augmented sequential decision problem solved by reinforcement fine-tuning, and we decode with a training-free execution-consensus rule. The approach is model-agnostic; in our experiments the policy is instantiated with a single dense, instruction-tuned model with 31B parameters (Gemma 4 31B instruct), served with a vLLM serving engine. No external retriever, or auxiliary selection model is required. Figure 1 gives the end-to-end picture where a question is augmented with an enriched schema, the policy generates multi-turn agentic rollouts that interact with database tools, each terminal SQL query is scored by the composite reward, and group-relative advantages drive the GRPO update with DAPO-style dynamic sampling. 
+
+3.1 Problem Formulation 
+
+We model an episode as a Partially Observable Markov Decision Process (POMDP) instantiated per example by the tuple ( Q, S, T ), where Q is the natural-language question concatenated with optional evidence (a “hint”), S is the schema of the target database D, and T is a fixed set of read-only tools. The policy πθ is a single autoregressive language model. At turn t it observes a context ct and emits an action at that is either a tool call atool  
+
+> t
+
+or the terminal answer asql  
+
+> t
+
+(the final SQL query). The environment returns an observation 
+
+ot (tool output or error), and the context is extended autoregressively: 
+
+ct+1 = [ ct; at; ot]. (1) 4california_schools — M-Schema encoding (abbreviated) 
+
+# Table: frpm Free/Reduced-Price Meal eligibility | Rows: 9,986 | Columns: 28 
+
+CDSCode :TEXT PK, Not Null Stats: Distinct: 9986 Examples: [’01100170109835’,’01100170112607’] 
+
+County Name :TEXT county of the school, Nullable Stats: Nulls: 0, Distinct: 58 Top: [’Los Angeles’,’Orange’,’San Diego’] 
+
+Free Meal Count (K-12) :REAL K-12 free meal eligible, Nullable Stats: Nulls: 1043, Min: 0.0, Avg: 287.4, Max: 5333.0 
+
+# Table: schools Rows: 17,686 | Columns: 49 
+
+CDSCode :TEXT PK, Not Null 
+
+Charter :INTEGER 1 = charter, 0 = non-charter, Nullable, Distinct: 2 
+
+[Foreign Keys] 
+
+frpm.CDSCode = schools.CDSCode 
+
+Figure 2: M-Schema encoding example (abbreviated). Each column carries its type, semantics, nullability, summary statistics, and representative values, enabling evidence-based schema linking. A trajectory τ = ( c0, a 0, o 0, . . . , a T ) terminates when the model emits <final_answer> or the per-episode tool budget ( Tmax = 8 turns) is exhausted. The objective is execution correctness of asql  
+
+> T
+
+against D, not token-level imitation of a gold reasoning trace or reference SQL. 
+
+3.2 Schema-Grounded Observation Space 
+
+The single largest determinant of correct SQL is the quality of the schema representation. We adopt an M-Schema (Liu et al., 2026) encoding which is a semi-structured, value-enriched serialization that is consistently stronger than raw data definition language (DDL) or flat column lists because it exposes types, foreign keys, and data evidence in a compact, regular layout the model can attend to. Our builder emits, per database, a db_id header and a [Schema] block. Each table is introduced by # Table: 
+
+with its comment and row/column counts, followed by a bracketed list of columns (Figure 2). Every column line carries its name and type, an inline natural-language meaning drawn from a per-database dictionary, key/nullability flags, a compact statistics group (Nulls, Non-null, Distinct, Min/Avg/Max), the most frequent categorical Top values, and a few literal Examples ; a trailing [Foreign keys] block lists join paths. This representation enables evidence-based schema linking so that the policy selects columns and constructs predicates from observed value distributions instead of from column-name similarity. Few-shot exemplars are retrieved with BM25 (Robertson and Zaragoza, 2009) over the training pool, excluding any example sharing the target db_id to prevent leakage. During training we cap the prompt at 15,500 tokens and the completion at 8,000 tokens. Prompts which are longer than this are filtered instead of truncated so that no schema evidence is silently dropped. 
+
+3.3 Action Space: A Verification-First Tool Suite 
+
+The policy interacts with the environment T through three deterministic, read-only tools (full signatures and parameters are discussed in Appendix C): 5bm25_search_sqlite : A hybrid lexical search over stored cell values that combines BM25 ranking with a regex/substring fallback. It grounds string and category literals. For example, mapping a paraphrased entity to its exact stored spelling so that WHERE predicates match real values. 
+
+sqlite_query : A sandboxed executor restricted to SELECT /WITH statements, with a busy timeout and a returned-row cap. It reports either the result columns and rows or a structured execution error, enabling execution-guided self-repair. 
+
+sqlite_peek : A column profiler returning declared type, null/distinct counts, min/max, representative samples, character-class summaries, and value prefixes. It resolves the ambiguities that most often break BIRD queries, such as percent-vs-fraction scales, stored date formats, and join-key type mismatches. We impose a strict turn protocol that doubles as a learnable structure. Every assistant turn contains a bounded <scratch_pad> (intent, expected output columns, and the candidate SQL) followed by exactly one of a single native tool call or a <final_answer> block. Immediately before finalizing, the policy must emit explicit <relevant_tables> and <relevant_columns> annotations covering every table and column used by the final SQL. These annotations materialize the schema-linking decision and are consumed directly by the linking rewards as discussed in Section 3.8. The prescribed workflow drafts SQL from schema and hint, executes it with sqlite_query , and invokes 
+
+sqlite_peek or bm25_search_sqlite only to repair a detected fault. Appendix A walks through a complete multi-turn trajectory. Tools are framed as instruments of verification and grounding, not as a substitute for the model’s own SQL reasoning. 
+
+3.4 Policy Optimization: GRPO with Asymmetric Clipping 
+
+We optimize πθ with Group Relative Policy Optimization (GRPO; (Shao et al., 2024)) using the DAPO loss variant (Yu et al., 2026). For each question q we sample a group of G = 16 complete trajectories {oi}Gi=1 
+
+from the behavior policy πθold and score each with the composite reward Ri of Section 3.8. Advantages are computed by group-relative normalization, which removes the need for a learned value function: ˆAi = Ri − μG
+
+σG + ϵ , (2) where μG and σG are the mean and standard deviation of rewards within the group, and ϵ = 10 −8 prevents division by zero. The clipped surrogate objective uses asymmetric bounds following DAPO’s clip higher prescription, augmented with a scheduled KL penalty toward a fixed reference policy: 
+
+L(θ) = −Eq,i 
+
+[
+
+min 
+
+(
+
+ρi(θ) ˆAi, clip (ρi(θ), 1−εlo , 1+ εhi 
+
+) ˆAi
+
+)
+
+− βt DKL 
+
+(πθ ∥ πref 
+
+)]
+
+, (3) where ρi(θ) = πθ(oi | q)/π θold (oi | q) is the token-level importance ratio, ( εlo , ε hi ) = (0 .20 , 0.28), πref is the frozen initial policy, and βt is the KL coefficient at training step t (annealed per the schedule below). The asymmetric upper clip allows the policy to increase probability on rare high-reward trajectories more aggressively than it decreases probability on failures, preserving upward exploration and preventing premature entropy collapse. We use a single optimizer pass per rollout buffer ( μ = 1). Instead of disabling KL regularization outright, we apply a decaying KL-penalty schedule ( β : 0 .005 → 0.001 → 0) that preserves policy entropy and thus exploration capacity early in training before annealing to zero, after which reward shaping and asymmetric clipping alone regularize the policy. We compare this schedule against a constant 
+
+β = 0 in Section 6.4. 
+
+3.5 Dynamic Sampling 
+
+A persistent failure mode of group-relative RL is the degenerate group where all G trajectories for a prompt receive identical execution-match reward, then σG = 0, every ˆAi = 0, and the prompt contributes no gradient while still costing a full rollout and log-probability pass. We adopt DAPO’s oversample-and-replace strategy (Yu et al., 2026): 1. For each training step requiring B prompt groups per rank, we draw B × K candidate prompts from a shuffled backup pool (oversample factor K = 12), 2. We generate G = 16 completions for each candidate in a single vLLM call, 63. We compute result_reward (EX) for all completions and check heterogeneity, i.e., a group is retained if std( Rgroup ) ≥ 10 −6, and 4. We select up to B heterogeneous groups. Any unfilled slots are zero-masked (contributing no gradient). Candidate rewards are evaluated before the expensive trainer-side log-probability forward pass, so compute is spent only on informative groups. 
+
+3.6 Tool-Observation Loss Masking 
+
+A multi-turn trajectory interleaves policy-generated tokens with environment injected observations executor result sets, column profiles, and BM25 hits all of which contain raw database content. Optimizing naively over the full completion would train the policy to predict returned rows, simultaneously rewarding memorization of specific database contents and corrupting the policy gradient with tokens the model never chose. We, therefore, maintain a token-level tool mask mtool  
+
+> j
+
+that is 0 over every observation span and 1 over policy-emitted tokens, and optimize under the effective mask: 
+
+mj = mcomp  
+
+> j
+
+⊙ mtool  
+
+> j
+
+, (4) where mcomp is the standard padding or truncation mask and ⊙ denotes elementwise product. Both the importance ratio ρi(θ) and the loss are computed only at positions where mj = 1. Crucially, observation tokens remain in the attention context (they must stay visible so later turns can condition on retrieved evidence), but they contribute to neither the ratio nor the objective (Chen et al., 2023). Gradients thus flow only through the model’s own reasoning, tool invocations, and final SQL, so the policy learns when and how to inspect a database rather than to reproduce its contents, a property that also guards against train/test schema leakage. 
+
+3.7 Length Regularization 
+
+To discourage truncation noise without hard-clipping useful reasoning, we add DAPO’s Soft Overlong Punishment (Yu et al., 2026) as a continuous reward term Rlen :
+
+Rlen =
+
+
+
+0 if L ≤ Ltarget ,
+
+−α · L−Ltarget  
+
+> Lmax −Ltarget
+
+if Ltarget < L ≤ Lmax ,
+
+−α if L > L max ,
+
+(5) where L is the completion length in tokens, Ltarget = 6 ,000, Lmax = 8 ,000, and α = 0 .5 (measured in reward units). 
+
+3.8 Composite Reward Specification 
+
+Optimizing the binary BIRD EX signal alone yields sparse, frequently-degenerate groups. We therefore decompose the reward into seven verifiable components, six non-negative terms plus the length penalty, combined as a weighted sum R = ∑6 
+
+> k=0
+
+wkRk (Table 1). The reward is deliberately binary-heavy and result dominated with the execution-result term carrying the largest weight so the policy is pulled toward execution-equivalent answers, while the auxiliary terms keep advantages non-flat in groups where the result term collapses to all-zero or all-one. The weights are set heuristically rather than tuned: the execution term is assigned the dominant weight to anchor optimization on correctness, while the auxiliary terms take small values chosen only to keep group advantages non-degenerate. We did not perform a weight search, and performance is not sensitive to the precise auxiliary values as long as the execution term dominates. Result equivalence uses the official BIRD semantics (unordered set comparison on raw rows) with a per-query execution timeout of 30 seconds to avoid penalizing slow gold queries. 
+
+3.9 Inference-Time Scaling via Execution Consensus 
+
+At test time we apply a training-free execution consensus that realizes test-time scaling without any learned selector (Appendix B details the full procedure). For a question we sample N = 16 candidate trajectories at a moderate temperature ( T = 1 .2, which preserves vote diversity better than near-greedy decoding). Each candidate SQL is normalized (comment stripping, sanitization, and a SELECT -only guard) and executed against D under the same safety constraints used in training. Candidates that error or return an empty result 7Table 1: Composite reward components and their weights wk. The execution-result term Rexec dominates, while linking terms supply dense schema-grounding signal. The final column lists the already-weighted 
+
+contribution wkRk of each term (not the raw signal Rk); summing the positive upper bounds gives a maximum attainable reward of 3 .8.                                              
+
+> Component Type Signal wkWeighted range ( wkRk)
+> Rformat binary Correct output template compliance 0.2 {0,0.2}
+> Rsyntax binary Predicted SQL parses and executes 0.5 {0,0.5}
+> Rexec binary BIRD EX: row-set equality with gold 2.0 {0,2.0}
+> Rtables binary Predicted table set ⊇gold table set 0.5 {0,0.5}
+> Rcolumns continuous Jaccard(pred columns, gold columns) 0.5 [0 ,0.5]
+> Rnonempty binary Executes and returns ≥1 non-null cell 0.1 {0,0.1}
+> Rlen continuous DAPO soft overlong penalty 0.1 [−0.1,0]
+
+set are discarded. We return the representative SQL of the largest cluster, breaking ties by earliest sample index and then by shorter SQL: ˆy = arg max  
+
+> c∈C
+
+|{ i : exec( yi) = exec( c)}| , (6) where C is the set of distinct execution results and yi is the i-th candidate SQL. Because semantically distinct hallucinations tend to scatter into many small separate clusters while correct programs agree on one execution result, consensus concentrates probability mass on the robust answer and consistently improves over greedy top-1 decoding. 
+
+3.10 SFT Warm-Start via Privileged Reasoning Traces 
+
+A key finding of this work is that reinforcement fine-tuning is substantially more effective when initialized from a supervised warm-start instead of being applied directly to the instruction-tuned base model (Yao et al., 2026). The rationale is when the base policy assigns near-zero probability to correct trajectories for hard examples, RL training groups become degenerate (all-wrong), providing no gradient signal (Section 3.5). The SFT stage addresses this by expanding the model’s coverage on hard examples before RL begins. The key challenge is generating high-quality reasoning traces for the hardest examples, precisely those the base model cannot solve. 
+
+Trace generation. We mine the training set with pass@16 decoding to identify an all-wrong band . These are the questions for which every sampled trajectory fails execution match. For these hard examples, we generate teacher traces by providing the model with privileged access to the gold reference SQL as contextual guidance, prompting it to produce a step-by-step reasoning chain that arrives at the correct answer. Traces are verified by executing the final predicted SQL against the database; only traces that pass execution match are retained. To maximize coverage, we run both greedy decoding and pass@8 sampling under the privileged prompt, recovering traces for examples that greedy decoding alone misses. For easier examples (those the model already solves), we collect the model’s own correct reasoning trajectories generated without any privileged information, ensuring no distribution shift on questions within the model’s current capability. 
+
+Dataset assembly and training. The final SFT dataset merges verified teacher traces (hard band) with self-traces (easy/medium band), filtered to remove any instance where gold SQL or privileged information leaks into the reasoning chain. We fine-tune with a standard causal language modeling objective, masking the prompt tokens so loss is computed only over the reasoning and SQL tokens. The resulting SFT checkpoint serves as the initialization for GRPO training described in Section 3.4, yielding a two-stage SFT →RFT pipeline. As we show in Section 5, by ensuring non-degenerate reward variance on hard examples from the first RL step, it enables the policy gradient to improve on precisely the questions that direct RFT from the base model cannot address. 84 Experimental Setup 
+
+4.1 Dataset 
+
+We evaluate ReToolSQL on the BIRD-SQL benchmark (Li et al., 2023), a challenging text-to-SQL testbed spanning 11 large databases with complex schemas, noisy values, and domain-specific terminology. For RL training we use 6,601 question from the BIRD training split, spanning 69 databases that are disjoint from the development databases used for evaluation. Unless otherwise mentioned, we report results on the BIRD full development set (1,534 questions across 11 databases), which provides a broad measure of cross-domain generalization. The development set is annotated with three difficulty levels: Simple (860 questions), Moderate (443 questions), and Challenging (231 questions). 
+
+4.2 Evaluation Metrics Execution Accuracy (EX). The predicted SQL and gold SQL are executed against the same database, and the resulting outputs are converted to unordered sets of tuples before comparison. A prediction is correct if and only if the two sets are identical. This protocol makes EX order-invariant and consistent with the official BIRD evaluation procedure. We use a 30-second per-query execution timeout and 8 parallel workers. Following BIRD conventions, we report accuracy separately for Simple, Moderate, and Challenging questions. Gains are often non-uniform across difficulty tiers, and per-tier analysis reveals where the improvements came from. 
+
+4.3 Models and Baselines 
+
+Our primary experiments use Gemma 4 31B Instruct (Gemma Team, 2026), a dense decoder-only transformer model. For scale ablations, we additionally evaluate Gemma 4 E4B Instruct (Gemma Team, 2026) (where the “E” denotes the model’s effective parameter count), a substantially smaller variant of the same model family, under identical training configurations. We include it to test whether our method is scale-agnostic and to expose training dynamics (notably policy entropy) that are harder to observe at 31B, where entropy is already low at initialization. To isolate the contributions of tool access, RL training, and inference-time scaling, we evaluate several controlled configurations of the same architecture. The first baseline is the Gemma 4 31B Instruct model prompted with our M-Schema context and few-shot exemplars but given no tool access and no RL training. This measures the base model’s zero-shot SQL ability under our evaluation harness. The second baseline augments the same model with the full tool suite as discussed in Section 3.3. The system prompt describes all three tools and the verification-first protocol but still uses no RL-trained weights, therefore, any performance gain reflects the model’s pre-existing instruction-following capacity to call tools when prompted. Comparing these two baselines quantifies how much of the final improvement is attributable to tool availability versus learned tool proficiency. 
+
+4.4 Training Infrastructure 
+
+Training runs on a single node of 8 NVIDIA H200 GPUs. Six GPUs are dedicated to the policy model with DeepSpeed ZeRO-3 (Rajbhandari et al., 2019). A separate vLLM server on the 2 remaining H200 GPUs (tensor parallelism = 2, gpu_memory_utilization = 0 .93) handles rollout generation with a 24,576-token context window. Weight synchronization between the training policy and the vLLM server occurs after each optimizer step via a dedicated NCCL group. Key hyperparameters: learning rate 10 −6 with AdamW, warmup ratio 0.03, per-device batch size 2, gradient accumulation 16 steps (effective batch: 2 × 16 × 6 = 192 completions per optimizer step), sampling temperature 1.2, nucleus sampling p = 0 .95, gradient clipping at 1 .0, one training epoch. 
+
+# 5 Results 
+
+5.1 Main Results 
+
+Table 2 presents the main results of ReToolSQL on the BIRD-SQL development benchmark. We isolate the contribution of each training stage : the supervised warm-start (SFT), agentic RL from the base model (RFT), and the compound SFT →RFT pipeline. The compound SFT →RFT model is our strongest system, reaching 74.32% EX under single-pass decoding and 74.77% EX with execution-based self-consistency. 9Table 2: Training-stage ablation on BIRD-SQL dev (1,534 questions) under a common evaluation protocol (parallel execution, 30s timeout, set-based comparison). All rows use the tool suite. SFT = supervised fine-tuning on rejection-sampled privileged-teacher and self-traces (Section 3.10); RFT = agentic reinforcement fine-tuning via GRPO from the base model (Section 3.4); SC = execution-based self-consistency (majority vote over 16 samples). ∆ is temp-0 (greedy) EX relative to the base model.                                  
+
+> Configuration SC ∆vs. Base EX (%) pass@16 (%)
+> Gemma 4 31B Instruct (base) ✗—71.19 76.9 + SFT ✗+1.50 72.69 81.29
+> + RFT (from base) ✗+2.47 73.66 77.2 + RFT + SC ✓+2.93 74.12 —
+> + SFT →RFT ✗+3.13 74.32 81.94 + SFT →RFT + SC ✓+3.58 74.77 —
+
+SFT alone. The supervised warm-start (Section 3.10) lifts temp-0 accuracy to 72.69% (+1.50%) and raises pass@16 coverage from 76.9% to 81.29% . The disproportionate pass@16 gain is the intended effect of the pipeline: the privileged-teacher traces inject verified solutions for hard questions the base policy could not reach at any sampling budget. Thus, broadening the pool of questions the model can solve with at least one correct query among its 16 samples. 
+
+Agentic RL alone. Reinforcement fine-tuning from the base model reaches 73.66% (74.12% with self-consistency). RL improves temp-0 accuracy more than SFT (2.47% vs. 1.50%) but leaves pass@16 coverage essentially unchanged (77.2%). This shows that RL sharpens the policy toward programs it can already sometimes find, teaching it when to verify a draft query, what evidence to retrieve, and how to revise faulty SQL, rather than expanding coverage of previously unsolved questions. 
+
+SFT →RFT (compound pipeline). Initializing RL from the SFT checkpoint combines both effects and yields our best model giving EX of 74.32% temp-0 and 74.77% with self-consistency, with pass@16 held at 81.94%. Relative to RL from the base model this is +0.66% temp-0 and +0.65% self-consistency at parity-or-better pass@16. Crucially, agentic RL preserves the SFT-expanded coverage while converting it into higher single-pass accuracy. The warm-start does not merely provide an easier optimization start but raises the reachable temp-0 ceiling. This complementarity (SFT widens capability on hard examples; RL hones single-pass reliability) mirrors the supervised-then-reinforced findings of Arctic-Text2SQL-R1 (Yao et al., 2026). 
+
+5.2 BIRD Dev Leaderboard Comparison 
+
+Table 3 positions ReToolSQL against the top entries on the BIRD single-model development leaderboard (public entries as of Aug26 2026). In our experiments, the compound SFT →RFT model achieves 74.77% with self-consistency, ahead of Gemini-SQL2 (74.12%), Gemini-SQL (Google, 73.27%), Q-SQL (AWS, 72.99%), and Arctic-Text2SQL-R1 (Snowflake, 72.20%), all of which rely on multi-sample voting or MoE architectures. Even single-pass, the SFT →RFT model (74.32%) and RFT-only with self-consistency (74.12%) are competitive with the strongest published entries. Notably, ReToolSQL attains the top position with a single dense 31B model and simple execution-based self-consistency, without an external retriever, a learned selector, or a multi-component pipeline. 
+
+# 6 Analysis 
+
+6.1 Component Isolation 
+
+To separate the contributions of RL training and tool access, we factor the two dimensions in Table 4. Each row represents the training condition (no RL vs. agentic RL) and each column represents the inference condition (no tools vs. tools available). The 2 × 2 factoring reveals a clear interaction effect. Tool access alone (without RL) improves the base model by a modest 2.02%, while RL training without tools yields only 0.45%. When both the factors are present, 10 Table 3: BIRD-SQL dev leaderboard (single-model track, 1,534 questions, Aug 26 2026). SC indicates self-consistency. Shaded rows show our experiments and contributions. ‡pass@16 majority vote.                                                                                 
+
+> Rank System Params SC EX (%)
+> 1ReToolSQL (SFT →RFT) + SC ‡31B Many 74.77
+> 2ReToolSQL (SFT →RFT) 31B —74.32
+> 3Gemini-SQL2 UNK Many 74.12 3ReToolSQL (RFT) + SC ‡31B Many 74.12
+> 4SiriusAI-Text2SQL (Tencent) 27B Many 73.70 5ReToolSQL (RFT) 31B —73.66
+> 6Gemini-SQL (Google) UNK Many 73.27 7Q-SQL (AWS) 30B-3B-MoE Many 72.99 8Sophon-Text2SQL (ByteDance) 32B Many 72.43 9Arctic-Text2SQL-R1 (Snowflake) 32B Few 72.20 10 Spektr-SQL (Amazon Ads) 30B-3B-MoE Few 72.10 11 Gemma 4 31B Instruct + Tool (no RL) 31B —71.71
+> 11 ShepherdSQL (JD) 30B-3B-MoE Many 71.71 12 Arctic-Text2SQL-R1-14B 14B Few 71.40 13 FTEL-Text2SQL (FPT) 30B-3B-MoE Few 71.19 14 Jiayin-Pangu-14B 14B Many 71.10 15 Databricks RLVR 32B 32B —70.80 16 Arctic-Text2SQL-R1-7B 7B Few 70.70 24 Gemma 4 31B Instruct baseline 31B —69.69
+
+Table 4: Component isolation: RL training × tool access on BIRD-SQL dev (1,534 questions). The interaction effect (+1.5% beyond additive components) confirms that agentic RL specifically teaches the model to leverage tools effectively.                 
+
+> Inference-Time Tools Training No Tools + Tools Tool ∆No RL (Gemma 4 31B Instruct) 69.69% 71.71% +2.02 Agentic RL ( ReToolSQL )70.14% 73.66% +3.52 RL ∆+0.45 +1.95 + Self-Consistency (SC@16) —74.12% +4.43 vs. base
+
+the gain is 3.97% over the base, which exceeds the sum of individual contributions by 1.50%. Viewed from the tool-calling column, RL training nearly doubles the benefit of tool access (3.52% vs. 2.02%), confirming that agentic RL specifically teaches the model on how to leverage execution feedback rather than merely making tools available. 
+
+6.2 Pass@k and Sampling Analysis 
+
+We analyze the relationship between sampling budget and accuracy using the pass@ k metric (fraction of questions where at least one of k samples is correct). For ReToolSQL , pass@1 (greedy) achieves 73.66%, self-consistency over 16 samples reaches 74.12%, and the pass@16 upper bound (the fraction of questions for which at least one of the 16 sampled trajectories is execution-correct, i.e., the accuracy attainable by a perfect candidate selector) is approximately 77.2%. The gap between self-consistency and this upper bound is 3.08% which reveals a substantial unrealized potential. This showcases that on these questions at least one of the 16 samples produces the correct SQL, but majority voting selects a wrong cluster. This suggests that improved selection mechanisms, such as learned verifiers or reward-model reranking, could unlock further gains without additional training. This will be addressed in our future work. The modest self-consistency improvement (+0.46%) is explained by the model’s high per-sample consistency. The 31B policy produces only 3.37 unique SQL strings per 16 candidates on average. When the model can solve a query, the correct answer already dominates the sample set and when it cannot most candidates cluster 11 Table 5: Scale comparison: Gemma 4 E4B Instruct vs. Gemma 4 31B Instruct. SC = self-consistency (pass@16).             
+
+> Model Base EX RL EX ∆RL SC EX
+> Gemma 4 E4B 65.12% 68.45% +3.33% 70.73% Gemma 4 (31B) 71.71% 73.66% +1.95% 74.12% Base EX is with tool access; ∆RL is the gain from agentic RL training.
+
+into a single incorrect formulation. This behavior is different than the smaller models (Section 6.3), which exhibit greater diversity and correspondingly larger self-consistency gains. Although, the overall accuracy still remains lesser than the larger capacity model. 
+
+6.3 Ablation: Model Scale 
+
+To showcase that the presented idea is model and scale agnostic, we replicate the full training setup on Gemma 4 E4B Instruct (Gemma Team (2026)) using identical reward functions, tool access, DAPO dynamic sampling, and beta scheduling to study scale effects (Table 5). Under greedy decoding, both model sizes improve after agentic RL training. Gemma 4 E4B Instruct rises from 65.12% to 68.45%, a gain of 3.33%, while the 31B model rises from 71.71% to 73.66%, a gain of 1.95%, both with tool access. The smaller model shows a somewhat larger marginal gain. One likely explanation is that the 31B model already starts from a stronger base policy, leaving less room for RL to further improve execution accuracy. We see a similar pattern under inference-time sampling. E4B produces a broader set of candidates, with 6.31 unique SQL strings per 16 samples compared with 3.37 for the 31B model, and this gives it more room to benefit from aggregation. Its pass@ k gain from pass@1 to pass@16 is 16.15%, compared with 6.28%for the 31B model. Taken together, these results show that the smaller model improves under both RL training and inference-time aggregation, although the 31B model remains stronger in absolute terms and is therefore used as the deployed configuration. 
+
+6.4 Ablation: Entropy Preservation via Beta Scheduling 
+
+We compare two Gemma 4 E4B Instruct training configurations to study the effect of KL regularization on learning dynamics: 1. No KL penalty ( β = 0 throughout training). 2. Decaying beta schedule: β = 0 .005 for steps 0–40, β = 0 .001 for steps 40–80, and β = 0 from step 80 onward. The beta schedule yields 2.09% better greedy accuracy and 1.96% better self-consistency accuracy. Critically, it preserves entropy approximately 2 × longer, as we see from Figure 5, where the entropy declines from 0.40 to 0.20 under the schedule, versus 0.40 to 0.10 without it with β = 0 throughout training as shown in Figure 4. This is consistent with the observation that identifies policy entropy as a central determinant of sustained improvement in RL for reasoning models (Cui et al., 2025). Also, it can be seen that in the No KL penalty run, entropy collapses within 40 training steps and accuracy stalls, whereas, in the decaying beta-schedule run slower entropy decline permits sustained learning past step 100. At 31B scale, entropy is already low at initialization (0.17 vs. 0.40 for E4B) and declines further during training (reaching 0.02–0.08). The beta schedule still produces the best trajectory, monotonic improvement through training, but the limited starting entropy partly explains why RL gains are smaller at 31B. 
+
+6.5 Training Dynamics DAPO Dynamic Sampling. The trainer uses oversampling to find heterogeneous prompt groups (groups where not all 16 samples produce the same reward). At 31B scale with 192 groups attempted per step, typically only 1–15 groups exhibit reward variance, yielding fill rates of 8–67%. This reflects the model’s high per-sample consistency: when it can solve a query, all 16 samples tend to be correct; when it cannot, most fail identically. E4B exhibits higher heterogeneity, enabling the policy gradient to receive signal from more diverse training groups per step. 12 Table 6: Accuracy by difficulty level for key configurations. All rows use the same difficulty annotation (860/443/231 split).                   
+
+> Configuration Simple Moderate Challenging
+> Gemma 4 31B Instruct (no tools) 69.30% 67.72% 74.89%
+> ReToolSQL (no tools) 70.23% 68.85% 72.29%
+> ReToolSQL (tools) 73.60% 72.91% 75.32%
+> ReToolSQL + SC@16 73.95% 73.81% 75.32%
+
+6.6 Difficulty-Stratified Analysis 
+
+Table 6 reveals that RL training progressively improves Moderate and Challenging tiers. The base model without tools shows a striking pattern where Challenging accuracy (74.89%) exceeds Simple (69.30%), possibly because challenging questions have richer hints that aid the model. After agentic RL training with tools, 
+
+ReToolSQL achieves more balanced performance across all tiers with substantial gains on Moderate (5.19% vs. base) indicating that GRPO teaches the model when tools are helpful versus when direct reasoning suffices. The Challenging tier maintains the highest absolute accuracy (75.32%) for the RL model, consistent with tool-augmented verification being most valuable for complex multi-step queries. 
+
+# 7 Conclusion 
+
+We present ReToolSQL , a text-to-SQL system that trains a single dense 31B language model using tool-augmented reinforcement learning. During training, the model interacts directly with database tools inside the RL environment, including a sandboxed SQL executor, a column profiler, and a BM25-based value searcher. By rewarding effective tool use, the model learns a verification-first policy where it drafts SQL queries, executes them, diagnoses errors or mismatches, and repairs the query within a unified propose–verify–repair loop. On the BIRD-SQL development benchmark, agentic RL from the base model achieves 73.66% execution accuracy under single-pass decoding and 74.12% with execution-based self-consistency. Further adding a supervised warm-start on rejection-sampled reasoning traces (the SFT →RFT pipeline) raises this to 74.32% 
+
+single-pass and 74.77% with self-consistency (our strongest configuration), showing that agentic reinforcement learning can yield strong performance while preserving a relatively simple serving architecture. More broadly, the paper highlights the following practical lessons: 1. Robust text-to-SQL depends on training objectives that explicitly teach models to use execution feedback for iterative correction. Tool access alone provides modest gains (+2%) and with RL training over tool-use trajectories provides substantially more (+4%). 2. Entropy preservation is critical for RL at scale. Beta scheduling maintains exploration capacity, producing sustained learning even when the base model is already strong. 3. Supervised warm-start and RL act on complementary axes. A supervised stage on execution-verified privileged-teacher traces expands pass@ k coverage of hard questions, while agentic RL sharpens single-pass accuracy; composing them (SFT →RFT) outperforms either stage alone. From an architectural standpoint, ReToolSQL demonstrates that a single-policy system can compete with multi-component pipelines. The model serves both generation and verification without an external retriever, a learned selector, or mixture-of-experts routing. This simplicity makes the system suitable for deployment on commodity hardware, with inference requiring only a single GPU for the 31B model under standard serving frameworks. 
+
+Acknowledgements 
+
+We thank Vijay Parthasarathy, Chul Lee, Rajaram Kumar, Yateen Dhareshwar, Bharath Subramanian, Venkat Vemuri, Xiaonan Wang, Ganapathy Mani, Soham Palande, and other members of the JPMC AI Technology team for their collaboration. 
+
+# References 
+
+Olena Bogdanov, Yeunji Jung, Chandra Dhir, Pareekshitreddy Gaddam, Saurabh Jain, Lakshmi Tumati, Vijay Parthasarathy, and Anup Shirgaonkar. AgentNLQ: A general-purpose agent for natural language to 13 sql. arXiv preprint arXiv:2605.19010 , 2026. Baian Chen, Chang Shu, Ehsan Shareghi, Nigel Collier, Karthik Narasimhan, and Shunyu Yao. FireAct: Toward language agent fine-tuning. arXiv preprint arXiv:2310.05915 , 2023. Ganqu Cui, Yuchen Zhang, Jiacheng Chen, Lifan Yuan, Zhi Wang, Yuxin Zuo, Haozhan Li, Yuchen Fan, Huayu Chen, Weize Chen, et al. The entropy mechanism of reinforcement learning for reasoning language models, 2025. Jiazhan Feng, Shijue Huang, Xingwei Qu, Ge Zhang, Yujia Qin, Baoquan Zhong, Chengquan Jiang, Jinxin Chi, and Wanjun Zhong. Retool: Reinforcement learning for strategic tool use in llms. In International Conference on Learning Representations , volume 2026, pages 37909–37926, 2026. Gemma Team. Gemma 4 technical report, 2026. URL https://arxiv.org/abs/2607.02770 .Daya Guo, Dejian Yang, et al. DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning. 
+
+Nature , 645(8081):633–638, 2025. ISSN 1476-4687. doi: 10.1038/s41586-025-09422-z. URL http://dx. doi.org/10.1038/s41586-025-09422-z .Jinyang Li, Binyuan Hui, Ge Qu, Jiaxi Yang, Binhua Li, Bowen Li, Bailin Wang, Bowen Qin, Ruiying Geng, Nan Huo, et al. Can LLM already serve as a database interface? a big bench for large-scale database grounded text-to-SQLs. Advances in Neural Information Processing Systems , 36:42330–42357, 2023. Yifu Liu, Yin Zhu, Yingqi Gao, Zhiling Luo, Xiaoxia Li, Xiaorong Shi, Yuntao Hong, Jinyang Gao, Yu Li, Bolin Ding, et al. XiYan-SQL: A novel multi-generator framework for text-to-SQL. IEEE Transactions on Knowledge and Data Engineering , 2026. Mohammadreza Pourreza and Davood Rafiei. DIN-SQL: Decomposed in-context learning of text-to-SQL with self-correction. Advances in neural information processing systems , 36:36339–36348, 2023. Mohammadreza Pourreza, Hailong Li, Ruoxi Sun, Yeounoh Chung, Shayan Talaei, Gaurav Tarlok Kakkar, Yu Gan, Amin Saberi, Fatma Ozcan, and Sercan Arik. CHASE-SQL: Multi-path reasoning and preference optimized candidate selection in text-to-SQL. In International Conference on Learning Representations ,volume 2025, pages 60385–60415, 2025. Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He. ZeRO: Memory optimization towards training a trillion parameter models. arXiv preprint arXiv:1910.02054 , 2019. Stephen Robertson and Hugo Zaragoza. The probabilistic relevance framework: BM25 and beyond. Founda-tions and trends® in information retrieval , 4(1-2):1–174, 2009. Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Shayan Talaei, Mohammadreza Pourreza, Yu-Chen Chang, Azalia Mirhoseini, and Amin Saberi. CHESS: Contextual harnessing for efficient SQL synthesis. arXiv preprint arXiv:2405.16755 , 2024. Pengfei Wang, Baolin Sun, Xuemei Dong, Yaxun Dai, Hongwei Yuan, Mengdie Chu, Yingqi Gao, Xiang Qi, Peng Zhang, and Ying Yan. Agentar-Scale-SQL: Advancing text-to-SQL through orchestrated test-time scaling. arXiv preprint arXiv:2509.24403 , 2025. Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. Self-consistency improves chain of thought reasoning in language models. arXiv preprint arXiv:2203.11171 , 2022. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. ReAct: Syn-ergizing reasoning and acting in language models. In International Conference on Learning Representations (ICLR) , 2023. Zhewei Yao, Guoheng Sun, Łukasz Borchmann, Zheyu Shen, Minghang Deng, Bohan Zhai, Hao Zhang, Ang Li, and Yuxiong He. Arctic-Text2SQL-R1: Simple rewards, strong reasoning in text-to-SQL, 2026. Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al. DAPO: An open-source LLM reinforcement learning system at scale. 
+
+Advances in Neural Information Processing Systems , 38:113222–113244, 2026. Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga, Dongxu Wang, Zifan Li, James Ma, Irene Li, Qingning Yao, Shanelle Roman, et al. Spider: A large-scale human-labeled dataset for complex and cross-domain semantic parsing and text-to-SQL task. In Proceedings of the 2018 conference on empirical methods in natural language processing , pages 3911–3921, 2018. 14 Appendix A Worked Example: Multi-Turn Tool Trajectory 
+
+Figure 3 shows a representative trajectory on the california_schools database. Each tool call ends the turn and is answered by an environment observation before the next turn begins. The trajectory illustrates the three core capabilities learned through RL: (1) execution-triggered error detection, (2) targeted evidence retrieval, and (3) structured repair with safety guards. 
+
+Multi-turn agentic trajectory on california_schools (abbreviated) Turn 1 (draft + execute) 
+
+ExpectedOutputColumns = [max_rate]. CandidateSQL drafts the ratio; verify execution first. 
+
+call: sqlite_query{db_id: california_schools, sql: SELECT MAX(CAST(f."Free Meal Count (K-12)" AS REAL) / f."Enrollment (K-12)") FROM frpm f JOIN schools s ON f.CDSCode=s.CDSCode WHERE f."County Name"=’alameda’ AND s.Charter=1} 
+
+→ {"columns":["max_rate"], "rows":[], "row_count":0} — empty! 
+
+Turn 2 (repair the literal) 
+
+Zero rows returned; the county literal may not match stored values. 
+
+call: bm25_search_sqlite{db_id: california_schools, table: frpm, column: "County Name", query: alameda, top_k: 5} 
+
+→ [{"value":"Alameda", "bm25":8.71}, {"value":"Alameda County", "bm25":5.2}] 
+
+Turn 3 (check denominator scale/nulls) 
+
+Guard division: inspect Enrollment column for nulls and zeros. 
+
+call: sqlite_peek{db_id: california_schools, table: frpm, columns: ["Enrollment (K-12)"], limit: 20} 
+
+→ {"Enrollment (K-12)": {"type":"REAL", "nulls":1037, "min":1.0, "max":6800.0}} 
+
+Turn 4 (finalize) 
+
+Use ‘Alameda’; cast to REAL; require Enrollment > 0. 
+
+<final_answer> 
+
+SELECT MAX(CAST(f."Free Meal Count (K-12)" AS REAL)/f."Enrollment (K-12)") FROM frpm f JOIN schools s ON f.CDSCode=s.CDSCode WHERE f."County Name"=’Alameda’ AND s.Charter=1 AND f."Enrollment (K-12)">0; 
+
+</final_answer> 
+
+Figure 3: A representative ReToolSQL trajectory. The policy drafts SQL, detects an empty result via execution, retrieves the correct literal with BM25 search, profiles the denominator column to discover nulls, and emits a guarded final query. 
+
+# Appendix B Execution-Based Self-Consistency 
+
+We use execution-based self-consistency as a training-free inference procedure. For a question, schema, and tool set, the policy samples 16 candidate trajectories at temperature 1.2 and extracts the final SQL from each. Each candidate is validated under the same safety constraints used during training, executed against the target database, and mapped to its result set. Candidates that fail to execute or return an empty result are discarded. The remaining candidates are clustered by result-set equality, and the system returns the representative SQL from the largest cluster, breaking ties by earliest sample index and then by shorter SQL length. This procedure improves robustness by favoring semantically stable answers over isolated generations. Because semantically distinct hallucinations tend to produce unique result sets that scatter across singleton clusters, 15 while correct formulations converge on a shared output, the majority-vote mechanism has an inherent bias toward correctness. 
+
+# Appendix C Tool Definitions 
+
+This appendix specifies the concrete API contract for each tool: full call signatures, parameter names and defaults, the resource limits enforced by the sandbox, and the exact structure returned to the policy (Table 7). Table 7: Read-only database tool API (complementing the conceptual descriptions in Section 3.3). All three tools enforce read-only access, preventing schema modifications or data writes during both training and inference.       
+
+> Tool & signature Enforced limits Returns
+> sqlite_query (db_id, sql, max_return_rows=100) SELECT /WITH only; VM step limit 15M; busy timeout 5 s; row cap Columns, rows, row count, and truncation flag; or a structured error message
+> sqlite_peek (db_id, table, columns, limit=10, where=None)
+> Profile scan limited to 5,000 rows Per column: declared type, null/distinct counts, value ranges, character-class summaries, top-kvalues with frequencies, and representative samples
+> bm25_search_sqlite (db_id, table, column, query, top_k=10, where=None)
+> Read-only; case-insensitive by default 2×top_k results (BM25-ranked plus regex-matched) with scores
+
+# Appendix D Entropy Dynamics without KL Regularization (Gemma E4B model) 
+
+Figure 4 traces execution accuracy, self-consistency (SC@16), and policy entropy across training checkpoints for the Gemma 4 E4B run trained without a KL penalty ( β = 0). Policy entropy falls sharply from approximately 0 .40 to 0 .10 within the first 40 steps and remains low thereafter. Once entropy collapses, greedy and self-consistency accuracy plateau, and pass@ k headroom is in fact largest at the earliest checkpoints instead of the latest. This is precisely the failure mode the decaying beta schedule of Section 6.4 is designed to mitigate: retaining a small KL penalty early in training preserves exploration long enough for accuracy to keep improving. In contrast, Figure 5 shows the same E4B configuration trained with the decaying beta schedule ( β = 0 .005 for steps 0–40, β = 0 .001 for steps 40–80, and β = 0 from step 80 onward). The early KL penalty slows the entropy decline and prevents the premature collapse of the no-KL run, keeping the policy exploratory; as a result, execution accuracy and self-consistency continue to improve well past the checkpoint at which the no-KL run plateaus. 16 Entropy Collapse: Accuracy, SC, and Entropy              
+
+> 61 65 69 74 78 82 -0.05 0.08 0.21 0.34 0.47
+> Accuracy (%) Entropy
+> 020 40 60 80 100 120 140 160 180
+> Greedy pass@16 SC Entropy
+
+Figure 4: Entropy collapse in the Gemma 4 E4B no-KL run ( β = 0): execution accuracy, self-consistency (SC@16), and policy entropy versus training checkpoint (shared scale). Entropy collapses within ∼40 steps, after which accuracy plateaus while pass@ k headroom shrinks. Beta Schedule: Accuracy, SC, and Entropy                     
+
+> 63 67 71 74 78 82 -0.05 0.08 0.21 0.34 0.47
+> Accuracy (%) Entropy
+> 010 20 30 40 50 60 70 80 90 100 110 120 130 140 150 160
+> Greedy pass@16 SC Entropy
+
+Figure 5: Gemma 4 E4B trained with the decaying beta schedule ( β = 0 .005 → 0.001 → 0 at steps 0/40/80): execution accuracy, self-consistency (SC@16), and policy entropy versus training checkpoint (shared scale). Retaining a small KL penalty early preserves entropy, avoiding the collapse of Figure 4 and sustaining learning. 17

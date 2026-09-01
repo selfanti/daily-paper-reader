@@ -1,0 +1,754 @@
+Title: ContextPilot: Teaching Agents for Proactive Context Management via Fine-grained RL
+
+URL Source: https://arxiv.org/pdf/2608.28476v1
+
+Published Time: Mon, 31 Aug 2026 01:13:00 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+ContextPilot 
+
+# ContextPilot: Teaching Agents for Proactive Context Management via Fine-grained RL 
+
+Zhuoshi Pan 1,2 ♣, Qizhi Pei 3 ♣, Junru Lu 2, Honglin Lin 3, H. Vicky Zhao 1 ♡, Di Yin 2, Xing Sun 2 ♡
+
+> 1
+
+Tsinghua University 2Tencent Youtu Lab 3Shanghai AI Lab 
+
+Long-horizon agentic tasks require large language models (LLMs) to iteratively retrieve, integrate, and maintain dispersed information across multi-turn interactions, but preserving all interaction histories leads to a continuously growing working context. Recent proactive context management methods allow models to edit their own working context with specialized tools, yet they still face 
+
+three key limitations : (1) a limited toolset restricted to search, deletion, and summarization, with no support for global planning, long-term memory, and adaptive compression; (2) inefficient exploration 
+
+that treats context management actions uniformly despite their heterogeneous impacts on final outcomes; and (3) coarse-grained credit assignment that assigns the final trajectory-level reward to all intermediate context editing actions during RL. To bridge these gaps, we introduce ContextPilot ,a proactive context management framework for long-horizon agentic reasoning. Our approach systematically augments the toolset with planning, long-term memory, and soft context offloading tools. We further propose an RL method tailored for context management, which uses context and entropy variation to identify critical editing decisions for branch sampling and estimates action-level advantages from all branched trajectories that pass through the corresponding context editing action. Experiments on long-context QA and deep search tasks show that ContextPilot achieves stronger performance with a more compact working context, consistently outperforming existing baselines across various base models and benchmarks. 
+
+Project: https://tencent.github.io/ContextPilot 
+
+Code: https://github.com/Tencent/ContextPilot 
+
+Model: https://huggingface.co/collections/panzs19/contextpilot 
+
+Correspondence: ♣ Equal Contribution; ♡ Corresponding Authors. 
+
+# 1 Introduction 
+
+Large language models (LLMs) have shown strong reasoning capabilities on information-intensive tasks, including long-context QA [1, 2] and deep search [3, 4]. These tasks require models to identify key evidence from long contexts, integrate complex relations, and, when necessary, seek information through multi-turn tool interactions [5]. Prevailing agentic paradigms like ReAct [6] typically append prior reasoning, tool calls and tool responses to the context as the interaction proceeds, resulting in a rapidly growing context. Prior studies [7–10] address context growth through human-designed workflows , where truncation or summarization is triggered by fixed rules. Although straightforward, they give the model no control over its own context, and are difficult to adapt to different scenarios [11]. To alleviate this, recent works [11–13] propose proactive context management , allowing models to spontaneously manage their working context through context editing tools. Despite its flexibility, this paradigm still faces three key limitations. 
+
+First , existing context management toolsets, which typically consist of search, deletion, and summariza-tion, are insufficient for managing the context of long-horizon tasks. Effective context management requires more than simply removing or summarizing content: models also need to build long-term memory across scattered fragments [14, 15], maintain structured entity-event episodes [16], and plan globally before taking subsequent actions [6, 17]. Second , although recent studies [11, 18] have applied RL fine-tuning to help mod-els further familiarize with context editing tools, their training procedures are not specifically adapted for context 
+
+1arXiv:2608.28476v1 [cs.CL] 28 Aug 2026 ContextPilot (b) Context-Aware Partial Rollout (a) Context Management Tool Design 
+
+ContextPilot 
+
+Interaction 
+
+History 
+
+Planning  Retrieval 
+
+Memory  Offloading 
+
+> plan, analyze
+> search, readChunk
+> note,memorize updateNote
+> compress, del summarize
+
+## …
+
+## …
+
+> Tool Call
+> Observation
+> (Lengthy)
+> User Query
+> Observation
+> Tool Call
+
+Compact 
+
+Context 
+
+## …
+
+> User Query
+> Memory
+> Tool Call
+> Observation
+> (Compressed)
+> Observation
+> Tool Call
+> (Deleted)
+
+Long-Term Memory  Soft Context Offloading 
+
+## …
+
+> Key Entity Extraction
+> Summarization
+> Cross-chunk Relevance
+> External Storage
+> Summarization
+> or Compression (LLMLingua-2)
+
+## … …Context Variation ( )  
+
+> Entropy Increase ( )
+
+Impact Score 
+
+> High Impact Action
+
+(c) Fine-Grained Credit Assignment 
+
+> Terminated Trajectory
+
+## … …
+
+## … 
+
+> Trajectory Snapshots Reward Aggregation
+
+## …
+
+## ……
+
+Figure 1. Overview of ContextPilot : (a) Extending the context management tools to support planning, long-term memory, and soft context offloading; (b) Improved RL training algorithm with context-aware partial rollout and (c) fine-grained snapshot-level credit assignment. 
+
+management . Unlike common tools, context editing tools can substantially overwrite the interaction history and exert a larger influence on subsequent steps [7]. As shown in Figure 2, trajectory branches originating from different context management operations exhibit substantially different variance in their final success rates, indicating that certain operations are more sensitive than others. Unfortunately, traditional RL relies on trajectory-level rollouts [19], limiting adaptive exploration for various context management decisions. 
+
+Third , existing training procedures directly assign the final trajectory-level reward to all intermediate context management actions, neglecting fine-grained credit assignment [20]. To address these challenges, we propose ContextPilot , a proactive context management framework for long-horizon agentic reasoning. Our contributions are threefold: (1) On the tool side, our framework extends the existing context management toolset with planning, long-term memory, and soft context offloading tools, enabling the agent to better control its context across long-horizon interactions. (2) On the training 
+
+side, we design an RL training method tailored to context management. We propose context-aware partial rollout , which uses context and entropy variation to identify critical context management actions for branch sampling. For credit assignment, we incorporate rewards from all subsequent branches to estimate the advantage of an intermediate context management action, yielding a more fine-grained reward signal . (3) On the evaluation side, whereas prior work mostly focuses on long-context QA, we extend the evaluation to deep search tasks. Experiments on both tasks show that ContextPilot maintains a more compact context while achieving superior performance, bringing consistent gains and surpassing existing baselines. 
+
+# 2 Related Work 
+
+2.1 Passive Context Management 
+
+To handle growing interaction histories, existing methods typically manage historical context through predefined rules, such as truncating or summarizing messages once the context exceeds a length threshold. Some methods [8, 10, 21, 22] are training-free and rely on fixed workflows or external modules to summarize, compress, or extract key information from historical context. Another line of work [7, 9] incorporates context folding into RL training, enabling models to summarize context and resume reasoning from the compressed state. Although these methods reduce context length, the model remains a passive recipient of rule-managed 2ContextPilot 
+
+context rather than an active manager that can decide when and how to manage its working context. 
+
+2.2 Agentic Proactive Context Management 
+
+Beyond the passive paradigm, recent work equips agents with context management tools, allowing agents to actively decide when and how to edit their working context. MemGPT [23] is an early framework that treats an agent’s memory as virtual memory and manages it through tool calls. Yu et al. [18] and Xu et al. [15] propose memory editing tools, training the agent to control its memory without an external controller. Sculptor [12], StateLM [11], and MemAct [24] provide models with context editing tools such as fragmentation, search, summarization, and deletion, and fine-tune models to use these tools. AgentFold [13] uses SFT to learn multi-scale folding operations that can condense the history. Despite demonstrating the promise of proactive context management, existing methods are still constrained by a narrow set of context management tools, and their training procedures fail to consider the varying impact of these tools. In contrast, ContextPilot 
+
+improves proactive context management by enriching tool design and refining training paradigms. 
+
+# 3 Preliminary 
+
+Before introducing ContextPilot , we first revisit the concepts of context management in agentic reasoning and conduct a pilot study. 
+
+3.1 From Passive to Proactive: Context Management in Agentic Reasoning 
+
+In prevailing agentic reasoning paradigms like ReAct [6], the agent can perform reasoning and invoke tools to interact with an environment E. Formally, given the user query c0 = q, at the i-th step, the LLM πθ
+
+generates thought ti and tool call ai based on the current context ci:
+
+(ti, ai) ∼ πθ (· | ci). (1) In the next step, the generated thought ti and tool call ai, together with the environment feedback oi ∼ E (· | 
+
+ai), are appended to the context ci+1 = ci ⊕ (ti, ai, oi). The model then iteratively continues this cycle until accomplishing the task. As agentic reasoning proceeds, the context grows monotonically. To mitigate the context overload, proactive context management enables models to manipulate their context through specific tools, such as search, retrieval, deletion, and summarization. Specifically, let A denote the set of available actions, and Acm ⊆ A denote the subset of context management actions. Among them, we distinguish context editing actions as Ace ⊆ A cm , which directly modify the interaction history. At step i, when the model invokes a context management action acm  
+
+> i
+
+∈ A cm , its context is updated by a context transition function F :
+
+ci+1 = F (ci, acm  
+
+> i
+
+) ⊕ (ti, ai, oi). (2) Under this paradigm, training solely on the final trajectory is inadequate, as context editing operations (i.e., ace  
+
+> i
+
+∈ A ce ) will modify historical messages. To address this, existing studies [11, 12] adopt trajectory snapshots and token-level loss masking . Suppose a trajectory T contains K tool invocations {ai}Ki=1, of which M
+
+are context editing operations. These context editing operations segment the multi-step trajectory into M + 1independent trajectory snapshots S = {S1, S2, . . . , SM+1}. Each snapshot is then treated as an independent training instance, ensuring that every intermediate context state is incorporated in training. Furthermore, token-level loss masking is applied to exclude the loss of outputs that have already appeared in previous trajectory snapshots. This prevents redundant optimization over earlier tool calls and improves training stability and efficiency. 
+
+3.2 Pilot Study 
+
+3ContextPilot                                               
+
+> Correct Answer Weak Context Management Q: Name the reviews editor of a mid-20th-century university journal, given an article they wrote and their Dec-2023 role.
+> Gold: Robert D. McBain
+> Answer: Robert D. McBain ✓
+> Tool chain: analyze →index
+> →search ×3→readChunk →search ×2→readChunk → · · · →
+> readChunk →search ×2→readChunk →finish
+> Wrong Answer Strong Context Management Q: Find the guitarist who, in 70s high school, founded a band known for conscious multilingual music, and died in 2003.
+> Gold: Frank Leepa
+> Answer: Ty Longley ✗
+> Tool chain: analyze →index
+> →search →readChunk →note →delete ×2→search ×2→
+> readChunk →updateNote →delete ×2→readNote →finish
+
+Figure 3. Case study on the mismatch between task correctness and context management quality. Cases are sampled from the traces of StateLM-8B [11] on BrowseComp+ [26]. Questions are condensed to save space. 0.5 1.0 1.5 2.0 2.5 3.0 Standard Deviation of Accuracy finish buildIndex readMemory analyzeText plan summarizeContext memorize searchContext deleteContext readChunk 
+
+> 0.74 1.48 1.65 1.81 1.95 2.13 2.33 2.52 2.70 2.79
+
+Figure 2. Impact of different tools on final outcomes: for each tool, we branch from it, sample 10 continuation rollouts, and report the standard deviation of their task success rates. Results are evaluated with Qwen3-8B on NovelQA [25]. 
+
+To better understand the impact of context manage-ment tools, we branch from context management actions in existing trajectories, sample continuation trajectories, and compute the standard deviation of their final success rates. As shown in Figure 2, this variance differs substantially across actions, suggest-ing that certain context management actions have a larger impact on the final outcomes and should receive more exploration budget. For credit assign-ment, Figure 3 shows that final correctness can be misaligned with context management quality: acorrect trajectory may rely on repeated retrieval, whereas an incorrect one may still perform reason-able management. Therefore, directly assigning the final trajectory-level reward to all intermediate snap-shots may reinforce inefficient context management behaviors and penalize reasonable decisions, moti-vating fine-grained action-level rewards. 
+
+# 4 Methodology 
+
+In this section, we elaborate on the methodology of ContextPilot . We first describe the design of the extended toolset and SFT data construction, followed by the reinforcement learning recipe. 
+
+4.1 Context Management Toolset Design 
+
+ContextPilot builds upon the basic toolset of StateLM [11] and introduces additional tools for planning, long-term memory and soft context offloading , as detailed in Table 1. To support long-term memory, we introduce memorize , which extracts structured information about entities, timestamps, and event episodes, and builds edges among related memory items. The model can later call readMemory to retrieve a target memory together with its neighbors. For context offloading, we introduce soft-deletion tools, including 
+
+summarizeContext , compressContext , and foldHistory . foldHistory can condense historical messages into keywords and a summary, which can be recovered by calling searchContext with keyword queries. We treat context offloading, memory-writing, and memory-updating tools as context editing tools, and segment trajectories into snapshots at these operations because they modify the interaction history. Through these extensions, ContextPilot provides a comprehensive toolset for context management, empowering models to effectively manage their working context in long-horizon tasks. 4ContextPilot                    
+
+> Category Tool Name Function Description
+> Perception & Planning
+> analyzeText Calculate context length.
+> checkBudget Check remaining token budget.
+> plan Propose a concise plan. Information Retrieval
+> buildIndex Build a searchable index.
+> searchContext Search for relevant content.
+> readChunk Load a specific context chunk.
+> readMultiChunks Batch load multiple context chunks. Memory Management
+> note Record key information into a note.
+> updateNote Update the content of a note.
+> readNote Load the content of a note.
+> memorize Extract key information and cross-chunk relations into event memory.
+> updateMemory Update a memory item.
+> readMemory Load a specific memory item. Context Offloading
+> deleteContext Replace a message with a placeholder.
+> summarizeContext Replace a message with a summary.
+> compressContext Compress a message via a lightweight compression model, such as llmlingua-2 [27].
+> foldHistory Discard all historical messages and build a searchable index.
+
+Table 1. Context management tools of ContextPilot . Tools highlighted in purple are newly introduced. 
+
+4.2 Supervised Fine-Tuning Data Synthesis 
+
+Before constructing SFT data, we design a context management harness based on the developed toolset. Through carefully orchestrated rules, the harness provides the teacher model with hints and constraints at appropriate steps. For example, it guides the teacher to inspect retrieved content with readChunk after search. When the context length exceeds a predefined threshold, it restricts the model to context offloading tools for cleaning up. These hints and constraints are used only as generation-time scaffolding and are excluded from the final SFT trajectories. Additional details of SFT data construction are in Appendix C. 
+
+4.3 RL Training with Partial Rollout and Fine-Grained Credit Assignment 
+
+Context-Aware Partial Rollout. Inspired by ARPO [19], we introduce partial rollout, which allocates more exploration budget to those critical context management decisions. To identify these critical decisions, we first calculate the context variation: 
+
+∆Ccm  
+
+> t
+
+= len (ccm 
+
+> t
+
++1) − len (ccm  
+
+> t
+
+)
+
+len (ccm  
+
+> t
+
+) , (3) and the entropy variation: 
+
+∆Hcm  
+
+> t
+
+= Hcm  
+
+> t
+
+− Hinitial , (4) for each context management operation acm  
+
+> t
+
+∈ A cm . Ht is the average entropy of k generated tokens after receiving the observation at step t:
+
+Hcm  
+
+> t
+
+= 1
+
+k
+
+> k
+
+−1
+
+# ∑
+
+> i
+
+=0
+
+−
+
+> V
+
+# ∑
+
+> j
+
+=1
+
+pt+i,j log pt+i,j
+
+!
+
+, (5) where V is the vocabulary size, pt+i,j denotes the probability after softmax and Hinitial is the average entropy of the first k tokens at the beginning of the trajectory. We use the initial entropy Hinitial instead of the entropy of the preceding step Hcm 
+
+> t
+
+−1 as the reference, because partial rollout aims to identify critical tool calls that induce significant uncertainty changes relative to the initial query state, instead of local fluctuations between adjacent steps. Based on these metrics, the sensitivity score S(acm  
+
+> t
+
+) can be defined as: 
+
+S(acm  
+
+> t
+
+) = α · ∆Ccm  
+
+> t
+
++ β · ∆Hcm  
+
+> t
+
+, (6) where α and β balance the weights of the two metrics. During the rollout phase, given a global rollout budget of N snapshots per query, we first perform trajectory-level rollouts and segment the resulting trajectories into M snapshots at context management 5ContextPilot 
+
+actions. If M < N, the remaining snapshot budget is allocated to partial rollouts: we rank all context management actions by their sensitivity score S(acm  
+
+> t
+
+) in descending order and select the top N − M actions as branching points. Starting from the parent node of each selected action, we sample additional sub-trajectories to enrich the snapshot pool. This adaptive partial rollout mechanism facilitates more exploration at critical context management actions that have a larger impact. 
+
+Fine-Grained Credit Assignment. Benefiting from the partial rollout mechanism, we can assign credit to intermediate trajectory snapshots in a more fine-grained manner. Specifically, suppose a complete terminal trajectory T is segmented into M trajectory snapshots {S1, S2, . . . , SM} at context editing operations. Unlike existing works [11, 12] that directly assign the final sparse reward R(T) to all intermediate snapshots, we estimate the value of each snapshot using the reward of all its subsequent branches. For a terminal snapshot 
+
+SM = T, the reward includes an outcome reward Rout , a format reward Rfmt , and a penalty item Rpen :
+
+R(SM) = Rout + Rfmt + Rpen . (7) Here, Rout is computed by comparing the model’s predicted answer with the ground truth, while Rfmt 
+
+checks whether the final output can be successfully parsed. The penalty term Rpen penalizes invalid tool invocations, such as calling readMemory before any memory has been constructed, as well as context-length violations. For an intermediate trajectory snapshot Si, its reward is determined by all terminal trajectories that take Si as a prefix: 
+
+R(Si) = 1
+
+|T (Si)| ∑  
+
+> T∈T (Si)
+
+R(T) (8) where T (Si) denotes the set of terminal trajectories with Si as a prefix. After obtaining snapshot-level rewards, we group all trajectory snapshots generated under the same query q as an advantage calculation group G = {S(j) 
+
+> t
+
+| ∀ j, t}. We then compute the advantage of each snapshot sample S(j) 
+
+> t
+
+using the group mean and standard deviation: ˆA(j) 
+
+> t
+
+= R(S(j) 
+
+> t
+
+) − mean ({R(S) | S ∈ G} )
+
+std ({R(S) | S ∈ G} ) (9) Finally, we optimize πθ with the GRPO objective [28], treating each trajectory snapshot as an independent sample. This shifts credit assignment from trajectories to snapshots, enabling more precise reward estimation for intermediate context management actions. Appendix A provides a theoretical discussion of its variance reduction effect. 
+
+# 5 Experiments 
+
+5.1 Experiment Setup 
+
+Base Models and Training Data. To evaluate the effectiveness of ContextPilot , we conduct extensive experiments on two long-horizon tasks: long-context QA and deep search. For long-context QA , we follow the data construction setup of StateLM [11]. Specifically, we construct SFT data from the PublicDomain split of NovelQA [25] and the training split of NarrativeQA [29], and perform reinforcement learning on the training set of LongBench-v2 [30]. For model selection, we use Qwen3-8B, Qwen3-14B [31] and Gemma4-E4B-it [32] as base models. For deep search , base models are WebSailor-7B [33] and WebExplorer-8B [34]. Since they already possess basic search capabilities, we skip SFT and directly perform RL training on 1K samples drawn from OpenSeeker [35]. Detailed statistics of training data are provided in Appendix Table 6. 
+
+Implementation Details. We conduct SFT and RL training with the verl library [36]. In RL, we limit each complete trajectory to be segmented into at most 8 trajectory snapshots. For each query, we collect N = 128 trajectory snapshots, starting from 8 trajectory-level rollouts, producing at most M = 64 trajectory snapshots, and completing the remaining budget with partial rollout. During inference, we set the maximum input and generation lengths to 30K and 2K tokens, respectively. More details are in Appendix D. 6ContextPilot 
+
+Table 2. Performance comparison of ContextPilot against baseline methods on long-context QA tasks. We run each method three times and report the mean and standard deviation. Results with † are from Liu et al. [11]. 
+
+Model Length NovelQA ∞Bench LongMemEval-S BrowseComp+ Avg. 
+
+Qwen3.5-397B-A17B (w/o tools) 256K 88.77 90.39 81.00 62.05 80.55 Qwen3.5-397B-A17B (w/ tools) 32K 91.94 92.13 83.60 80.96 87.16 RL-MemoryAgent-7B † 32K 60.24 62.45 40.60 - -RL-MemoryAgent-14B † 32K 78.86 74.24 59.00 - -ReadAgent-8B † 32K 16.38 24.02 0.00 - -ReadAgent-14B † 32K 23.12 34.06 14.60 - -StateLM-8B-RL † 32K 84.15 ± 1.00 73.07 ± 1.33 59.73 ± 2.20 46.44 ± 0.77 65.85 StateLM-14B-RL † 32K 84.85 ± 0.42 78.46 ± 0.67 64.47 ± 0.50 52.67 ± 4.00 70.11 Qwen3-8B (w/o tools) 128K 65.74 ± 0.55 66.96 ± 1.09 45.20 ± 1.02 5.82 ± 0.86 45.93 Qwen3-8B (w/ tools) 32K 38.09 ± 0.88 39.59 ± 1.03 24.47 ± 0.57 8.28 ± 0.11 27.61 
+
+ContextPilot-8B 32K 82.56 ± 0.49 71.03 ± 1.44 60.67 ± 1.91 48.84 ± 1.48 65.78 
+
+ContextPilot-8B-RL 32K 83.88 ± 0.67 75.25 ± 0.82 64.27 ± 1.15 54.18 ± 1.47 69.40 
+
+Qwen3-14B (w/o tools) 128K 78.03 ± 0.44 74.53 ± 0.41 54.20 ± 0.75 6.27 ± 0.87 53.26 Qwen3-14B (w/ tools) 32K 68.43 ± 1.22 54.59 ± 0.94 40.33 ± 0.50 15.78 ± 0.10 44.78 
+
+ContextPilot-14B 32K 84.28 ± 0.76 79.04 ± 0.94 65.93 ± 1.20 53.13 ± 1.37 70.60 
+
+ContextPilot-14B-RL 32K 84.81 ± 0.86 81.08 ± 1.15 67.40 ± 0.91 55.50 ± 1.71 72.20 
+
+Gemma4-E4B-it (w/o tools) 128K 48.75 ± 0.53 39.74 ± 0.87 28.50 ± 1.90 7.03 ± 0.30 31.01 Gemma4-E4B-it (w/ tools) 32K 36.90 ± 2.06 32.75 ± 2.17 21.80 ± 1.30 2.73 ± 0.30 23.55 
+
+ContextPilot-E4B 32K 66.80 ± 0.81 55.02 ± 1.07 55.07 ± 1.20 42.05 ± 1.04 54.74 
+
+ContextPilot-E4B-RL 32K 72.92 ± 0.86 60.99 ± 1.25 62.47 ± 1.62 47.47 ± 1.08 60.96 
+
+Evaluation Benchmarks and Metrics. We evaluate long-context QA on four benchmarks: the Copyright split of NovelQA [25], the En.MC split of ∞Bench [1], LongMemEval-S [37], and BrowseComp+ [26]. Note that BrowseComp+ is built on a fixed corpus and does not require searching on the Internet. We therefore include it in the long-context QA tasks. The evaluation on deep search tasks includes GAIA (the text-only subset with 103 examples) [38], BrowseComp [3], BrowseComp-ZH [39], and xBench-DeepSearch [40]. We adopt exact-match evaluation for multiple-choice benchmarks, NovelQA and ∞Bench. Other benchmarks are evaluated by LLM-as-a-Judge. 
+
+Baselines. For long-context QA , we compare ContextPilot with (1) a training-free method: ReadAgent [41], (2) an RL-trained memory agent: MemAgent [42], (3) a proactive context management agent: StateLM [11], and (4) a prompt-only baseline that uses the same tools as ContextPilot but without any fine-tuning, denoted as “w/ tools”. Regarding deep search , we include the following baselines: (1) ReAct (w/ truncation), which truncates early messages when the context exceeds 28K tokens, (2) ReSum [8], an inference-time summarization method, (3) SUPO [9], which jointly trains summarization and agentic ability through RL, and (4) OpenSeeker, which performs RL training on the same 1K samples as ours but without context management tools. Baseline replication details are in Appendix E. 
+
+5.2 Main Results 
+
+Tables 2 and 3 compare ContextPilot with various baselines on long-context QA and deep search tasks. We highlight three key observations. 
+
+(1) ContextPilot achieves the best average performance among comparable-size models. Shown by Table 2, 
+
+ContextPilot uses only a 32K context window, yet outperforms the 128K backbone. ContextPilot also surpasses prior RL-trained context management agents. For example, ContextPilot-8B-RL outperforms StateLM-8B-RL by an average of 3.55 points across four benchmarks; on deep search tasks, ContextPilot also 7ContextPilot 
+
+Table 3. Performance comparison of ContextPilot against baseline methods on deep search tasks. We run each method three times and report the mean and standard deviation. 
+
+Backbone Method BrowseComp BrowseComp-ZH GAIA xBench-DS Avg. pass@3 pass@3 pass@1 pass@1 
+
+WebSailor-7B ReAct 11.33 ± 1.03 25.47 ± 0.98 31.07 ± 0.79 34.00 ± 0.82 25.47 ReAct (w/ truncation) 12.67 ± 0.62 27.91 ± 0.91 33.66 ± 0.92 35.00 ± 0.82 27.31 ReSum 15.83 ± 0.85 38.99 ± 1.56 38.19 ± 1.21 35.33 ± 1.25 32.09 SUPO 18.50 ± 1.08 42.68 ± 0.99 42.07 ± 1.65 42.00 ± 1.41 36.31 OpenSeeker 16.50 ± 2.12 41.87 ± 1.02 41.42 ± 1.21 43.33 ± 0.94 35.78 
+
+ContextPilot 21.17 ± 1.31 43.14 ± 1.07 45.31 ± 0.92 43.67 ± 0.94 38.32 
+
+WebExplorer-8B ReAct 23.83 ± 1.55 46.57 ± 0.74 48.87 ± 0.92 52.33 ± 0.94 42.90 ReAct (w/ truncation) 24.33 ± 1.18 45.91 ± 1.07 49.84 ± 0.46 52.33 ± 0.47 43.10 ReSum 28.83 ± 1.03 47.87 ± 1.39 52.75 ± 1.21 51.00 ± 1.41 45.11 SUPO 31.00 ± 1.78 50.40 ± 1.07 56.96 ± 1.21 58.00 ± 0.82 49.09 OpenSeeker 29.17 ± 1.31 48.56 ± 1.39 57.28 ± 1.37 56.67 ± 0.47 47.92 
+
+ContextPilot 32.17 ± 1.18 53.63 ± 1.23 57.93 ± 0.92 56.67 ± 0.94 50.10 
+
+surpasses SUPO by 1.51 average points across both backbones. 
+
+(2) RL training brings more pronounced gains in more complex long-context settings. Starting from the SFT model, RL further improves ContextPilot . For instance, ContextPilot-8B-RL improves over ContextPilot-8B by an average of 3.62 points across the four long-context QA tasks. The improvement on NovelQA is relatively modest, because the SFT data already includes another split of NovelQA. By contrast, RL yields a substantial 5.34 point increase on the more challenging BrowseComp+ benchmark. Given that the average input length of NovelQA is about 119K tokens whereas BrowseComp+ reaches 552K tokens, this contrast suggests that the benefit of RL is larger on more challenging tasks. 
+
+(3) The advantages of ContextPilot generalize across tasks and base models. As shown in Tables 2 and 3, 
+
+ContextPilot brings consistent gains on both long-context QA and deep search. The gains also hold across different backbones, including Qwen3-8B, Qwen3-14B and Gemma4-E4B on long-context QA, as well as WebSailor-7B and WebExplorer-8B on deep search. 
+
+5.3 Further Analysis 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 Interaction Turn Index 06k 12k 18k 24k 30k Input Tokens  WebExplorer-8B ContextPilot-8B 
+
+Figure 4. Token usage per turn on BrowseComp. 
+
+Token efficiency analysis. Beyond performance, we examine whether ContextPilot can maintain a more compact working context. We consider trajectories with at least 15 turns and compute the average number of input tokens per turn. As shown in Figure 4, the input length of WebExplorer-8B grows almost linearly on BrowseComp, reaching around 30K tokens. By contrast, ContextPilot-8B stabilizes its input length each turn at roughly 8K–10K tokens. 
+
+RL reshapes tool use strategy. To better understand how RL changes the context management behavior, we track the distribution over tool call categories of ContextPilot-8B-RL in RL training. As shown in Figure 5, the model relies heavily on information retrieval tools in the early stage of RL training, with retrieval accounting for roughly half of all tool calls. As RL training proceeds, the share of information retrieval tools gradually decreases, whereas planning and perception, long-term memory, and context offloading tools exhibit an upward trend. This shift suggests that RL encourages the model to move beyond naive information retrieval toward more coordinated context management. 8ContextPilot 0 15 30 45 60 75 90 105 120 
+
+Training step 
+
+> 0% 10% 20% 30% 40% 50%
+> Percentage
+> Planning & Perception Information Retrieval Context Offloading Short-Term Mem. Long-Term Mem. Other
+
+(a) ∞Bench. 0 15 30 45 60 75 90 105 120 
+
+Training step  
+
+> 0% 10% 20% 30% 40% 50%
+> Percentage
+> Planning & Perception Information Retrieval Context Offloading Short-Term Mem. Long-Term Mem. Other
+
+(b) NovelQA. 
+
+Figure 5. Tool category breakdown during Qwen3-8B RL training on ∞Bench and NovelQA. 0 20 40 60 80 100 120 
+
+> Training Step
+> 0246810
+> Failure Rate (%)
+> Long-Term Mem. Short-Term Mem. Context Offloading Information Retrieval Task Score
+> 71 72 73 74 75
+> Task Score (%)
+
+(a) ∞Bench. 0 20 40 60 80 100 120  
+
+> Training Step
+> 0246810
+> Failure Rate (%)
+> Long-Term Mem. Short-Term Mem. Context Offloading Information Retrieval Task Score
+> 82.50 82.75 83.00 83.25 83.50 83.75
+> Task Score (%)
+
+(b) NovelQA. 
+
+Figure 6. Tool invocation failure rates and task success rate on ∞Bench and NovelQA during RL training. 
+
+RL synergistically boosts tool-use correctness and task success. Beyond the tool call frequency breakdown, we further examine whether RL improves the correctness of context management tool use. To quantify this effect, we define a tool invocation as failed when it triggers an environment-side error—such as a malformed call, invalid arguments, or a violation of tool-specific preconditions—and count such failures for each intermediate checkpoint of ContextPilot-8B-RL. Figure 6 reports the failure rates of four representative tool categories together with the task success rate throughout RL training. At the early stage of training, memory and context offloading tools exhibit substantially higher failure rates than information retrieval tools. This pattern suggests that although the SFT model can invoke these tools, it lacks a genuine understanding of their usage. During the RL process, the model’s proficiency with context management tools contributes to the improvement in task success rate. 
+
+5.4 Ablation Studies 
+
+Table 4. Ablation results of tool design using Qwen3.5-397B-A17B. LME-S and BC+ denote LongMemEval-S and BrowseComp+, respectively. 
+
+Tool Design NovelQA ∞Bench LME-S BC+ Avg. 
+
+Original tools 88.90 85.15 74.00 63.49 77.89 + Planning 89.76 87.23 78.50 65.66 80.29 + Soft offloading 91.28 89.63 80.20 71.20 83.08 + Long-term memory 91.94 92.13 83.60 80.96 87.16 
+
+Tool design. To isolate the effect of tool design, we evaluate Qwen3.5-397B-A17B with cumulative tool configurations, progressively adding planning, soft context offloading, and long-term memory tools. As presented in Table 4, the performance improves as more context management tools are introduced, with the full toolset achieving the highest score. The gains are especially clear on BrowseComp+, where accuracy increases from 63.49% to 80.96% with the full toolset, highlighting the effectiveness of the newly introduced tools. 9ContextPilot 
+
+Table 5. Ablation results of the RL algorithm using Qwen3-8B. Results for Gemma4-E4B-it are in Table 8 (Appendix). “+ Entropy.”, “+ Context.”, and “+ Fine-grained.” denote RL training with entropy-based partial rollout, context-aware partial rollout, and fine-grained credit assignment. Numbers in parentheses indicate changes relative to the previous line.                          
+
+> Training method NovelQA ∞Bench LME-S BC+
+> SFT 82.56 71.03 60.67 48.84 GRPO 83.53 (+0.97) 72.78 (+1.75) 60.07 (-0.60) 50.96 (+2.12) + Entropy. 82.52 (-1.01) 73.07 (+0.29) 62.13 (+2.06) 49.64 (-1.32) + Context. 83.05 (+0.53) 73.94 (+0.87) 61.40 (-0.73) 51.08 (+1.44) + Fine-grained. 83.88 (+0.83) 75.25 (+1.31) 64.27 (+2.87) 54.18 (+3.10)
+
+RL training design. We further ablate context-aware partial rollout and fine-grained credit assign-ment in RL training. As shown in Table 5, entropy-based partial rollout improves several tasks but re-mains unstable, decreasing BrowseComp+ accuracy by 1.32 points on Qwen3-8B. This suggests that en-tropy alone is insufficient for identifying critical context editing operations, while adding context variation yields more stable gains. Fine-grained credit assignment further improves over context-aware partial rollout across all four benchmarks, highlighting the importance of assigning more gran-ular action-level credit rather than relying only on trajectory-level rewards. 
+
+# 6 Conclusion 
+
+We present ContextPilot , a proactive context management agent system for agentic reasoning. It extends the context management toolset with planning, long-term memory, and soft context offloading tools, and further improves RL training with context-aware partial rollout and fine-grained credit assignment. Experiments show that ContextPilot maintains a more compact working context while achieving stronger performance, bringing consistent gains on both long-context QA and deep search tasks. These results highlight the importance of proactive context management and point to a promising direction for building stronger agent systems that can self-manage their context throughout long-horizon tasks. 
+
+# Limitations 
+
+While ContextPilot demonstrates strong performance and improved token efficiency, this work has several limitations. First, although our approach extends existing context management tools, the toolset may still not cover all forms of context editing demands. Future work can explore richer operations for organizing, compressing, and retrieving context under different task requirements. Second, due to computational constraints, we do not conduct extensive search over some training hyperparameters. These settings may affect training efficiency and final performance, especially for partial rollout and credit assignment. Finally, our experiments focus mainly on long-context QA and deep search tasks. Extending proactive context management to broader agentic reasoning scenarios, such as agentic coding and GUI agents, remains an important direction for future work. 
+
+# References 
+
+[1] Xinrong Zhang, Yingfa Chen, Shengding Hu, Zihang Xu, Junhao Chen, Moo Hao, Xu Han, Zhen Thai, Shuo Wang, Zhiyuan Liu, et al. ∞-bench: Extending long context evaluation beyond 100k tokens. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 15262–15277, 2024. [2] Bangde Du, Ziyi Ye, Zhijing Wu, Monika A Jankowska, Shuqi Zhu, Qingyao Ai, Yujia Zhou, and Yiqun Liu. Simvbg: Simulating individual values by backstory generation. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 13104–13133, 2025. [3] Jason Wei, Zhiqing Sun, Spencer Papay, Scott McKinney, Jeffrey Han, Isa Fulford, Hyung Won Chung, Alex Tachard Passos, William Fedus, and Amelia Glaese. Browsecomp: A simple yet challenging benchmark for browsing agents. arXiv preprint arXiv:2504.12516 , 2025. 10 ContextPilot 
+
+[4] Tongyi DeepResearch Team, Baixuan Li, Bo Zhang, Dingchu Zhang, Fei Huang, Guangyu Li, Guoxin Chen, Huifeng Yin, Jialong Wu, Jingren Zhou, et al. Tongyi deepresearch technical report. arXiv preprint arXiv:2510.24701 , 2025. [5] Jiazhan Feng, Shijue Huang, Xingwei Qu, Ge Zhang, Yujia Qin, Baoquan Zhong, Chengquan Jiang, Jinxin Chi, and Wanjun Zhong. Retool: Reinforcement learning for strategic tool use in llms. arXiv preprint arXiv:2504.11536 , 2025. [6] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. React: Synergizing reasoning and acting in language models. In The Eleventh International Conference on Learning Representations , 2023. [7] Jiaqi Shao, Yufeng Miao, Wei Zhang, and Bing Luo. Foldact: Efficient and stable context folding for long-horizon search agents. arXiv preprint arXiv:2512.22733 , 2025. [8] Xixi Wu, Kuan Li, Yida Zhao, Liwen Zhang, Litu Ou, Huifeng Yin, Zhongwang Zhang, Xinmiao Yu, Dingchu Zhang, Yong Jiang, et al. Resum: Unlocking long-horizon search intelligence via context summarization. arXiv preprint arXiv:2509.13313 , 2025. [9] Miao Lu, Weiwei Sun, Weihua Du, Zhan Ling, Xuesong Yao, Kang Liu, and Jiecao Chen. Scal-ing llm multi-turn rl with end-to-end summarization-based context management. arXiv preprint arXiv:2510.06727 , 2025. [10] Jin Su, Runnan Fang, Yeqiu Li, Xiaobin Wang, Shihao Cai, Pengjun Xie, Ningyu Zhang, and Fajie Yuan. U-fold: Dynamic intent-aware context folding for user-centric agents. arXiv preprint arXiv:2601.18285 ,2026. [11] Xiaoyuan Liu, Tian Liang, Dongyang Ma, Deyu Zhou, Haitao Mi, Pinjia He, and Yan Wang. The pensieve paradigm: Stateful language models mastering their own context. In The Fourteenth International Conference on Learning Representations , 2026. [12] Mo Li, LH Xu, Qitai Tan, Long Ma, Ting Cao, and Yunxin Liu. Sculptor: Empowering llms with cognitive agency via active context management. arXiv preprint arXiv:2508.04664 , 2025. [13] Rui Ye, Zhongwang Zhang, Kuan Li, Huifeng Yin, Zhengwei Tao, Yida Zhao, Liangcai Su, Liwen Zhang, Zile Qiao, Xinyu Wang, et al. Agentfold: Long-horizon web agents with proactive context management. 
+
+arXiv preprint arXiv:2510.24699 , 2025. [14] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 , 2025. [15] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-mem: Agentic memory for llm agents. Advances in Neural Information Processing Systems , 38:17577–17604, 2026. [16] Zhengxuan Lu, Dongfang Li, Yukun Shi, Beilun Wang, Longyue Wang, and Baotian Hu. Structured episodic event memory. arXiv preprint arXiv:2601.06411 , 2026. [17] Shuyang Liu, Saman Dehghan, Jatin Ganhotra, Martin Hirzel, and Reyhaneh Jabbarvand. From plan to action: How well do agents follow the plan? arXiv preprint arXiv:2604.12147 , 2026. [18] Yi Yu, Liuyi Yao, Yuexiang Xie, Qingquan Tan, Jiaqi Feng, Yaliang Li, and Libing Wu. Agentic memory: Learning unified long-term and short-term memory management for large language model agents. 
+
+arXiv preprint arXiv:2601.01885 , 2026. [19] Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia Chen, Jiazhen Du, Huiyang Wang, Fuzheng Zhang, et al. Agentic reinforced policy optimization. arXiv preprint arXiv:2507.19849 , 2025. 11 ContextPilot 
+
+[20] Jiazheng Li, Yawei Wang, Qiaojing Yan, Yijun Tian, Zhichao Xu, Huan Song, Panpan Xu, and Lin Lee Cheong. Salt: Step-level advantage assignment for long-horizon agents via trajectory graph. In Findings of the Association for Computational Linguistics: EACL 2026 , pages 4709–4725, 2026. [21] Junru Lu, Siyu An, Mingbao Lin, Gabriele Pergola, Yulan He, Di Yin, Xing Sun, and Yunsheng Wu. Memochat: Tuning llms to use memos for consistent long-range open-domain conversation. arXiv preprint arXiv:2308.08239 , 2023. [22] Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Xufang Luo, Hao Cheng, Dongsheng Li, Yuqing Yang, Chin-Yew Lin, H Vicky Zhao, Lili Qiu, et al. Secom: On memory construction and retrieval for personalized conversational agents. In The Thirteenth International Conference on Learning Representations , 2025. [23] Charles Packer, Vivian Fang, Shishir G Patil, Kevin Lin, Sarah Wooders, and Joseph E Gonzalez. Memgpt: Towards llms as operating systems. In The Twelfth International Conference on Learning Representations ,2024. [24] Yuxiang Zhang, Jiangming Shu, Ye Ma, Xueyuan Lin, Shangxi Wu, and Jitao Sang. Memory as action: Autonomous context curation for long-horizon agentic tasks. arXiv preprint arXiv:2510.12635 , 2025. [25] Cunxiang Wang, Ruoxi Ning, Boqi Pan, Tonghui Wu, Qipeng Guo, Cheng Deng, Guangsheng Bao, Xiangkun Hu, Zheng Zhang, Qian Wang, et al. Novelqa: Benchmarking question answering on documents exceeding 200k tokens. In The Thirteenth International Conference on Learning Representations ,2025. [26] Zijian Chen, Xueguang Ma, Shengyao Zhuang, Ping Nie, Kai Zou, Andrew Liu, Joshua Green, Kshama Patel, Ruoxi Meng, Mingyi Su, et al. Browsecomp-plus: A more fair and transparent evaluation benchmark of deep-research agent. arXiv preprint arXiv:2508.06600 , 2025. [27] Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Menglin Xia, Xufang Luo, Jue Zhang, Qingwei Lin, Victor Rühle, Yuqing Yang, Chin-Yew Lin, et al. Llmlingua-2: Data distillation for efficient and faithful task-agnostic prompt compression. In Findings of the Association for Computational Linguistics: ACL 2024 ,pages 963–981, 2024. [28] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. [29] Tomáš Koˇ cisk ` y, Jonathan Schwarz, Phil Blunsom, Chris Dyer, Karl Moritz Hermann, Gábor Melis, and Edward Grefenstette. The narrativeqa reading comprehension challenge. Transactions of the Association for Computational Linguistics , 6:317–328, 2018. [30] Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, et al. Longbench v2: Towards deeper understanding and reasoning on realistic long-context multitasks. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 3639–3664, 2025. [31] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [32] Google. Welcome Gemma 4: Frontier multimodal intelligence on device. https://huggingface.co/ blog/gemma4 , 2026. [33] Kuan Li, Zhongwang Zhang, Huifeng Yin, Liwen Zhang, Litu Ou, Jialong Wu, Wenbiao Yin, Baixuan Li, Zhengwei Tao, Xinyu Wang, Weizhou Shen, Junkai Zhang, Dingchu Zhang, Xixi Wu, Yong Jiang, Ming Yan, Pengjun Xie, Fei Huang, and Jingren Zhou. Websailor: Navigating super-human reasoning for web agent. arXiv preprint arXiv:2507.02592 , 2025. [34] Junteng Liu, Yunji Li, Chi Zhang, Jingyang Li, Aili Chen, Ke Ji, Weiyu Cheng, Zijia Wu, Chengyu Du, Qidi Xu, Jiayuan Song, Zhengmao Zhu, Wenhu Chen, Pengyu Zhao, and Junxian He. Webexplorer: Explore and evolve for training long-horizon web agents. ArXiv , abs/2509.06501, 2025. 12 ContextPilot 
+
+[35] Yuwen Du, Rui Ye, Shuo Tang, Xinyu Zhu, Yijun Lu, Yuzhu Cai, and Siheng Chen. Openseeker: Democ-ratizing frontier search agents by fully open-sourcing training data. arXiv preprint arXiv:2603.15594 ,2026. [36] Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu. Hybridflow: A flexible and efficient rlhf framework. In Proceedings of the Twentieth European Conference on Computer Systems , pages 1279–1297, 2025. [37] Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. Longmemeval: Benchmarking chat assistants on long-term interactive memory. In The Thirteenth International Conference on Learning Representations , 2025. [38] Grégoire Mialon, Clémentine Fourrier, Thomas Wolf, Yann LeCun, and Thomas Scialom. Gaia: a benchmark for general ai assistants. In The Twelfth International Conference on Learning Representations ,2024. [39] Peilin Zhou, Bruce Leon, Xiang Ying, Can Zhang, Yifan Shao, Qichen Ye, Dading Chong, Zhiling Jin, Chenxuan Xie, Meng Cao, et al. Browsecomp-zh: Benchmarking web browsing ability of large language models in chinese. arXiv preprint arXiv:2504.19314 , 2025. [40] Xbench-Team. Xbench-deepsearch, 2025. URL https://xbench.org/agi/aisearch .[41] Kuang-Huei Lee, Xinyun Chen, Hiroki Furuta, John Canny, and Ian Fischer. A human-inspired reading agent with gist memory of very long contexts. In International Conference on Machine Learning , pages 26396–26415. PMLR, 2024. [42] Hongli Yu, Tinghong Chen, Jiangtao Feng, Jiangjie Chen, Weinan Dai, Qiying Yu, Ya-Qin Zhang, Wei-Ying Ma, Jingjing Liu, Mingxuan Wang, and Hao Zhou. Memagent: Reshaping long-context llm with multi-conv rl-based memory agent. arXiv preprint arXiv:2507.02259 , 2025. [43] Qwen Team. Qwen3.5: Accelerating productivity with native multimodal agents, February 2026. URL 
+
+https://qwen.ai/blog?id=qwen3.5 .[44] OpenAI. gpt-oss-120b & gpt-oss-20b model card, 2025. URL https://arxiv.org/abs/2508.10925 .
+
+# A Theoretical Discussion of Fine-Grained Credit Assignment 
+
+We justify our fine-grained credit assignment as a lower-variance estimator of the conditional continuation value. For a query q, let T be a complete trajectory with terminal reward R(T), and let S be an intermediate trajectory snapshot induced by a context editing action. The target credit for S is 
+
+Q(S) ≜ E[R(T) | S ⪯ T] , (10) where S ⪯ T denotes that S is a prefix snapshot of T.Trajectory-level credit assignment uses the reward of the single terminal trajectory containing S, while our method averages all sampled terminal continuations that pass through S:
+
+bQtraj (S) ≜ R(T1),
+
+bQours (S) ≜ 1
+
+nSnS
+
+# ∑
+
+> k=1
+
+R(Tk). (11) Here nS = |T (S)|, and each Tk is sampled from the same continuation distribution p(· | S).13 ContextPilot 
+
+Claim. Conditioned on S, suppose {R(Tk)}nS 
+
+> k=1
+
+are independent samples with finite conditional variance 
+
+σ2(S) ≜ Var [R(T) | S ⪯ T] . (12) Then both estimators are unbiased: 
+
+E
+
+h bQtraj (S) | S
+
+i
+
+= Q(S),
+
+E
+
+h bQours (S) | S
+
+i
+
+= Q(S),(13) and their conditional variances satisfy Var 
+
+h bQtraj (S) | S
+
+i
+
+= σ2(S),Var 
+
+h bQours (S) | S
+
+i
+
+= σ2(S)
+
+nS
+
+.(14) Therefore, when nS > 1 and σ2(S) > 0, our estimator has strictly smaller mean-squared error than trajectory-level credit assignment. 
+
+Proof. Since each continuation is sampled from p(· | S),
+
+E
+
+h bQtraj (S) | S
+
+i
+
+= E[R(T1) | S]= Q(S),(15) and 
+
+E
+
+h bQours (S) | S
+
+i
+
+= 1
+
+nSnS
+
+# ∑
+
+> k=1
+
+E[R(Tk) | S]= Q(S).(16) Thus both estimators are unbiased. The trajectory-level estimator uses one continuation, so Var 
+
+h bQtraj (S) | S
+
+i
+
+= σ2(S). (17) For our estimator, conditional independence gives Var 
+
+h bQours (S) | S
+
+i
+
+= Var 
+
+"
+
+1
+
+nSnS
+
+# ∑
+
+> k=1
+
+R(Tk) S
+
+#
+
+= 1
+
+n2
+
+> SnS
+
+# ∑
+
+> k=1
+
+Var [R(Tk) | S]= σ2(S)
+
+nS
+
+.(18) Since both estimators are unbiased, their mean-squared errors equal their variances. The claim follows. Thus, our method estimates the same target credit Q(S) as trajectory-level credit assignment with lower variance. Since GRPO computes relative advantages from these reward estimates within each query group, this lower-variance estimator provides a more stable advantage signal for optimizing context editing decisions. Context-aware partial rollout strengthens this effect by increasing nS for sensitive context management actions. 14 ContextPilot 
+
+# B Training Dataset Statistics 
+
+Table 6 summarizes the training data used by ContextPilot across SFT and RL stages, for both experimental scenarios. For SFT, we construct trajectories from the PublicDomain split of NovelQA and the training split of NarrativeQA, and retain trajectories that satisfy the outcome and context management quality requirements. The retained trajectories are further segmented into trajectory snapshots at context editing operations, producing 51,469 snapshots in total. For RL, we use 488 LongBench-v2 questions for long-context QA and 1,000 questions randomly sampled from the OpenSeeker [35] dataset for deep search. 
+
+# C SFT Data Synthesis Details 
+
+We synthesize SFT trajectories for long-context QA only. The teacher is Qwen3.5-397B-A17B [43] in thinking mode, decoded with temperature 0.6, top-p of 0.95, and a maximum output length of 4K tokens. To elicit valid context management behavior from the teacher, we use a context management harness that supplies tool definitions together with procedural guidance for managing long interaction histories. Rather than exposing the full toolset at every step, the harness dynamically presents only tools whose preconditions are satisfied by the current state. For instance, readMemory is unavailable before any memory has been written, while readChunk and readMultiChunks are withheld until searchContext has been invoked. The harness also implements correction and retry mechanisms for recoverable generation errors. When the teacher provides an invalid argument, such as a nonexistent message id or an already deleted message id for deleteContext ,
+
+summarizeContext or compressContext , the harness returns a targeted hint and asks the teacher to retry the tool call. Similarly, if the teacher attempts to answer in plain text without invoking finish , the harness reminds it to submit the answer through the required tool interface. These auxiliary hints serve only as generation-time scaffolding and are excluded from the final trajectories. If a retry is triggered, we keep only the final successful attempt, preventing failed intermediate calls from being imitated.                    
+
+> Stage Source Questions Trajectories Snapshots
+> SFT NovelQA 3,096 2,987 50,691 NarrativeQA 100 81 778 RL LongBench-v2 488 ––OpenSeeker-v1 (sampled) 1,000 ––
+> Table 6. Statistics of the training data, where NovelQA, NarrativeQA, and LongBench-v2 are used for long-context QA and OpenSeeker-v1 is used for deep search.
+
+After trajectory generation, we apply a three-stage filtering pipeline. First, we perform outcome-based filtering with exact match. For samples that are initially answered incorrectly, we allow two ad-ditional retries and retain the trajectory if any retry yields the correct answer. Second, we use GPT-OSS-120B [44] for process-based filtering, removing tra-jectories that exhibit improper context management behavior. Finally, we discard trajectories whose peak context length exceeds 32K tokens, ensuring that the retained demonstrations remain compatible with the target context budget. This procedure starts from 3,196 questions and retains 3,114 trajectories after outcome-based filtering. Process and peak-token filtering further remove 46 trajectories, leaving 3,068 qualified trajectories. These trajectories are then segmented at context editing operations, producing 51,469 SFT trajectory snapshots. 
+
+# D Training Details 
+
+We conduct SFT and RL training with the verl library [36]. During SFT, we use ZeRO-3 parallelism, a global batch size of 128, a learning rate of 5 × 10 −6, a cosine learning-rate scheduler, and a warmup ratio of 0.03. For RL, we train for 128 steps with a rollout batch size of 16 and set the KL coefficient to 0.001. For each query, we first sample 8 trajectory-level rollouts. Each complete trajectory is segmented into at most 8 trajectory snapshots, yielding up to 64 snapshots from the initial rollouts. We collect 128 snapshots per query, and use partial rollout to complete the remaining snapshots. For the sensitivity score used to select partial-rollout branching points, we set α = 1 and β = 1. The maximum input sequence length is 30K tokens, and the maximum output length is 2K tokens. During inference, a temperature of 0.7 and top-p of 0.8 are used for our model. The maximum interaction budget is 60 turns for long-context QA and 60 tool calls for deep search 15 ContextPilot 
+
+Long-Context Document QA System Prompt 
+
+You are an AI assistant specialized in long-context document QA. Use the currently available tools to find evidence in the attached document, save useful findings, keep the context compact, and submit the final answer through ‘finish‘. ## Rules - Use only tools that are currently available in the API payload. If a tool is mentioned here but not currently available, do not call it. - Keep reasoning before tool calls brief. Put durable facts into ‘memorize‘ / ‘updateMemory‘ or ‘note‘ / ‘updateNote‘ instead of long assistant prose. - When cleaning context, use exact ‘[msg_id=N]‘ values from previous messages. Do not target the system message, the original user question, or messages already deleted/truncated/summarized/compressed/folded unless ‘restoreContext‘ is available and needed. - Final answers must be submitted with ‘finish‘; do not answer in plain text outside the tool call. ## Workflow 1. Call ‘analyzeText‘ first. If ‘plan‘ is available before indexing, write a concise initial strategy. Then call ‘buildIndex‘. 2. Use ‘searchEngine‘ for precise keywords, names, dates, titles, rare phrases. If a search returns no useful chunks, try different keywords or queries. 3. Make a ‘plan‘ after a successful search. 4. Read evidence with ‘readChunk‘ or ‘readMultiChunks‘ (respect the tool’s chunk-count limit, usually at most 3 ids). 5. After reading, save useful findings with ‘memorize‘, ‘updateMemory‘, ‘note‘, or ‘updateNote‘. 6. After saving notes or memories, clean up bulky context whenever cleanup tools are available: - If there are 2 or more uncleaned successful search-result messages, clean search-result tool responses first. Target only the msg_ids of the tool responses of ‘searchEngine‘. - If there are 3 or more uncleaned ‘plan‘ calls, clean old ‘plan‘ assistant messages. Target the assistant msg_ids that invoked ‘plan‘, not the short tool responses. - Then prune the current ‘readChunk‘ / ‘readMultiChunks‘ tool result, and delete the assistant message that invoked ‘memorize‘ / ‘updateMemory‘ / ‘note‘ / ‘updateNote‘. - Use ‘deleteContext‘ for irrelevant content, ‘truncateContext‘ for useful spans, ‘summarizeContext‘ for manual summaries, and ‘compressContext‘ for automatic compression. - Never apply these cleanup tools to the same message twice. If a msg_id has already been deleted, truncated, summarized, or compressed, do not target that msg_id again. 7. Before finishing, if ‘readNote‘ or ‘loadMemory‘ is available, review the saved notes or memories that are relevant to the answer. 8. Continue searching, reading, memorizing, cleaning, and reviewing until the evidence is sufficient; then call ‘finish‘ with a concise answer grounded in the document. 
+
+Figure 7. System prompt used by ContextPilot for long-context document QA. 
+
+following Wu et al. [8]. The system prompts used by ContextPilot for long-context document QA and deep search are shown in Figures 7 and 8, respectively. For LLM-as-a-Judge grading, we use GPT-OSS-120B [44] with the open-ended judging prompt of StateLM [11], as shown in Figure 9. 
+
+# E Baseline Reproduction Details 
+
+ReSum We reproduce the training-free version of ReSum [8] for deep search, using WebSailor-7B and WebExplorer-8B as backbone models. Following our deep search setting, all runs use a 32K context window, with 30K tokens allocated to the input and 2K tokens reserved for generation; summarization is triggered when the context exceeds 25K tokens, and the maximum tool call budget is set to 60. Since the official ReSum summarization model is not publicly available, we use Qwen3-30B-A3B as the external summarization model. For the summarizer, we adopt the recommended non-thinking decoding configuration of Qwen3, setting temperature to 0.7 and top-p to 0.8. The context summarization prompt and the summary-conditioned continuation prompt follow the original ReSum prompt. 
+
+SUPO We reproduce SUPO [9] using WebSailor-7B and WebExplorer-8B as backbone models. To isolate the effect of the training data, we train SUPO on the same 1K OpenSeeker samples as ContextPilot . Following the design of SUPO, summaries are generated by the policy model itself and optimized jointly with tool use actions. The summarization threshold is set to L = 0.95 × 30K = 28.5K tokens, where 30K is our maximum input length. Following SUPO, we set the maximum number of interaction steps to H = 100 and the maximum number of summaries to S = 2, and apply overlong masking to rollouts that fail to produce a final answer before reaching either limit. The remaining RL hyperparameters are also the same as SUPO: 16 ContextPilot 
+
+Deep Search System Prompt 
+
+You are a web-search QA agent. Answer the user’s question with evidence gathered through the currently available tools, keep the conversation compact, and submit the final answer through ‘finish‘. ## Rules - In search phase, use ‘search‘ for batched web queries, ‘visit‘ to read promising pages, and ‘finish‘ when you have found the answer. - If ‘checkBudget‘ shows that the context length is beyond the threshold, call cleanup tools. - When cleaning context, use exact ‘[msg_id=N]‘ values. Do not target the system message, the original user question, or messages already deleted/truncated/summarized/compressed/folded. - Final answers must be submitted with ‘finish‘; do not answer in plain text outside the tool call. ## Workflow 1. Use ‘search‘ with concise, complementary query strings to explore names, translations, aliases, dates, clue interpretations, and likely sources. 2. Use ‘visit‘ on the most promising URLs. Give each visit a precise goal describing what to extract or verify. 3. Iterate search and visit until you have enough evidence. Keep pre-tool reasoning brief and avoid copying large retrieved text into assistant messages. 4. If cleanup tools are available, reduce bulky history before continuing: - Prefer large ‘search‘ or ‘visit‘ results that are no longer needed verbatim. - Preserve facts still needed for the final answer: names, aliases, titles, dates, URLs, clue matches, and intermediate conclusions. - Use ‘deleteContext‘ for irrelevant content, ‘truncateContext‘ for useful spans, ‘summarizeContext‘ for concise faithful summaries, ‘compressContext‘ for automatic compression, and ‘foldHistory‘ when available to fold accumulated history. 5. Continue researching if evidence is incomplete; otherwise call ‘finish‘ with a concise, evidence-grounded answer. 
+
+Figure 8. System prompt used by ContextPilot for deep search tasks. 
+
+batch size B = 32, group size G = 8, learning rate 1 × 10 −6 with a constant learning-rate scheduler, and clipping coefficients ϵhigh = 0.28 and ϵlow = 0.20. 
+
+# F Additional Token Efficiency Analysis 
+
+Figure 10 extends the token-efficiency analysis to both BrowseComp and BrowseComp-ZH. We consider trajectories with at least 15 interaction turns and report the average number of input tokens per turn. Across both benchmarks, the WebExplorer-8B agent accumulates increasingly long contexts as the interaction proceeds. In contrast, ContextPilot keeps the working context substantially more compact, indicating that its context management tools reduce redundant history without relying on a larger context window. 
+
+# G Tool Failure Definitions 
+
+We consider a tool invocation failed if its execution triggers an environment-side error. Concretely, this includes malformed calls, invalid arguments, and violations of tool-specific preconditions. For retrieval tools, returning no matched evidence is not counted as a failure if the query and index are valid. Table 7 summarizes the specific cases that may lead to tool execution errors in our analysis. Figure 6 reports the execution failure rate for different tool categories on ∞Bench and NovelQA. Across both benchmarks, memory-related and context offloading tools have higher failure rates at the early stage of RL training, indicating that the SFT model can invoke these tools but has not yet fully learned their correct usage conditions. These failure rates decrease substantially during RL training, showing that RL improves the reliability of context management operations while reshaping the model’s tool use strategy. 
+
+# H Additional RL Training Ablation 
+
+Table 8 reports the complete RL training ablation results on both Qwen3-8B and Gemma4-E4B-it. The results show a consistent trend across the two models: context-aware partial rollout improves over entropy-only 17 ContextPilot 
+
+LLM-as-a-Judge Prompt 
+
+Given a problem, its correct answer, and a student’s answer below, your task is to review the student’s answer and determine if it is correct by comparing it to the correct answer. If the student’s answer is incomplete or ambiguous, assume it is incorrect. ### Problem {problem} ### Answer {answer} ### Student Answer {mode_ans} Please put your final answer (True or False) in \\boxed{}. Specifically, if the student’s answer is correct, the final answer should be \\boxed{True}; otherwise, the final answer should be \\boxed{False}. 
+
+Figure 9. Prompt template used by the LLM-as-a-Judge for evaluating open-ended questions, following StateLM [11]. 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 Interaction Turn Index 06k 12k 18k 24k 30k Input Tokens  WebExplorer-8B ContextPilot-8B                  
+
+> (a) BrowseComp. 12345678910 11 12 13 14 15 Interaction Turn Index 06k 12k 18k 24k 30k Input Tokens  WebExplorer-8B ContextPilot-8B (b) BrowseComp-ZH.
+
+Figure 10. Token usage per turn on BrowseComp and BrowseComp-ZH. 
+
+branching, and fine-grained credit assignment further strengthens the final average performance. 
+
+# I Use of Scientific Artifacts 
+
+We cite the original creators of scientific artifacts wherever they are introduced. For models, Qwen3 and Gemma4 are released under the Apache License 2.0. For datasets, OpenSeeker-V1 is released under the MIT License, while the other datasets used in this work are released under the Apache License 2.0. We use all artifacts only for research purposes and in a manner consistent with their intended use in benchmarking, model training, and evaluation. We do not redistribute the original datasets or model weights as part of this work. The artifacts cover two primary task domains: long-context QA and deep search. Language includes English and Chinese. We do not collect new data from human subjects. Because the experiments rely on existing public benchmarks and datasets, we do not perform additional manual anonymization or offensive-content filtering. Relevant data statistics, including the number of questions, retained trajectories, and trajectory snapshots used for training, are reported in Table 6. 
+
+# J Use of AI Assistants 
+
+We used Codex to assist with code modification, and ChatGPT for writing polishing. All assisted outputs were manually reviewed, verified, and finalized by the authors. 18 ContextPilot 
+
+Table 7. Tool execution failure reason analysis. 
+
+Tool Failure Reason 
+
+plan The predicted summary is empty or unparseable. 
+
+searchContext The search query is empty or malformed, or the model searches before a valid index has been built. 
+
+readChunk The requested chunk id is out of range, deleted, or not associated with the current index. 
+
+readMultiChunks Any requested chunk id is invalid, duplicated, deleted, or exceeds the allowed batch size. 
+
+note The note content is empty, unparseable, or does not specify the value to be stored. 
+
+updateNote The target note does not exist, or the update content is empty or unparseable. 
+
+readNote The requested note does not exist. 
+
+memorize The memory content is empty or unparseable (e.g., inconsistent with the memory storage schema). 
+
+updateMemory The target memory item does not exist, or the update content is empty, unparseable, or inconsistent with the memory schema. 
+
+readMemory The requested memory item does not exist. 
+
+deleteContext The target message index does not exist, has already been deleted, or refers to a protected message (e.g., system prompt or user query). 
+
+summarizeContext The target message does not exist, has already been offloaded, or the generated summary is unparseable. 
+
+compressContext The target message does not exist, has already been offloaded, or specifies an invalid compression ratio. 
+
+foldHistory There is no historical context to fold, or the generated summary and keywords are unparseable. 
+
+Table 8. Complete ablation results of the RL algorithm for Qwen3-8B and Gemma4-E4B-it. Numbers in parentheses indicate changes relative to the previous line. 
+
+Model Training method NovelQA ∞Bench LongMemEval-S BrowseComp+ Avg. 
+
+Qwen3-8B SFT 82.56 71.03 60.67 48.84 65.78 GRPO 83.53 (+0.97) 72.78 (+1.75) 60.07 (-0.60) 50.96 (+2.12) 66.84 (+1.06) + Entropy-based partial rollout 82.52 (-1.01) 73.07 (+0.29) 62.13 (+2.06) 49.64 (-1.32) 66.84 (+0.00) + Context-aware partial rollout 83.05 (+0.53) 73.94 (+0.87) 61.40 (-0.73) 51.08 (+1.44) 67.37 (+0.53) + Fine-grained credit assignment 83.88 (+0.83) 75.25 (+1.31) 64.27 (+2.87) 54.18 (+3.10) 69.40 (+2.03) Gemma4-E4B-it SFT 66.80 55.02 55.07 42.05 54.74 GRPO 71.12 (+4.32) 57.06 (+2.04) 57.00 (+1.93) 43.41 (+1.36) 57.15 (+2.41) + Entropy-based partial rollout 70.81 (-0.31) 58.22 (+1.16) 60.67 (+3.67) 46.27 (+2.86) 58.99 (+1.85) + Context-aware partial rollout 71.24 (+0.43) 59.68 (+1.46) 60.33 (-0.34) 46.14 (-0.13) 59.35 (+0.36) + Fine-grained credit assignment 72.92 (+1.68) 60.99 (+1.31) 62.47 (+2.14) 47.47 (+1.33) 60.96 (+1.62) 
+
+19
