@@ -50,6 +50,8 @@ CONFERENCE_SPECS: Tuple[Dict[str, str], ...] = (
 # 官方录取数仅在“生产库不是完整 accepted 集合”的会议上强制给定。
 # 其它会议从 Supabase 中 accepted source 计数回退得到，reject 会额外展示。
 OFFICIAL_ACCEPTED_COUNTS: Dict[Tuple[str, int], int] = {
+    # https://cvpr.thecvf.com/Conferences/2026/News/Closing
+    ("cvpr", 2026): 4089,
     ("osdi", 2024): 53,
     ("osdi", 2025): 53,
     ("osdi", 2026): 136,

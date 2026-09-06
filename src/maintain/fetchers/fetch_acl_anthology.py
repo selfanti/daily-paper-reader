@@ -20,6 +20,8 @@ SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+from maintain.pdf_abstract import fetch_pdf_abstract
+
 
 SCRIPT_DIR = os.path.dirname(__file__)
 ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
@@ -156,6 +158,11 @@ def fetch_anthology_paper(paper_url: str, *, source_label: str, primary_category
     pdf_url = pdf_values[0] if pdf_values else ""
     abs_node = soup.select_one("#abstract") or soup.select_one(".acl-abstract") or soup.select_one("div.card-body.acl-abstract")
     abstract = _strip_abstract_prefix(abs_node.get_text(" ", strip=True) if abs_node else "")
+    if not abstract and pdf_url:
+        try:
+            abstract = fetch_pdf_abstract(pdf_url)
+        except Exception as exc:
+            log(f"[Anthology] PDF abstract unavailable: {paper_url}: {type(exc).__name__}")
 
     source_paper_id = paper_url.rstrip("/").split("/")[-1]
     return {

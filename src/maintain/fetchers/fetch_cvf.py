@@ -9,6 +9,7 @@ List-page structure
     <dt class="ptitle">
       <a href="...html">Paper Title</a>
     </dt>
+    <dd>Authors</dd>
     <dd>
       <a href="...paper.pdf">pdf</a>   ← first <a> whose href ends with ".pdf"
       ...
@@ -139,10 +140,14 @@ def _parse_cvpr_list(html: str, year: int) -> List[Dict[str, str]]:
         href = a_title.get("href", "")
         detail_url = href if href.startswith("http") else f"{CVF_BASE}/{href.lstrip('/')}"
 
-        # The next <dd> sibling contains the PDF link.
-        dd = dt.find_next_sibling("dd")
+        # 作者和资源链接分属多个 dd；只在当前论文分组内查找，不能串到下一篇。
         pdf_url = ""
-        if dd:
+        for dd in dt.next_siblings:
+            node_name = getattr(dd, "name", None)
+            if node_name == "dt":
+                break
+            if node_name != "dd":
+                continue
             pdf_a = dd.find("a", href=re.compile(r"\.pdf$", re.I))
             if pdf_a:
                 pdf_href = pdf_a["href"]
@@ -151,6 +156,7 @@ def _parse_cvpr_list(html: str, year: int) -> List[Dict[str, str]]:
                     if pdf_href.startswith("http")
                     else f"{CVF_BASE}/{pdf_href.lstrip('/')}"
                 )
+                break
 
         entries.append(
             {"title": title, "detail_url": detail_url, "pdf_url": pdf_url}

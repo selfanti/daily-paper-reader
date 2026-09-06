@@ -111,10 +111,8 @@ window.SubscriptionsManager = (function () {
     'NDSS',
   ];
   const CONFERENCE_STATS_SNAPSHOT_URL = 'app/conference-stats.json';
-  // 2026 年会议数据可用性（截至 2026-07）：
-  // 有数据: ICLR 2026, ICML 2026, AAAI 2026, ACL 2026, OSDI 2026, IEEE S&P 2026, NDSS 2026
-  // 无数据: CVPR/SOSP 2026（论文 PDF 尚未全量公开或未上传）
-  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'ICML', 'AAAI', 'ACL', 'OSDI', 'IEEE S&P', 'NDSS']);
+  // 2026 年已入库并验证检索的会议（截至 2026-09，含 CVPR 4,042 篇）。
+  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'ICML', 'AAAI', 'ACL', 'CVPR', 'OSDI', 'IEEE S&P', 'NDSS']);
   const FEATURED_CONFERENCE_YEAR_PAIRS = new Set(['acl:2026', 'icml:2026']);
   // ECCV 是双年会议（偶数年）
   const BIENNIAL_EVEN_CONFERENCES = new Set(['ECCV']);
@@ -692,11 +690,10 @@ window.SubscriptionsManager = (function () {
     const currentYear = new Date().getFullYear();
     if (yearNum >= currentYear && !CONFERENCE_2026_AVAILABLE.has(conf)) {
       const ESTIMATED_DATES = {
-        CVPR:    '2026 年 7 月（论文上传后）',
         ICML:    '2026 年 7 月会后',
         IJCAI:   '2026 年 8 月会后',
         ACL:     '2026 年 7 月会后',
-        EMNLP:   '2026 年 11 月会后',
+        EMNLP:   '2026 年 10 月中下旬（以官方论文集开放时间为准）',
         NEURIPS: '2026 年 12 月会后',
         NIPS:    '2026 年 12 月会后',
         ECCV:    '2026 年秋季会后',

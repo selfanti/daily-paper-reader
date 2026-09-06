@@ -173,7 +173,7 @@ function testConferenceCurrentYearDisabledForPendingSources() {
   assert.equal(isConferenceYearSelectable('ACL', currentYear), true);
   assert.equal(isConferenceYearSelectable('OSDI', currentYear), true);
   assert.equal(isConferenceYearSelectable('IEEE S&P', currentYear), true);
-  assert.equal(isConferenceYearSelectable('CVPR', currentYear), false);
+  assert.equal(isConferenceYearSelectable('CVPR', currentYear), true);
   assert.equal(isConferenceYearSelectable('ECCV', currentYear), false);
   assert.equal(isConferenceYearSelectable('IJCAI', currentYear), false);
   // ECCV biennial: odd years disabled
@@ -188,6 +188,24 @@ function testConferenceDefaultYearOnlySelects2025() {
   const pairs = __getSelectedConferenceYearPairs().sort();
   // 不再默认勾选，由用户手动选择
   assert.deepEqual(pairs, []);
+}
+
+function testCvpr2026EnabledAndEmnlpEstimateMatchesNotice() {
+  __setConferenceStatsSnapshot(require('../app/conference-stats.json'));
+  __setRunSelectionState({ conferencePairs: ['CVPR:2026'] });
+  const html = __buildConferenceChoiceRowsHtml();
+  const buttonFor = (name) => html.match(new RegExp(`<button\\b[^>]*data-conference="${name}"[^>]*data-conference-year="2026"[^>]*>[\\s\\S]*?<\\/button>`))[0];
+  const cvpr = buttonFor('CVPR');
+  assert.equal(isConferenceYearSelectable('CVPR', '2026'), true);
+  assert.equal(/\bdisabled\b/.test(cvpr), false);
+  assert.ok(cvpr.includes('aria-pressed="true"'));
+  assert.ok(cvpr.includes('class="dpr-choice-total">4042</span>'));
+  const emnlp = buttonFor('EMNLP');
+  assert.ok(/\bdisabled\b/.test(emnlp));
+  assert.ok(emnlp.includes('10 月中下旬'));
+  assert.ok(emnlp.includes('以官方论文集开放时间为准'));
+  assert.equal(emnlp.includes('11 月会后'), false);
+  __setRunSelectionState({ conferencePairs: [] });
 }
 
 function testConferenceYearChoicesShowTwoDigitYearAndStoredTotalOnly() {
@@ -489,6 +507,7 @@ async function testConferenceRetrievalDispatchesUnifiedConferencePairs() {
   await testRunProfileQuickFetchPassesProfileTagToWorkflow();
   testConferenceCurrentYearDisabledForPendingSources();
   testConferenceDefaultYearOnlySelects2025();
+  testCvpr2026EnabledAndEmnlpEstimateMatchesNotice();
   testConferenceYearChoicesShowTwoDigitYearAndStoredTotalOnly();
   await testConferenceStatsLoadReusesBootstrappedJsonPromise();
   testQuickRunUnsavedMessageClearsAfterSave();
