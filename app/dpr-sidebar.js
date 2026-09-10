@@ -826,7 +826,8 @@
     var opts = resolveResultOptions(options);
     var id = paperIdentity(paper);
     if (opts.keyword && paperSearchText(paper).indexOf(opts.keyword) === -1) return false;
-    if (opts.unreadOnly && opts.unreadResultPaperIds) return id && opts.unreadResultPaperIds.has(id);
+    // 首次进入未读时当前页可能已经标记已读，不在快照中；仍需保留当前阅读项。
+    if (opts.unreadOnly && opts.unreadResultPaperIds) return !!id && (id === opts.currentPaperId || opts.unreadResultPaperIds.has(id));
     if (opts.unreadOnly && paperReadStatus(paper, opts.readMap) && paperIdentity(paper) !== opts.currentPaperId) return false;
     return true;
   }

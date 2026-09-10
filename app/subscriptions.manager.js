@@ -33,6 +33,7 @@ window.SubscriptionsManager = (function () {
   const selectedConferenceYearPairs = new Set();
   let resetContentBtn = null;
   let resetContentMsgEl = null;
+  let resetContentPending = false;
   let adminDailyTabBtn = null;
   let adminConferenceTabBtn = null;
   let adminDailyPanel = null;
@@ -111,8 +112,8 @@ window.SubscriptionsManager = (function () {
     'NDSS',
   ];
   const CONFERENCE_STATS_SNAPSHOT_URL = 'app/conference-stats.json';
-  // 2026 年已入库并验证检索的会议（截至 2026-09，含 CVPR 4,042 篇）。
-  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'ICML', 'AAAI', 'ACL', 'CVPR', 'OSDI', 'IEEE S&P', 'NDSS']);
+  // 2026 年已入库并验证检索的会议（截至 2026-09，含 CVPR、ECCV）。
+  const CONFERENCE_2026_AVAILABLE = new Set(['ICLR', 'ICML', 'AAAI', 'ACL', 'CVPR', 'ECCV', 'OSDI', 'IEEE S&P', 'NDSS']);
   const FEATURED_CONFERENCE_YEAR_PAIRS = new Set(['acl:2026', 'icml:2026']);
   // ECCV 是双年会议（偶数年）
   const BIENNIAL_EVEN_CONFERENCES = new Set(['ECCV']);
@@ -696,7 +697,6 @@ window.SubscriptionsManager = (function () {
         EMNLP:   '2026 年 10 月中下旬（以官方论文集开放时间为准）',
         NEURIPS: '2026 年 12 月会后',
         NIPS:    '2026 年 12 月会后',
-        ECCV:    '2026 年秋季会后',
         OSDI:    '2026 年会后论文 PDF 公开后',
         SOSP:    '2026 年会后论文 PDF 公开后',
         'IEEE S&P': '2026 年 CSDL 论文 PDF 公开后',
@@ -1036,8 +1036,8 @@ window.SubscriptionsManager = (function () {
     };
     const fetchMode = normalizeText(options.fetchMode).toLowerCase();
     const modeText = fetchMode === 'standard'
-      ? '30 天标准抓取任务'
-      : (fetchMode === 'skims' ? '30 天速览抓取任务' : `${days} 天抓取任务`);
+      ? `${days} 天标准抓取任务`
+      : (Number(days) > 30 ? `${days} 天 arXiv 专题回溯任务` : (fetchMode === 'skims' ? `${days} 天速览抓取任务` : `${days} 天抓取任务`));
     const tip = `已发起词条「${normalizedTag}」的${modeText}。`;
     return runQuickFetch(days, quickRunMsgEl || msgEl, tip, options);
   };
@@ -1051,8 +1051,8 @@ window.SubscriptionsManager = (function () {
     }
     const fetchMode = normalizeText(runOptions.fetchMode).toLowerCase();
     const modeText = fetchMode === 'standard'
-      ? '30 天全标准 / 精读'
-      : (fetchMode === 'skims' ? '30 天全速览' : `${days} 天`);
+      ? `${days} 天全标准 / 精读`
+      : (Number(days) > 30 ? `${days} 天 arXiv 专题回溯` : (fetchMode === 'skims' ? `${days} 天全速览` : `${days} 天`));
     const options = runOptions && typeof runOptions === 'object' ? cloneDeep(runOptions) : {};
     const dispatchInputs = isPlainObject(options.dispatchInputs) ? options.dispatchInputs : {};
     options.dispatchInputs = {
@@ -1065,6 +1065,10 @@ window.SubscriptionsManager = (function () {
     return success;
   };
   const runSelectedQuickFetchByMode = () => {
+    if (quickRunMode === '90' || quickRunMode === '365') {
+      if (!window.confirm('将对所选词条进行 arXiv 长周期回溯，只检索 arXiv。全部候选需调用 DeepSeek 评审，宽泛专题可能有上万篇，耗时和费用按实际量增长；不下载全量PDF。确认开始？')) return false;
+      return runSelectedQuickFetch(Number(quickRunMode), { fetchMode: 'skims' });
+    }
     if (quickRunMode === '30-skims') {
       return runSelectedQuickFetch(30, { fetchMode: 'skims' });
     }
@@ -1141,7 +1145,8 @@ window.SubscriptionsManager = (function () {
     return true;
   };
 
-  const runResetContent = (msgEl) => {
+  const runResetContent = async (msgEl) => {
+    if (resetContentPending) return;
     if (String(window.DPR_ACCESS_MODE || '') !== 'full') {
       if (msgEl) {
         msgEl.textContent = '未检测到完整登录权限，危险操作未开启。';
@@ -1169,10 +1174,34 @@ window.SubscriptionsManager = (function () {
       return;
     }
 
-    window.DPRWorkflowRunner.runWorkflowByKey('reset-content');
+    resetContentPending = true;
+    if (resetContentBtn) resetContentBtn.disabled = true;
+    const warnBeforeDispatch = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeDispatch);
     if (msgEl) {
-      msgEl.textContent = '已发起论文内容重置任务。';
-      msgEl.style.color = '#080';
+      msgEl.textContent = '正在提交论文内容重置任务，请勿关闭页面…';
+      msgEl.style.color = '#666';
+    }
+    try {
+      const accepted = await window.DPRWorkflowRunner.runWorkflowByKey('reset-content');
+      if (msgEl) {
+        msgEl.textContent = accepted === true
+          ? '论文内容重置任务已提交，请在工作流面板查看进度。'
+          : '重置任务提交未获确认，请在工作流面板检查状态。';
+        msgEl.style.color = accepted === true ? '#080' : '#c00';
+      }
+    } catch (error) {
+      if (msgEl) {
+        msgEl.textContent = `重置任务提交失败：${error.message || error}`;
+        msgEl.style.color = '#c00';
+      }
+    } finally {
+      resetContentPending = false;
+      if (resetContentBtn) resetContentBtn.disabled = false;
+      window.removeEventListener('beforeunload', warnBeforeDispatch);
     }
   };
 
@@ -1449,7 +1478,18 @@ window.SubscriptionsManager = (function () {
                     <span class="dpr-task-action-title">立即抓取三十天精读</span>
                     <span class="dpr-task-action-cost">约 ¥0.50</span>
                   </label>
+                  <label class="chat-quick-run-item dpr-task-radio-card">
+                    <input type="radio" name="dpr-quick-run-mode" value="90">
+                    <span class="dpr-task-action-title">回溯九十天 arXiv</span>
+                    <span class="dpr-task-action-cost">专题评审 · 按实际用量计费</span>
+                  </label>
+                  <label class="chat-quick-run-item dpr-task-radio-card">
+                    <input type="radio" name="dpr-quick-run-mode" value="365">
+                    <span class="dpr-task-action-title">回溯一年 arXiv</span>
+                    <span class="dpr-task-action-cost">365 天 · 可复用评审进度</span>
+                  </label>
                 </div>
+                <p class="dpr-task-hint">90天/365天为 arXiv 专题回溯：关键词候选与语义补漏，不保证找全；核心≥8分，补充6–7分。完成后在 Sidebar「日报」选择区间结束日期与专题标签阅读，或下载工作流结果附件。</p>
                 <button id="arxiv-admin-quick-run-start-btn" class="chat-quick-run-run-btn dpr-task-start-btn" type="button">开始检索</button>
                 <div id="arxiv-admin-quick-run-msg" class="chat-quick-run-msg"></div>
               </div>
@@ -1899,6 +1939,8 @@ window.SubscriptionsManager = (function () {
     validateDraftConfig: () => validateIntentProfiles(draftConfig || {}),
     runProfileQuickFetch: (profileTag, days, runOptions) => runProfileQuickFetch(profileTag, days, runOptions),
     __test: {
+      __setQuickRunMode: (value) => { quickRunMode = value; },
+      runSelectedQuickFetchByMode,
       normalizeSubscriptions: (config) => normalizeSubscriptions(config),
       ensureSourceBackendsForProfiles: (config) => ensureSourceBackendsForProfiles(cloneDeep(config || {})),
       buildDefaultSourceBackend: (sourceKey, config) => buildDefaultSourceBackend(sourceKey, cloneDeep(config || {})),

@@ -27,6 +27,8 @@ const {
   formatConferenceYearStatsLabel,
   runQuickConferenceRetrieval,
   runSelectedQuickFetch,
+  runSelectedQuickFetchByMode,
+  __setQuickRunMode,
 } = global.window.SubscriptionsManager.__test;
 
 function buildBaseConfig() {
@@ -174,7 +176,7 @@ function testConferenceCurrentYearDisabledForPendingSources() {
   assert.equal(isConferenceYearSelectable('OSDI', currentYear), true);
   assert.equal(isConferenceYearSelectable('IEEE S&P', currentYear), true);
   assert.equal(isConferenceYearSelectable('CVPR', currentYear), true);
-  assert.equal(isConferenceYearSelectable('ECCV', currentYear), false);
+  assert.equal(isConferenceYearSelectable('ECCV', currentYear), true);
   assert.equal(isConferenceYearSelectable('IJCAI', currentYear), false);
   // ECCV biennial: odd years disabled
   assert.equal(isConferenceYearSelectable('ECCV', '2024'), true);
@@ -190,7 +192,7 @@ function testConferenceDefaultYearOnlySelects2025() {
   assert.deepEqual(pairs, []);
 }
 
-function testCvpr2026EnabledAndEmnlpEstimateMatchesNotice() {
+function testAvailable2026ConferenceChoicesAndEmnlpEstimate() {
   __setConferenceStatsSnapshot(require('../app/conference-stats.json'));
   __setRunSelectionState({ conferencePairs: ['CVPR:2026'] });
   const html = __buildConferenceChoiceRowsHtml();
@@ -201,6 +203,11 @@ function testCvpr2026EnabledAndEmnlpEstimateMatchesNotice() {
   assert.ok(cvpr.includes('aria-pressed="true"'));
   assert.ok(cvpr.includes('class="dpr-choice-total">4042</span>'));
   const emnlp = buttonFor('EMNLP');
+  const eccv = buttonFor('ECCV');
+  assert.equal(/\bdisabled\b/.test(eccv), false);
+  const eccvStats = require('../app/conference-stats.json').items.find(item => item.id === 'eccv-2026');
+  assert.ok(eccvStats.stored_total_count > 0);
+  assert.ok(eccv.includes(`class="dpr-choice-total">${eccvStats.stored_total_count}</span>`));
   assert.ok(/\bdisabled\b/.test(emnlp));
   assert.ok(emnlp.includes('10 月中下旬'));
   assert.ok(emnlp.includes('以官方论文集开放时间为准'));
@@ -500,6 +507,25 @@ async function testConferenceRetrievalDispatchesUnifiedConferencePairs() {
   delete global.window.SubscriptionsSmartQuery;
 }
 
+async function testLongRangeSelectionDispatchesAndCanCancel() {
+  const calls = [];
+  window.SubscriptionsSmartQuery = { getSelectedProfilesForRun: () => [{tag: 'ATSP', paused: false}] };
+  window.DPRWorkflowRunner = { runQuickFetchByDays: (days, options) => { calls.push({days, options}); return true; } };
+  window.confirm = () => true;
+  __setUnsavedChanges(false);
+  for (const days of [90, 365]) {
+    __setQuickRunMode(String(days));
+    assert.equal(await runSelectedQuickFetchByMode(), true);
+    assert.equal(calls.at(-1).days, days);
+    assert.equal(calls.at(-1).options.dispatchInputs.profile_tag, 'ATSP');
+  }
+  window.confirm = () => false;
+  assert.equal(await runSelectedQuickFetchByMode(), false);
+  assert.equal(calls.length, 2);
+  __setQuickRunMode('10');
+  delete window.confirm; delete window.SubscriptionsSmartQuery; delete window.DPRWorkflowRunner;
+}
+
 (async () => {
   testNormalizeSubscriptionsAddsBiorxivBackend();
   testNormalizeSubscriptionsPreservesCustomBiorxivBackendFields();
@@ -507,7 +533,7 @@ async function testConferenceRetrievalDispatchesUnifiedConferencePairs() {
   await testRunProfileQuickFetchPassesProfileTagToWorkflow();
   testConferenceCurrentYearDisabledForPendingSources();
   testConferenceDefaultYearOnlySelects2025();
-  testCvpr2026EnabledAndEmnlpEstimateMatchesNotice();
+  testAvailable2026ConferenceChoicesAndEmnlpEstimate();
   testConferenceYearChoicesShowTwoDigitYearAndStoredTotalOnly();
   await testConferenceStatsLoadReusesBootstrappedJsonPromise();
   testQuickRunUnsavedMessageClearsAfterSave();
@@ -516,6 +542,7 @@ async function testConferenceRetrievalDispatchesUnifiedConferencePairs() {
   testConferenceRunDisabledWhenSelectedStoredTotalReachesLimit();
   await testQuickFetchIncludesAnySelectedProfile();
   await testConferenceRetrievalDispatchesUnifiedConferencePairs();
+  await testLongRangeSelectionDispatchesAndCanCancel();
 
   console.log('subscriptions manager tests passed');
 })().catch((error) => {
